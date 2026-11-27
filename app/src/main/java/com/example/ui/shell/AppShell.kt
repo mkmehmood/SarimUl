@@ -174,6 +174,9 @@ fun AppShell(
                 }
               }
             }
+          } else if (SarimRoute.hidesHeaderTitle(currentRoute)) {
+            // No title text on Customer / Entity / Rep Customer screens: keep only the status-bar gap.
+            Spacer(Modifier.fillMaxWidth().statusBarsPadding().height(8.dp))
           } else if (currentRoute != SarimRoute.CloseFinancialYear.route) {
             // Standalone / Ledger screen header (left-aligned Cinzel title, no back arrow to match web)
             Box(
@@ -238,7 +241,8 @@ fun AppShell(
       Box(
         modifier = Modifier
           .fillMaxSize()
-          .padding(innerPadding),
+          .padding(innerPadding)
+          .consumeWindowInsets(innerPadding),
         contentAlignment = Alignment.TopCenter,
       ) {
         Box(

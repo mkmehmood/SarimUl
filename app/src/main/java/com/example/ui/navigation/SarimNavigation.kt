@@ -105,7 +105,7 @@ sealed class SarimRoute(
     }
   }
 
-  data class CustomerDetails(val customerId: String) : SarimRoute(ROUTE, "CUSTOMER LEDGER") {
+  data class CustomerDetails(val customerId: String) : SarimRoute(ROUTE, "") {
     companion object {
       const val ARG = "customerId"
       const val ROUTE = "customer_details/{$ARG}"
@@ -123,7 +123,7 @@ sealed class SarimRoute(
     }
   }
 
-  data class RepCustomerDetails(val customerId: String) : SarimRoute(ROUTE, "REP CUSTOMER") {
+  data class RepCustomerDetails(val customerId: String) : SarimRoute(ROUTE, "") {
     companion object {
       const val ARG = "customerId"
       const val ROUTE = "rep_customer_details/{$ARG}"
@@ -212,6 +212,16 @@ sealed class SarimRoute(
         tabForRoute(route) != null
     }
 
+    /**
+     * Detail/record screens that render their own content header and therefore
+     * show no title text in the shell top bar (Customer, Entity and Rep Customer screens).
+     */
+    fun hidesHeaderTitle(route: String?): Boolean =
+      route?.startsWith("customer_details") == true ||
+        route?.startsWith("add_entity") == true ||
+        route?.startsWith("rep_customer_details") == true ||
+        route?.startsWith("rep_customer_edit") == true
+
     fun titleForRoute(route: String?, isCloseFinYear: Boolean = false): String? = when {
       route == Dashboard.route || tabForRoute(route) != null -> null
       route == Ledger.route -> "DAILY LEDGER"
@@ -219,7 +229,6 @@ sealed class SarimRoute(
       route == Approvals.route -> "APPROVALS"
       route == StockTransfer.route -> "STOCK TRANSFER"
       route == PaymentTransfer.route -> "PAYMENT TRANSFER"
-      route?.startsWith("add_entity") == true -> "ENTITY RECORD"
       route?.startsWith("add_raw_material") == true -> "PURCHASE ENTRY"
       route == FormulaStore.route -> "FORMULA STORE"
       route?.startsWith("formula_edit") == true -> "FORMULA EDITOR"
@@ -232,10 +241,7 @@ sealed class SarimRoute(
       route == AppAccounts.route -> "APP ACCOUNTS"
       route == StoreManager.route -> "STORE MANAGER"
       route == CloseFinancialYear.route || isCloseFinYear -> "CLOSE FINANCIAL YEAR"
-      route?.startsWith("customer_details") == true -> "CUSTOMER LEDGER"
       route?.startsWith("customer_edit") == true -> "CUSTOMER DETAILS"
-      route?.startsWith("rep_customer_details") == true -> "REP CUSTOMER"
-      route?.startsWith("rep_customer_edit") == true -> "REP CUSTOMER"
       route?.startsWith("entity_details") == true -> "ENTITY DETAILS"
       route?.startsWith("expense_details") == true -> "EXPENSE DETAILS"
       else -> null

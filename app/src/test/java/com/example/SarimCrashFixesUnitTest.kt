@@ -220,4 +220,16 @@ class SarimCrashFixesUnitTest {
     assertTrue(com.example.ui.navigation.SarimRoute.isTopBarPrimaryRoute("ledger"))
     assertEquals("DAILY LEDGER", com.example.ui.navigation.SarimRoute.titleForRoute("ledger"))
   }
+
+  @Test
+  fun sarimNavigation_hidesHeaderTitleOnCustomerEntityAndRepCustomerScreens() {
+    val nav = com.example.ui.navigation.SarimRoute
+    listOf("customer_details/abc", "add_entity", "add_entity?entityId=1", "rep_customer_details/abc", "rep_customer_edit?customerId=1")
+      .forEach { route ->
+        assertTrue(route, nav.hidesHeaderTitle(route))
+        assertEquals(route, null, nav.titleForRoute(route))
+      }
+    assertFalse(nav.hidesHeaderTitle("ledger"))
+    assertEquals("DAILY LEDGER", nav.titleForRoute("ledger"))
+  }
 }

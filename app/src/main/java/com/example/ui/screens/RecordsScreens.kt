@@ -308,6 +308,9 @@ fun AddRawMaterialScreen(
 
   Scaffold(
     containerColor = palette.background,
+    // The shell Scaffold already applies status/nav-bar/keyboard insets; applying them again
+    // here pushed the form down and left the fields stuck behind doubled padding.
+    contentWindowInsets = WindowInsets(0, 0, 0, 0),
     bottomBar = {
       Surface(
         color = palette.surface,
