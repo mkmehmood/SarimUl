@@ -12,8 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,21 +57,21 @@ fun SettingsScreen(
     // 1. Data & Sync
     SarimFieldLabel("Data & Sync")
     SarimCard(contentPadding = 4.dp) {
-      SettingsRow("SYNC DATA", Icons.Filled.Sync, palette.green) { viewModel.syncDataNow() }
+      SettingsRow("SYNC DATA", Icons.Rounded.Sync, palette.green) { viewModel.syncDataNow() }
       HorizontalDivider(color = palette.border)
-      SettingsRow("BACKUP & RESTORE", Icons.Filled.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
+      SettingsRow("BACKUP & RESTORE", Icons.Rounded.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
       HorizontalDivider(color = palette.border)
-      SettingsRow("RECYCLE BIN", Icons.Filled.DeleteOutline, palette.red) { viewModel.openStandalone(StandaloneScreen.RecycleBin) }
+      SettingsRow("RECYCLE BIN", Icons.Rounded.DeleteOutline, palette.red) { viewModel.openStandalone(StandaloneScreen.RecycleBin) }
       HorizontalDivider(color = palette.border)
-      SettingsRow("DATABASE STRUCTURE", Icons.Filled.Storage, palette.purple) { viewModel.openStandalone(StandaloneScreen.DatabaseStructure) }
+      SettingsRow("DATABASE STRUCTURE", Icons.Rounded.Storage, palette.purple) { viewModel.openStandalone(StandaloneScreen.DatabaseStructure) }
     }
 
     // 2. Appearance & Device
     SarimFieldLabel("Appearance & Device")
     SarimCard(contentPadding = 4.dp) {
-      SettingsRow(state.prefs.themeMode.label, Icons.Filled.Palette, palette.amber) { viewModel.cycleTheme() }
+      SettingsRow(state.prefs.themeMode.label, Icons.Rounded.Palette, palette.amber) { viewModel.cycleTheme() }
       HorizontalDivider(color = palette.border)
-      SettingsRow("SOUND & HAPTICS", Icons.Filled.Vibration, palette.cyan) { viewModel.openStandalone(StandaloneScreen.SoundHaptics) }
+      SettingsRow("SOUND & HAPTICS", Icons.Rounded.Vibration, palette.cyan) { viewModel.openStandalone(StandaloneScreen.SoundHaptics) }
     }
 
     // 3. Security
@@ -79,12 +79,12 @@ fun SettingsScreen(
     SarimCard(contentPadding = 4.dp) {
       SettingsRow(
         label = if (state.prefs.fingerprintLockEnabled) "DISABLE FINGERPRINT LOCK" else "ENABLE FINGERPRINT LOCK",
-        icon = Icons.Filled.Fingerprint,
+        icon = Icons.Rounded.Fingerprint,
         iconColor = palette.green,
       ) { viewModel.toggleFingerprintLock() }
       if (state.isAdmin) {
         HorizontalDivider(color = palette.border)
-        SettingsRow("APP ACCOUNTS", Icons.Filled.ManageAccounts, palette.purple) { viewModel.openStandalone(StandaloneScreen.AppAccounts) }
+        SettingsRow("APP ACCOUNTS", Icons.Rounded.ManageAccounts, palette.purple) { viewModel.openStandalone(StandaloneScreen.AppAccounts) }
       }
     }
 
@@ -92,13 +92,13 @@ fun SettingsScreen(
     if (state.isAdmin) {
       SarimFieldLabel("Business")
       SarimCard(contentPadding = 4.dp) {
-        SettingsRow("STORE MANAGER", Icons.Filled.Storefront, palette.green) { viewModel.openStandalone(StandaloneScreen.StoreManager) }
+        SettingsRow("STORE MANAGER", Icons.Rounded.Storefront, palette.green) { viewModel.openStandalone(StandaloneScreen.StoreManager) }
       }
 
       // 5. Danger Zone
       SarimFieldLabel("Danger Zone")
       SarimCard(borderColor = palette.red.copy(alpha = 0.4f), contentPadding = 4.dp) {
-        SettingsRow("CLOSE FINANCIAL YEAR", Icons.Filled.Warning, palette.red, textColor = palette.red) {
+        SettingsRow("CLOSE FINANCIAL YEAR", Icons.Rounded.Warning, palette.red, textColor = palette.red) {
           viewModel.openStandalone(StandaloneScreen.CloseFinancialYear)
         }
       }
@@ -134,7 +134,7 @@ private fun SettingsRow(
       letterSpacing = 0.5.sp,
       modifier = Modifier.weight(1f),
     )
-    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = palette.textMuted)
+    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = palette.textMuted)
   }
 }
 
@@ -233,7 +233,7 @@ fun BackupRestoreScreen(
       Text("Load a previously saved backup file (.gznd or .json)", color = palette.textMuted, fontSize = 13.sp)
       SarimSecondaryButton(
         text = "Restore from Phone",
-        icon = Icons.Filled.FolderOpen,
+        icon = Icons.Rounded.FolderOpen,
         modifier = Modifier.fillMaxWidth(),
         onClick = {
           runCatching {
@@ -290,7 +290,7 @@ fun RecycleBinScreen(
       }
       SarimDangerButton(
         text = "Empty Bin",
-        icon = Icons.Filled.DeleteForever,
+        icon = Icons.Rounded.DeleteForever,
         enabled = state.recycleBinItems.isNotEmpty(),
         modifier = Modifier.weight(1f),
         onClick = {
@@ -396,7 +396,7 @@ fun DatabaseStructureScreen(
   ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
       Text("Collections & Sync Queue", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      SarimSecondaryButton(text = "Refresh", icon = Icons.Filled.Refresh, onClick = { viewModel.refreshDiagnostics() })
+      SarimSecondaryButton(text = "Refresh", icon = Icons.Rounded.Refresh, onClick = { viewModel.refreshDiagnostics() })
     }
 
     if (state.dbStructure.isEmpty()) {
@@ -522,14 +522,14 @@ private fun SoundHapticsDropdownCard(
       modifier = Modifier.fillMaxWidth(),
     ) {
       Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         color = palette.surfaceElevated,
         border = BorderStroke(1.dp, if (expanded) accentColor else palette.border),
         modifier = Modifier
           .fillMaxWidth()
           .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
           .defaultMinSize(minHeight = 52.dp)
-          .clip(RoundedCornerShape(12.dp))
+          .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
           .clickable { onExpandedChange(!expanded) },
       ) {
@@ -547,7 +547,7 @@ private fun SoundHapticsDropdownCard(
         modifier = Modifier
           .exposedDropdownSize(matchTextFieldWidth = true)
           .background(palette.surfaceElevated)
-          .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(12.dp)),
+          .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
       ) {
         options.forEachIndexed { idx, (optLabel, optDesc) ->
           val isSelected = optLabel == selectedLabel
@@ -571,7 +571,7 @@ private fun SoundHapticsDropdownCard(
                   Text(optDesc, color = palette.textMuted, fontSize = 11.5.sp)
                 }
                 if (isSelected) {
-                  Icon(Icons.Filled.Check, contentDescription = null, tint = accentColor, modifier = Modifier.size(16.dp))
+                  Icon(Icons.Rounded.Check, contentDescription = null, tint = accentColor, modifier = Modifier.size(16.dp))
                 }
               }
             },

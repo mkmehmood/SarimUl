@@ -7,9 +7,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
+import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -170,9 +170,9 @@ sealed class SarimRoute(
     // capture null for those objects and crash the bottom nav bar with an NPE on `dest.route`.
     val primaryDestinations: List<Pair<SarimRoute, ImageVector>> by lazy {
       listOf(
-        Dashboard to Icons.Filled.Dashboard,
-        Inventory to Icons.Filled.Inventory2,
-        Ledger to Icons.AutoMirrored.Filled.MenuBook,
+        Dashboard to Icons.Rounded.Dashboard,
+        Inventory to Icons.Rounded.Inventory2,
+        Ledger to Icons.AutoMirrored.Rounded.MenuBook,
       )
     }
 

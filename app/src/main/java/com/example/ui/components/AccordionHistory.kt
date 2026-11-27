@@ -6,8 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -69,7 +69,7 @@ fun <T> AccordionHistoryList(
     byYear.forEach { (year, yearItems) ->
       val yearOpen = year in expandedYears
       Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(20.dp),
         color = palette.surface,
         border = BorderStroke(1.dp, palette.border),
       ) {
@@ -87,7 +87,7 @@ fun <T> AccordionHistoryList(
             Text(year.toString(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
             Text(yearSummary(yearItems), color = palette.green, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold))
             Spacer(Modifier.width(6.dp))
-            Icon(if (yearOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = palette.textMuted)
+            Icon(if (yearOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = palette.textMuted)
           }
 
           AnimatedVisibility(visible = yearOpen) {
@@ -97,7 +97,7 @@ fun <T> AccordionHistoryList(
                 val mKey = "$year-$monthLabel"
                 val monthOpen = mKey in expandedMonths
                 Surface(
-                  shape = RoundedCornerShape(12.dp),
+                  shape = RoundedCornerShape(16.dp),
                   color = palette.surfaceElevated,
                   border = BorderStroke(1.dp, palette.border),
                 ) {
@@ -116,7 +116,7 @@ fun <T> AccordionHistoryList(
                         Text(monthLabel, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Text(monthSummary(monthItems), color = palette.textMuted, fontSize = 11.sp)
                       }
-                      Icon(if (monthOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = palette.textMuted)
+                      Icon(if (monthOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = palette.textMuted)
                     }
 
                     AnimatedVisibility(visible = monthOpen) {
@@ -126,7 +126,7 @@ fun <T> AccordionHistoryList(
                           val dKey = "$mKey-$dayLabel"
                           val dayOpen = dKey in expandedDays
                           Surface(
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(14.dp),
                             color = palette.surface,
                             border = BorderStroke(1.dp, palette.border),
                           ) {
@@ -143,7 +143,7 @@ fun <T> AccordionHistoryList(
                               ) {
                                 Text(dayLabel, color = palette.cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 Text(daySummary(dayItems), color = palette.textMuted, fontSize = 11.sp)
-                                Icon(if (dayOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+                                Icon(if (dayOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
                               }
 
                               AnimatedVisibility(visible = dayOpen) {
@@ -152,12 +152,12 @@ fun <T> AccordionHistoryList(
                                     val recKey = "$dKey-$idx-${rec.item.hashCode()}"
                                     val recOpen = recKey in expandedItemIds
                                     Surface(
-                                      shape = RoundedCornerShape(10.dp),
+                                      shape = RoundedCornerShape(14.dp),
                                       color = palette.surfaceElevated,
                                       border = BorderStroke(1.dp, if (recOpen) palette.green.copy(alpha = 0.5f) else palette.border),
                                       modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(14.dp))
                                         .clickable {
                                           expandedItemIds = if (recOpen) expandedItemIds - recKey else expandedItemIds + recKey
                                         },

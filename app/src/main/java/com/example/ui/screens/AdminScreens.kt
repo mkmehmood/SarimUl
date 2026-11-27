@@ -7,13 +7,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -76,7 +76,7 @@ fun AppAccountsScreen(
         passwordVisible = showPassword,
         trailingContent = {
           IconButton(onClick = { showPassword = !showPassword }) {
-            Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, contentDescription = "Toggle password", tint = palette.textMuted)
+            Icon(if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, contentDescription = "Toggle password", tint = palette.textMuted)
           }
         },
         testTag = "acct_new_password",
@@ -148,7 +148,7 @@ fun AppAccountsScreen(
     SarimCard {
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text("Registered Accounts (${state.accounts.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        SarimSecondaryButton(text = "↻ Refresh", icon = Icons.Filled.Refresh, onClick = { viewModel.refreshDiagnostics() })
+        SarimSecondaryButton(text = "↻ Refresh", icon = Icons.Rounded.Refresh, onClick = { viewModel.refreshDiagnostics() })
       }
 
       if (state.accounts.isEmpty()) {
@@ -181,7 +181,7 @@ fun AppAccountsScreen(
                 )
               },
             ) {
-              Icon(Icons.Filled.Delete, contentDescription = "Delete account", tint = palette.red)
+              Icon(Icons.Rounded.Delete, contentDescription = "Delete account", tint = palette.red)
             }
           }
           HorizontalDivider(color = palette.border)
@@ -325,7 +325,7 @@ fun StoreManagerScreen(
               salePriceText = st.salePricePerKg.toString()
             },
           ) {
-            Icon(Icons.Filled.Edit, contentDescription = "Edit store", tint = palette.cyan)
+            Icon(Icons.Rounded.Edit, contentDescription = "Edit store", tint = palette.cyan)
           }
           IconButton(
             onClick = {
@@ -344,7 +344,7 @@ fun StoreManagerScreen(
               )
             },
           ) {
-            Icon(Icons.Filled.Delete, contentDescription = "Delete store", tint = palette.red)
+            Icon(Icons.Rounded.Delete, contentDescription = "Delete store", tint = palette.red)
           }
         }
         HorizontalDivider(color = palette.border)
@@ -379,7 +379,7 @@ fun CloseFinancialYearScreen(
     // Header band
     SarimCard(borderColor = palette.red.copy(alpha = 0.6f)) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Icon(Icons.Filled.Warning, contentDescription = null, tint = palette.red, modifier = Modifier.size(28.dp))
+        Icon(Icons.Rounded.Warning, contentDescription = null, tint = palette.red, modifier = Modifier.size(28.dp))
         Column(modifier = Modifier.weight(1f)) {
           Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("CLOSE FINANCIAL YEAR", color = palette.red, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -416,7 +416,7 @@ fun CloseFinancialYearScreen(
           passwordVisible = showPassword,
           trailingContent = {
             IconButton(onClick = { showPassword = !showPassword }) {
-              Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, contentDescription = "Toggle password", tint = palette.textMuted)
+              Icon(if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, contentDescription = "Toggle password", tint = palette.textMuted)
             }
           },
           testTag = "close_year_confirm_input",
@@ -473,7 +473,7 @@ fun CloseFinancialYearScreen(
     if (isComplete) {
       SarimCard(borderColor = palette.green.copy(alpha = 0.6f)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = palette.green, modifier = Modifier.size(28.dp))
+          Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = palette.green, modifier = Modifier.size(28.dp))
           Column {
             Text("Financial Year Closed", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Text("Compacted $compactedCount historical records cleanly into opening balances.", color = palette.textMuted, fontSize = 12.5.sp)

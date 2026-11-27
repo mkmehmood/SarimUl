@@ -21,7 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -134,18 +134,18 @@ fun CustomerDetailsScreen(
             onClick = { menuExpanded = !menuExpanded },
             modifier = Modifier.size(48.dp).testTag("customer_options_btn"),
           ) {
-            Icon(Icons.Filled.MoreVert, contentDescription = "Customer menu", tint = palette.textPrimary)
+            Icon(Icons.Rounded.MoreVert, contentDescription = "Customer menu", tint = palette.textPrimary)
           }
           DropdownMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
             modifier = Modifier
               .background(palette.surfaceElevated)
-              .border(1.dp, palette.green.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+              .border(1.dp, palette.green.copy(alpha = 0.4f), RoundedCornerShape(16.dp)),
           ) {
             DropdownMenuItem(
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("customer_menu_edit"),
-              leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(18.dp)) },
+              leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(18.dp)) },
               text = { Text("Edit customer", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
               onClick = {
                 menuExpanded = false
@@ -155,7 +155,7 @@ fun CustomerDetailsScreen(
             HorizontalDivider(color = palette.border)
             DropdownMenuItem(
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("customer_menu_pdf"),
-              leadingIcon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
+              leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
               text = { Text("Statement PDF", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
               onClick = {
                 menuExpanded = false
@@ -207,7 +207,7 @@ fun CustomerDetailsScreen(
           onValueChange = { searchQuery = it },
           label = "",
           placeholder = "Search history...",
-          leadingIcon = Icons.Filled.Search,
+          leadingIcon = Icons.Rounded.Search,
         )
       }
       if (!isRep) {
@@ -265,8 +265,8 @@ fun CustomerDetailsScreen(
             else -> if (tx.paymentType == "CASH") palette.green else palette.amber
           }
           Surface(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { selectedTxForSheet = tx },
-            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { selectedTxForSheet = tx },
+            shape = RoundedCornerShape(20.dp),
             color = palette.surface,
             border = BorderStroke(1.dp, palette.border),
           ) {
@@ -494,7 +494,7 @@ fun CustomerEditScreen(
         }
         SarimSecondaryButton(
           text = "Locate",
-          icon = Icons.Filled.MyLocation,
+          icon = Icons.Rounded.MyLocation,
           onClick = {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
             if (granted) fetchDeviceLocation() else locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)

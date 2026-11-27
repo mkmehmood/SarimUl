@@ -7,9 +7,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -170,7 +170,7 @@ fun RepSalesTab(
           }
 
           // Map pin plot canvas (offline-safe surface showing saved location pins)
-          Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFF0A2218), border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f))) {
+          Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFF0A2218), border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f))) {
             Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
               Canvas(modifier = Modifier.fillMaxSize()) {
                 for (i in 1..4) {
@@ -234,23 +234,23 @@ fun RepSalesTab(
                 PdfExporter.sharePdfReport(context, "rep_customers", "Rep Customers", "${filtered.size} customers", lines)
                   .onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") }
               },
-            ) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export rep customers PDF", tint = palette.cyan) }
+            ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export rep customers PDF", tint = palette.cyan) }
             IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.RepCustomerEdit(null)) }) {
-              Icon(Icons.Filled.Add, contentDescription = "Add rep customer", tint = palette.green)
+              Icon(Icons.Rounded.Add, contentDescription = "Add rep customer", tint = palette.green)
             }
           }
         }
-        SarimTextField(value = custFilter, onValueChange = { custFilter = it }, label = "", placeholder = "Search customers...", leadingIcon = Icons.Filled.Search)
+        SarimTextField(value = custFilter, onValueChange = { custFilter = it }, label = "", placeholder = "Search customers...", leadingIcon = Icons.Rounded.Search)
         if (filtered.isEmpty()) {
           SarimEmptyState("No customers yet", "Save a rep transaction or tap + to add a rep customer.")
         } else {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             filtered.forEach { c ->
               Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = palette.surfaceElevated,
                 border = BorderStroke(1.dp, palette.border),
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
                   viewModel.openStandalone(StandaloneScreen.RepCustomerDetails(c.id))
                 },
               ) {

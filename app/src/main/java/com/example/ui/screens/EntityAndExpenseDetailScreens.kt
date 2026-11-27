@@ -5,8 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -86,7 +86,7 @@ fun EntityDetailsScreen(
           )
         }
         IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }) {
-          Icon(Icons.Filled.Edit, contentDescription = "Edit entity", tint = palette.cyan)
+          Icon(Icons.Rounded.Edit, contentDescription = "Edit entity", tint = palette.cyan)
         }
       }
     }
@@ -111,7 +111,7 @@ fun EntityDetailsScreen(
       onValueChange = { searchQuery = it },
       label = "",
       placeholder = "Search history...",
-      leadingIcon = Icons.Filled.Search,
+      leadingIcon = Icons.Rounded.Search,
     )
 
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -201,7 +201,7 @@ fun ExpenseDetailsScreen(
       onValueChange = { searchQuery = it },
       label = "",
       placeholder = "Search history...",
-      leadingIcon = Icons.Filled.Search,
+      leadingIcon = Icons.Rounded.Search,
       testTag = "expense_history_search",
     )
 
