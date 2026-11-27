@@ -218,7 +218,7 @@ fun RepSalesTab(
     }
 
     // 2. Admin View Card (Map + Analytics)
-    if (state.isAdmin) {
+    if (state.showRepAdminView) {
       item {
         val repOpts = listOf("—") + (snap?.repsList ?: emptyList())
         val mapStart = SarimFormat.startOfDay(adminMapDate)

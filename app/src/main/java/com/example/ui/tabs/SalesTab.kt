@@ -593,6 +593,7 @@ fun SalesTab(
       }
     }
 
+    if (state.isAdmin) {
     // 2. CUSTOMERS List Card
     item {
       val filteredCusts = directCustomers.filter {
@@ -873,6 +874,7 @@ fun SalesTab(
         }
       }
     }
+    }  // end admin-only block
   }
 
   sheetSale?.let { s ->

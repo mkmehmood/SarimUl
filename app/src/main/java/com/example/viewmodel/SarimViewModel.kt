@@ -76,6 +76,19 @@ data class SarimUiState(
   val lastUpdatedMillis: Long = System.currentTimeMillis(),
 ) {
   val isAdmin: Boolean get() = UserRole.ADMIN in activeRoles
+
+  /** True when the account is a pure Rep session (mode "rep"): Rep screens stay as-is, admin view is hidden. */
+  val isRepMode: Boolean
+    get() = RolesHelper.deriveSession(RolesHelper.fromUserRoleSet(activeRoles)).mode == "rep"
+
+  /** Admin View card on the Rep tab: never shown in rep mode. */
+  val showRepAdminView: Boolean get() = isAdmin && !isRepMode
+
+  /**
+   * Locked-down account: non-admin and not a Rep. Only the entry card of the
+   * assigned tab plus Settings/personalization remain visible.
+   */
+  val isLockedAccount: Boolean get() = !isAdmin && UserRole.REP !in activeRoles
   val isGatedSession: Boolean
     get() = !isOfflineSession && currentUid.isNotBlank() && !isAdmin && !workspaceOwnerUid.isNullOrBlank()
   val hideMoneyFigures: Boolean
@@ -1233,6 +1246,12 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun openRoute(route: SarimRoute) {
+    if (_uiState.value.isLockedAccount && route != SarimRoute.Settings && route != SarimRoute.SoundHaptics &&
+      SarimRoute.tabForRoute(route.route) !in _uiState.value.visibleTabs()
+    ) {
+      postStatus("This section is locked for your account")
+      return
+    }
     feedbackManager.performTapFeedback()
     val matchedTab = SarimRoute.tabForRoute(route.route)
     _uiState.update {
@@ -1255,6 +1274,10 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
     if (missingId) {
       postStatus("Record details are unavailable")
+      return
+    }
+    if (_uiState.value.isLockedAccount && screen !is StandaloneScreen.Settings && screen !is StandaloneScreen.SoundHaptics) {
+      postStatus("This section is locked for your account")
       return
     }
     feedbackManager.performTapFeedback()

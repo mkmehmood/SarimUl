@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
@@ -330,7 +331,19 @@ fun SarimNavHost(
     },
   ) {
     composable(SarimRoute.Dashboard.route) {
-      OverviewTab(state, viewModel)
+      if (state.isAdmin) {
+        OverviewTab(state, viewModel)
+      } else {
+        androidx.compose.foundation.layout.Box(
+          modifier = Modifier.fillMaxSize(),
+          contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+          androidx.compose.material3.Text(
+            "No access assigned yet. Ask an admin to assign a role.",
+            color = com.example.ui.theme.LocalSarimPalette.current.textMuted,
+          )
+        }
+      }
     }
     composable(SarimRoute.Ledger.route) {
       DailyLedgerScreen(

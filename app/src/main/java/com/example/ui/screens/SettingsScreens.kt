@@ -61,16 +61,18 @@ fun SettingsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // 1. Data & Sync
-    SarimFieldLabel("Data & Sync")
-    SarimCard(contentPadding = 4.dp) {
-      SettingsRow("SYNC DATA", Icons.Rounded.Sync, palette.green) { viewModel.syncDataNow() }
-      HorizontalDivider(color = palette.border)
-      SettingsRow("BACKUP & RESTORE", Icons.Rounded.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
-      HorizontalDivider(color = palette.border)
-      SettingsRow("RECYCLE BIN", Icons.Rounded.DeleteOutline, palette.red) { viewModel.openStandalone(StandaloneScreen.RecycleBin) }
-      HorizontalDivider(color = palette.border)
-      SettingsRow("DATABASE STRUCTURE", Icons.Rounded.Storage, palette.purple) { viewModel.openStandalone(StandaloneScreen.DatabaseStructure) }
+    if (!state.isLockedAccount) {
+      // 1. Data & Sync
+      SarimFieldLabel("Data & Sync")
+      SarimCard(contentPadding = 4.dp) {
+        SettingsRow("SYNC DATA", Icons.Rounded.Sync, palette.green) { viewModel.syncDataNow() }
+        HorizontalDivider(color = palette.border)
+        SettingsRow("BACKUP & RESTORE", Icons.Rounded.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
+        HorizontalDivider(color = palette.border)
+        SettingsRow("RECYCLE BIN", Icons.Rounded.DeleteOutline, palette.red) { viewModel.openStandalone(StandaloneScreen.RecycleBin) }
+        HorizontalDivider(color = palette.border)
+        SettingsRow("DATABASE STRUCTURE", Icons.Rounded.Storage, palette.purple) { viewModel.openStandalone(StandaloneScreen.DatabaseStructure) }
+      }
     }
 
     // 2. Appearance & Device

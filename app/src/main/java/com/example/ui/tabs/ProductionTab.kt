@@ -100,7 +100,7 @@ fun ProductionTab(
       }
     }
 
-    if (topView == ProdTopView.STORE_ENTRY) {
+    if (topView == ProdTopView.STORE_ENTRY || !state.isAdmin) {
       item {
         SarimCard {
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -380,8 +380,8 @@ fun ProductionTab(
       }
     }
 
-    // Production History Accordion
-    item {
+    // Production History Accordion (admin only; entry-only for other roles)
+    if (state.isAdmin) item {
       Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
       Spacer(Modifier.height(6.dp))
       val records = state.productionEntries.map { p ->
