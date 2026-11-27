@@ -172,6 +172,13 @@ fun StockTransferScreen(
             subtitle = t.note.ifBlank { "Inter-store transfer" },
             amountText = SarimFormat.formatKg(t.quantityKg),
             amountColor = palette.cyan,
+            detailMetrics = listOf(
+              "From Store" to t.fromStoreName,
+              "To Store" to t.toStoreName,
+              "Quantity" to SarimFormat.formatKg(t.quantityKg),
+              "Date" to SarimFormat.dateInput(t.dateEpoch),
+            ),
+            detailNote = if (t.note.isNotBlank()) "Note: ${t.note}" else "",
           )
         },
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
@@ -180,9 +187,6 @@ fun StockTransferScreen(
         emptySubtitle = "No stock transfers recorded yet.",
       ) { rec ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          if (rec.item.note.isNotBlank()) {
-            Text("Note: ${rec.item.note}", color = palette.textMuted, fontSize = 12.sp)
-          }
           SarimDangerButton(
             text = "Delete Transfer",
             onClick = {
@@ -374,6 +378,13 @@ fun PaymentTransferScreen(
             subtitle = t.note.ifBlank { "Balance transfer" },
             amountText = SarimFormat.formatRs(t.amount, privacyHidden = state.hideMoneyFigures),
             amountColor = palette.purple,
+            detailMetrics = listOf(
+              "From Entity" to t.fromEntityName,
+              "To Entity" to t.toEntityName,
+              "Amount" to SarimFormat.formatRs(t.amount, privacyHidden = state.hideMoneyFigures),
+              "Date" to SarimFormat.dateInput(t.dateEpoch),
+            ),
+            detailNote = if (t.note.isNotBlank()) "Note: ${t.note}" else "",
           )
         },
         yearSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
@@ -382,7 +393,6 @@ fun PaymentTransferScreen(
         emptySubtitle = "No payment transfers recorded yet.",
       ) { rec ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          if (rec.item.note.isNotBlank()) Text("Note: ${rec.item.note}", color = palette.textMuted, fontSize = 12.sp)
           SarimDangerButton(
             text = "Delete Transfer",
             onClick = {

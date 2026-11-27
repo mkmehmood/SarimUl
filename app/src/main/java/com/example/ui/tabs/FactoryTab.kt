@@ -284,6 +284,14 @@ fun FactoryTab(
             amountText = SarimFormat.formatRs(b.totalCost, true, hideMoney),
             amountColor = palette.red,
             showDots = true,
+            detailMetrics = listOf(
+              "Units Produced" to SarimFormat.formatQty(b.unitsProduced, 2),
+              "Output kg" to SarimFormat.formatKg(b.outputKg),
+              "Raw Used kg" to SarimFormat.formatKg(b.rawUsedKg),
+              "Materials Cost" to SarimFormat.formatRs(b.materialsCost, false, hideMoney),
+              "Additional Cost" to SarimFormat.formatRs(b.additionalCost, false, hideMoney),
+              "Cost / Unit" to SarimFormat.formatRs(b.costPerUnit, false, hideMoney),
+            ),
           )
         }
         AccordionHistoryList(
@@ -291,8 +299,61 @@ fun FactoryTab(
           yearSummary = { items -> "${items.size} entries" },
           monthSummary = { items -> "${items.size} entries · Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
           daySummary = { items -> "${items.size} batches" },
+          hasDropdownDetails = true,
           onItemClick = { rec -> sheetBatch = rec.item },
-        )
+        ) { rec ->
+          val b = rec.item
+          val usedMats = remember(b.materialsUsedJson) { JsonCodecs.decodeFormulaMaterialsUsed(b.materialsUsedJson) }
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (usedMats.isNotEmpty()) {
+              SarimCollapsibleDropdownSection(
+                title = "MATERIALS BREAKDOWN",
+                accentColor = palette.cyan,
+                countText = "${usedMats.size}",
+              ) {
+                usedMats.forEach { mat ->
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
+              }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimSecondaryButton(
+                text = "Edit",
+                onClick = {
+                  editingBatchId = b.id
+                  factoryDate = b.dateEpoch
+                  selectedFormulaId = b.formulaId
+                  unitsText = b.unitsProduced.toInt().coerceAtLeast(1).toString()
+                },
+                modifier = Modifier.weight(1f),
+              )
+              SarimDangerButton(
+                text = "Delete & Restore",
+                onClick = {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Delete Factory Batch",
+                      body = "Restore raw materials and move this ${b.formulaName} batch to Recycle Bin?",
+                      confirmLabel = "Delete",
+                      onConfirm = {
+                        viewModel.launchSafely(
+                          errorTitle = "Delete Failed",
+                          successMessage = "Deleted factory batch",
+                        ) {
+                          viewModel.repository.deleteFactoryBatch(b.id)
+                        }
+                      },
+                    )
+                  )
+                },
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+        }
       }
     }
   }
@@ -314,11 +375,16 @@ fun FactoryTab(
       ),
       extraContent = if (usedMats.isNotEmpty()) {
         {
-          SarimFieldLabel("MATERIALS BREAKDOWN")
-          usedMats.forEach { mat ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
-              Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+          SarimCollapsibleDropdownSection(
+            title = "MATERIALS BREAKDOWN",
+            accentColor = palette.cyan,
+            countText = "${usedMats.size}",
+          ) {
+            usedMats.forEach { mat ->
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
+                Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+              }
             }
           }
         }

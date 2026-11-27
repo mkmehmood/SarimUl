@@ -132,6 +132,13 @@ fun EntityDetailsScreen(
             subtitle = tx.description.ifBlank { entity.name },
             amountText = SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
             amountColor = if (tx.type == "PAYMENT_IN") palette.green else palette.red,
+            detailMetrics = listOf(
+              "Type" to tx.type.replace("_", " "),
+              "Date" to SarimFormat.dateInput(tx.dateEpoch),
+              "Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
+              "Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked",
+            ),
+            detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
           )
         },
         yearSummary = { items -> "${items.size} tx" },
@@ -139,7 +146,13 @@ fun EntityDetailsScreen(
         daySummary = { items -> "${items.size} row" },
         emptySubtitle = "No payment history found for ${entity.name}.",
       ) { rec ->
-        if (rec.item.description.isNotBlank()) Text(rec.item.description, color = palette.textMuted, fontSize = 12.sp)
+        if (rec.item.photoUri.isNotBlank()) {
+          SarimSecondaryButton(
+            text = "View Attached Photo",
+            onClick = { viewModel.openPhotoViewer(listOf(rec.item.photoUri), 0) },
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
       }
     }
     Spacer(Modifier.height(24.dp))
@@ -275,6 +288,13 @@ fun ExpenseDetailsScreen(
             subtitle = tx.description.ifBlank { "Operating expense" },
             amountText = SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
             amountColor = palette.red,
+            detailMetrics = listOf(
+              "Category" to expenseName,
+              "Date" to SarimFormat.dateInput(tx.dateEpoch),
+              "Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
+              "Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked",
+            ),
+            detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
           )
         },
         yearSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
@@ -282,7 +302,13 @@ fun ExpenseDetailsScreen(
         daySummary = { items -> "${items.size} row" },
         emptySubtitle = "No expense records for $expenseName in this range.",
       ) { rec ->
-        if (rec.item.description.isNotBlank()) Text(rec.item.description, color = palette.textMuted, fontSize = 12.sp)
+        if (rec.item.photoUri.isNotBlank()) {
+          SarimSecondaryButton(
+            text = "View Attached Photo",
+            onClick = { viewModel.openPhotoViewer(listOf(rec.item.photoUri), 0) },
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
       }
     }
 

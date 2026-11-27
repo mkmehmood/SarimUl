@@ -492,6 +492,18 @@ fun CalculatorTab(
             amountColor = sc,
             chipText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
             chipColor = sc,
+            detailMetrics = listOf(
+              "Total Sold" to SarimFormat.formatKg(s.totalSoldKg),
+              "Returned" to SarimFormat.formatKg(s.returnedKg),
+              "Expired" to SarimFormat.formatKg(s.expiredKg),
+              "Net Sold" to SarimFormat.formatKg(s.netSoldKg),
+              "Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney),
+              "Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney),
+              "Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney),
+              "Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney),
+              "Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney),
+              "Comm Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney),
+            ),
           )
         }
         AccordionHistoryList(
@@ -499,8 +511,85 @@ fun CalculatorTab(
           yearSummary = { items -> "${items.size} settlements" },
           monthSummary = { items -> "${items.size} · Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
           daySummary = { items -> "${items.size} entries" },
+          hasDropdownDetails = true,
           onItemClick = { rec -> sheetSettlement = rec.item },
-        )
+        ) { rec ->
+          val s = rec.item
+          val expLines = remember(s.expenseItemsJson) { JsonCodecs.decodeLineItems(s.expenseItemsJson) }
+          val commLines = remember(s.commissionItemsJson) { JsonCodecs.decodeLineItems(s.commissionItemsJson) }
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (expLines.isNotEmpty()) {
+              SarimCollapsibleDropdownSection(
+                title = "EXPENSE BREAKDOWN",
+                accentColor = palette.red,
+                countText = "${expLines.size}",
+              ) {
+                expLines.forEach {
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
+              }
+            }
+            if (commLines.isNotEmpty()) {
+              SarimCollapsibleDropdownSection(
+                title = "COMMISSION BREAKDOWN",
+                accentColor = palette.green,
+                countText = "${commLines.size}",
+              ) {
+                commLines.forEach {
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
+              }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimSecondaryButton(
+                text = "Edit",
+                onClick = {
+                  editingSettlementId = s.id
+                  selectedRepOption = s.repName
+                  fromDate = s.fromDateEpoch
+                  toDate = s.toDateEpoch
+                  sharedQtyText = s.sharedDeductionKg.toString()
+                  if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
+                  creditSalesQtyText = s.creditSalesQty.toString()
+                  commissionPerUnitText = s.commissionPerUnit.toString()
+                  commissionItems = commLines
+                  recoveredCreditText = s.recoveredCredit.toString()
+                  expenseItems = expLines
+                  receivedCashText = s.receivedCash.toString()
+                  addToLedger = s.addToLedger
+                },
+                modifier = Modifier.weight(1f),
+              )
+              SarimDangerButton(
+                text = "Delete",
+                onClick = {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Delete Settlement",
+                      body = "Unlink reconciled sales, reverse return/CHORA changes, and move this settlement to Recycle Bin?",
+                      confirmLabel = "Delete",
+                      onConfirm = {
+                        viewModel.launchSafely(
+                          errorTitle = "Delete Failed",
+                          successMessage = "Deleted settlement",
+                        ) {
+                          viewModel.repository.deleteSettlement(s.id)
+                        }
+                      },
+                    )
+                  )
+                },
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+        }
       }
     }
   }
@@ -538,15 +627,31 @@ fun CalculatorTab(
       extraContent = if (expLines.isNotEmpty() || commLines.isNotEmpty()) {
         {
           if (expLines.isNotEmpty()) {
-            SarimFieldLabel("Expense Breakdown")
-            expLines.forEach {
-              Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp)
+            SarimCollapsibleDropdownSection(
+              title = "EXPENSE BREAKDOWN",
+              accentColor = palette.red,
+              countText = "${expLines.size}",
+            ) {
+              expLines.forEach {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                  Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                  Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                }
+              }
             }
           }
           if (commLines.isNotEmpty()) {
-            SarimFieldLabel("Commission Breakdown")
-            commLines.forEach {
-              Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp)
+            SarimCollapsibleDropdownSection(
+              title = "COMMISSION BREAKDOWN",
+              accentColor = palette.green,
+              countText = "${commLines.size}",
+            ) {
+              commLines.forEach {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                  Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                  Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                }
+              }
             }
           }
         }

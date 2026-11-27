@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -77,6 +79,7 @@ fun CustomerDetailsScreen(
   var searchQuery by remember { mutableStateOf("") }
   var filterChip by remember { mutableStateOf("All") }
   var selectedTxForSheet by remember { mutableStateOf<SaleTransactionEntity?>(null) }
+  var expandedTxIds by remember { mutableStateOf(setOf<String>()) }
   var menuExpanded by remember { mutableStateOf(false) }
 
   val filtered = remember(custSales, searchQuery, filterChip) {
@@ -264,56 +267,110 @@ fun CustomerDetailsScreen(
             "MONEY_OUT" -> palette.red
             else -> if (tx.paymentType == "CASH") palette.green else palette.amber
           }
+          val isExpanded = tx.id in expandedTxIds
+          val txDetails = buildList {
+            if (tx.storeName.isNotBlank()) add("Store" to tx.storeName)
+            if (tx.repName.isNotBlank()) add("Rep" to tx.repName)
+            if (tx.quantityKg > 0.0) {
+              add("Quantity" to SarimFormat.formatKg(tx.quantityKg))
+              add("Rate / kg" to SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures))
+            }
+            if (tx.mode == "SALE") {
+              add("Total Value" to SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures))
+              add("Profit" to SarimFormat.formatRs(tx.profit, privacyHidden = state.hideMoneyFigures))
+            } else {
+              add("Amount Received" to SarimFormat.formatRs(tx.amountReceived, privacyHidden = state.hideMoneyFigures))
+              if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
+            }
+            add("Balance After" to SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures))
+          }
           Surface(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { selectedTxForSheet = tx },
             shape = RoundedCornerShape(20.dp),
             color = palette.surface,
-            border = BorderStroke(1.dp, palette.border),
+            border = BorderStroke(1.dp, if (isExpanded) palette.green.copy(alpha = 0.55f) else palette.border),
           ) {
-            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(38.dp)) {
-                Text(SarimFormat.formatDayNumber(tx.dateEpoch), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Text(SarimFormat.formatWeekday(tx.dateEpoch), color = palette.textMuted, fontSize = 10.sp)
-              }
-              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                  Text(typeLabel, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                  SarimChip(if (tx.mode == "SALE") tx.paymentType else tx.mode, toneColor)
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(38.dp)) {
+                  Text(SarimFormat.formatDayNumber(tx.dateEpoch), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                  Text(SarimFormat.formatWeekday(tx.dateEpoch), color = palette.textMuted, fontSize = 10.sp)
                 }
-                if (tx.quantityKg > 0.0) {
-                  Text("${SarimFormat.formatKg(tx.quantityKg)} @ ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}/kg", color = palette.textMuted, fontSize = 11.5.sp)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(typeLabel, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                    SarimChip(if (tx.mode == "SALE") tx.paymentType else tx.mode, toneColor)
+                  }
+                  if (tx.quantityKg > 0.0) {
+                    Text("${SarimFormat.formatKg(tx.quantityKg)} @ ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}/kg", color = palette.textMuted, fontSize = 11.5.sp)
+                  }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                  Text(
+                    SarimFormat.formatRs(if (tx.mode == "SALE") tx.totalValue else tx.amountReceived, privacyHidden = state.hideMoneyFigures),
+                    color = toneColor,
+                    style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                  )
+                  Text("Bal ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}", color = palette.textMuted, fontSize = 10.5.sp)
+                }
+                IconButton(
+                  onClick = {
+                    expandedTxIds = if (isExpanded) expandedTxIds - tx.id else expandedTxIds + tx.id
+                  },
+                  modifier = Modifier.size(48.dp).testTag("customer_history_expand_${tx.id}"),
+                ) {
+                  Icon(
+                    imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse details" else "Expand details",
+                    tint = if (isExpanded) palette.green else palette.textMuted,
+                  )
                 }
               }
-              Column(horizontalAlignment = Alignment.End) {
-                Text(
-                  SarimFormat.formatRs(if (tx.mode == "SALE") tx.totalValue else tx.amountReceived, privacyHidden = state.hideMoneyFigures),
-                  color = toneColor,
-                  style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
-                )
-                Text("Bal ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}", color = palette.textMuted, fontSize = 10.5.sp)
-                if (tx.mode == "SALE") {
-                  TextButton(
-                    contentPadding = PaddingValues(0.dp),
-                    onClick = {
-                      PdfExporter.sharePdfReport(
-                        context = context,
-                        fileNamePrefix = "invoice_${customer.name.replace(" ", "_")}",
-                        title = "Sale Invoice — ${customer.name}",
-                        subtitle = SarimFormat.formatDate(tx.dateEpoch),
-                        lines = listOf(
-                          "Store: ${tx.storeName}",
-                          "Type: ${tx.paymentType}",
-                          "Quantity: ${SarimFormat.formatKg(tx.quantityKg)}",
-                          "Price/kg: ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}",
-                          "Total: ${SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures)}",
-                          "Running Balance: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}",
-                        ),
-                      ).onFailure { err ->
-                        viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+
+              AnimatedVisibility(visible = isExpanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  HorizontalDivider(color = palette.border)
+                  txDetails.chunked(2).forEach { pair ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                      pair.forEach { (k, v) ->
+                        Surface(
+                          shape = RoundedCornerShape(10.dp),
+                          color = palette.surfaceElevated,
+                          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+                          modifier = Modifier.weight(1f),
+                        ) {
+                          Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text(k, color = palette.textMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(v, color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                          }
+                        }
                       }
-                    },
-                  ) {
-                    Text("Invoice", color = palette.cyan, fontSize = 11.5.sp)
+                      if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                  }
+                  if (tx.mode == "SALE") {
+                    SarimSecondaryButton(
+                      text = "Invoice PDF",
+                      modifier = Modifier.fillMaxWidth(),
+                      onClick = {
+                        PdfExporter.sharePdfReport(
+                          context = context,
+                          fileNamePrefix = "invoice_${customer.name.replace(" ", "_")}",
+                          title = "Sale Invoice — ${customer.name}",
+                          subtitle = SarimFormat.formatDate(tx.dateEpoch),
+                          lines = listOf(
+                            "Store: ${tx.storeName}",
+                            "Type: ${tx.paymentType}",
+                            "Quantity: ${SarimFormat.formatKg(tx.quantityKg)}",
+                            "Price/kg: ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}",
+                            "Total: ${SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures)}",
+                            "Running Balance: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}",
+                          ),
+                        ).onFailure { err ->
+                          viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+                        }
+                      },
+                    )
                   }
                 }
               }

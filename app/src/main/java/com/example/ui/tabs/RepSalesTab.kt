@@ -321,6 +321,20 @@ fun RepSalesTab(
           chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
           chipColor = if (isCash || s.creditReceived) palette.green else palette.amber,
           showStripe = !s.creditReceived && s.mode == "SALE" && s.paymentType == "CREDIT",
+          detailMetrics = buildList {
+            add("Mode" to s.mode)
+            add("Rep" to s.repName.ifBlank { "Rep" })
+            if (s.mode == "SALE") {
+              add("Quantity" to SarimFormat.formatKg(s.quantityKg))
+              add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg))
+              add("Total Value" to SarimFormat.formatRs(s.totalValue))
+              add("Payment" to s.paymentType)
+            } else {
+              add("Received" to SarimFormat.formatRs(s.amountReceived))
+              if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
+            }
+            add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
+          },
         )
       }
       AccordionHistoryList(
@@ -328,8 +342,49 @@ fun RepSalesTab(
         yearSummary = { "${it.size} entries" },
         monthSummary = { "${it.size} entries" },
         daySummary = { "${it.size} entries" },
+        hasDropdownDetails = true,
         onItemClick = { rec -> sheetRepSale = rec.item },
-      )
+      ) { rec ->
+        val s = rec.item
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          SarimSecondaryButton(
+            text = "Edit",
+            onClick = {
+              editingRepTxId = s.id
+              dateEpoch = s.dateEpoch
+              customerName = s.customerName
+              if (s.mode == "COLLECTION") {
+                mode = RepTxMode.COLLECTION
+                amountReceivedText = s.amountReceived.toString()
+                expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
+              } else {
+                mode = RepTxMode.SALE
+                quantityText = s.quantityKg.toString()
+                payType = if (s.paymentType == "CASH") RepPayType.CASH else RepPayType.CREDIT
+              }
+            },
+            modifier = Modifier.weight(1f),
+          )
+          SarimDangerButton(
+            text = "Delete",
+            onClick = {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Transaction?",
+                  body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                      viewModel.repository.deleteSale(s.id)
+                    }
+                  },
+                )
+              )
+            },
+            modifier = Modifier.weight(1f),
+          )
+        }
+      }
     }
   }
 

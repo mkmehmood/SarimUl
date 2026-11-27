@@ -562,6 +562,23 @@ fun SalesTab(
       val directTx = state.sales.filter { !it.isRepSale }
       val records = directTx.map { s ->
         val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+        val saleDetails = buildList {
+          add("Mode" to s.mode)
+          if (s.storeName.isNotBlank()) add("Store" to s.storeName)
+          if (s.mode == "SALE") {
+            add("Quantity" to SarimFormat.formatKg(s.quantityKg))
+            add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg, true, hideMoney))
+            add("Total Cost" to SarimFormat.formatRs(s.totalCost, false, hideMoney))
+            add("Total Value" to SarimFormat.formatRs(s.totalValue, false, hideMoney))
+            add("Profit" to SarimFormat.formatRs(s.profit, false, hideMoney))
+            add("Payment" to s.paymentType)
+            add("Rep" to s.repName.ifBlank { "Direct" })
+          } else {
+            add("Received" to SarimFormat.formatRs(s.amountReceived, false, hideMoney))
+            if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
+          }
+          add("Balance After" to SarimFormat.formatRs(s.balanceAfter, false, hideMoney))
+        }
         HistoryRecordDisplay(
           item = s,
           dateEpoch = s.dateEpoch,
@@ -572,6 +589,7 @@ fun SalesTab(
           chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
           chipColor = if (isCash) palette.green else palette.amber,
           showStripe = !s.creditReceived && s.mode == "SALE" && s.paymentType == "CREDIT",
+          detailMetrics = saleDetails,
         )
       }
       AccordionHistoryList(
@@ -579,8 +597,79 @@ fun SalesTab(
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         monthSummary = { items -> "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { it.item.totalValue }, false, hideMoney)}" },
         daySummary = { items -> "${items.size} entries" },
+        hasDropdownDetails = true,
         onItemClick = { rec -> sheetSale = rec.item },
-      )
+      ) { rec ->
+        val s = rec.item
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          SarimSecondaryButton(
+            text = "Invoice PDF",
+            icon = Icons.Rounded.Share,
+            onClick = {
+              PdfExporter.sharePdfReport(
+                context,
+                "invoice_${s.id.take(6)}",
+                "Sales Invoice · ${s.customerName}",
+                SarimFormat.formatDate(s.dateEpoch),
+                listOf(
+                  "Customer: ${s.customerName}",
+                  "Store: ${s.storeName}",
+                  "Quantity: ${SarimFormat.formatKg(s.quantityKg)}",
+                  "Rate: ${SarimFormat.formatRs(s.pricePerKg)}/kg",
+                  "Payment: ${s.paymentType}",
+                  "Total Value: ${SarimFormat.formatRs(s.totalValue)}",
+                ),
+              ).onFailure { err ->
+                viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+              }
+            },
+            modifier = Modifier.fillMaxWidth(),
+          )
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimSecondaryButton(
+              text = "Edit",
+              onClick = {
+                editingSaleId = s.id
+                dateEpoch = s.dateEpoch
+                customerName = s.customerName
+                if (s.mode == "COLLECTION") {
+                  mode = SalesMode.COLLECTION
+                  amountReceivedText = s.amountReceived.toString()
+                  expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
+                  collAddToLedger = s.addToLedger
+                } else {
+                  mode = SalesMode.SALE
+                  quantityText = s.quantityKg.toString()
+                  if (s.storeKey.isNotBlank()) selectedStoreKey = s.storeKey
+                  selectedRep = s.repName.ifBlank { "Direct" }
+                  paymentChoice = if (s.paymentType == "CASH") PaymentChoice.CASH else PaymentChoice.CREDIT
+                  saleAddToLedger = s.addToLedger
+                }
+              },
+              modifier = Modifier.weight(1f),
+            )
+            SarimDangerButton(
+              text = "Delete",
+              icon = Icons.Rounded.Delete,
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Transaction?",
+                    body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                        viewModel.repository.deleteSale(s.id)
+                      }
+                    },
+                  )
+                )
+              },
+              modifier = Modifier.weight(1f),
+            )
+          }
+        }
+      }
     }
   }
 

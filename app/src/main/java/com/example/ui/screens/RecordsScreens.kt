@@ -592,6 +592,14 @@ fun AddRawMaterialScreen(
               amountText = SarimFormat.formatRs(p.totalAmount, privacyHidden = state.hideMoneyFigures),
               amountColor = palette.amber,
               chipText = p.supplierName ?: p.supplierMode,
+              detailMetrics = listOf(
+                "Units Bought" to "${SarimFormat.formatQty(p.unitsBought, 2)} ${p.unitName}",
+                "Total Weight" to SarimFormat.formatKg(p.totalKg),
+                "Cost / ${p.unitName}" to SarimFormat.formatRs(p.costPerUnit, privacyHidden = state.hideMoneyFigures),
+                "Cost / kg" to SarimFormat.formatRs(if (p.totalKg > 0.0001) p.totalAmount / p.totalKg else 0.0, privacyHidden = state.hideMoneyFigures),
+                "Supplier" to (p.supplierName ?: p.supplierMode),
+                "Date" to SarimFormat.dateInput(p.dateEpoch),
+              ),
             )
           },
           yearSummary = { items -> "${items.size} entries · Purchased ${SarimFormat.formatRs(items.sumOf { it.item.totalAmount }, showSymbol = false, privacyHidden = state.hideMoneyFigures)}" },
@@ -601,7 +609,6 @@ fun AddRawMaterialScreen(
         ) { rec ->
           val p = rec.item
           Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Unit cost: ${SarimFormat.formatRs(p.costPerUnit, privacyHidden = state.hideMoneyFigures)} / ${p.unitName}", color = palette.textMuted, fontSize = 12.sp)
             SarimDangerButton(
               text = "Delete Purchase",
               onClick = {

@@ -365,6 +365,8 @@ fun ProductionTab(
       Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
       Spacer(Modifier.height(6.dp))
       val records = state.productionEntries.map { p ->
+        val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
+        val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
         HistoryRecordDisplay(
           item = p,
           dateEpoch = p.dateEpoch,
@@ -374,6 +376,17 @@ fun ProductionTab(
           amountColor = storeColorForKey(p.storeKey, palette.isDark),
           chipText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
           chipColor = if (p.totalProfit >= 0) palette.green else palette.red,
+          detailMetrics = listOf(
+            "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
+            "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
+            "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
+            "Formula Units" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
+            "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
+            "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
+            "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
+            "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
+            "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+          ),
         )
       }
       AccordionHistoryList(
@@ -381,8 +394,60 @@ fun ProductionTab(
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         monthSummary = { items -> "${items.size} entries · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
         daySummary = { items -> "${items.size} · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
+        hasDropdownDetails = true,
         onItemClick = { rec -> sheetEntry = rec.item },
-      )
+      ) { rec ->
+        val p = rec.item
+        val photos = remember(p.photoUrisJson) { JsonCodecs.decodeStrings(p.photoUrisJson) }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (photos.isNotEmpty()) {
+            SarimSecondaryButton(
+              text = "View ${photos.size} Photo(s)",
+              onClick = { viewModel.openPhotoViewer(photos, 0) },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimSecondaryButton(
+              text = "Edit",
+              icon = Icons.Rounded.Edit,
+              onClick = {
+                editingEntryId = p.id
+                selectedDate = p.dateEpoch
+                selectedStoreKey = p.storeKey
+                grossWeight = p.grossWeightKg.toString()
+                containerWeight = p.containerWeightKg.toString()
+                formulaUnits = p.formulaUnitsUsed.toString()
+                attachedPhotos = photos
+                topView = ProdTopView.STORE_ENTRY
+              },
+              modifier = Modifier.weight(1f),
+            )
+            SarimDangerButton(
+              text = "Delete",
+              icon = Icons.Rounded.Delete,
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Production Entry?",
+                    body = "Store: ${p.storeName}\nNet Weight: ${SarimFormat.formatKg(p.netWeightKg)}\nMoved to Recycle Bin for 90 days.",
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(
+                        errorTitle = "Delete Failed",
+                        successMessage = "Production entry deleted",
+                      ) {
+                        viewModel.repository.deleteProductionEntry(p.id)
+                      }
+                    },
+                  )
+                )
+              },
+              modifier = Modifier.weight(1f),
+            )
+          }
+        }
+      }
     }
   }
 

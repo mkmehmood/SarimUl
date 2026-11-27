@@ -211,4 +211,13 @@ class SarimCrashFixesUnitTest {
     assertEquals(false, snapshot.formulaLinkedMap["f1"])
     assertTrue(snapshot.recentActivity.isNotEmpty())
   }
+
+  @Test
+  fun sarimNavigation_excludesRemovedInventoryAndSupportsWebTabs() {
+    assertFalse(com.example.ui.navigation.SarimRoute.isTopBarPrimaryRoute("inventory"))
+    assertEquals(null, com.example.ui.navigation.SarimRoute.fromRoute("inventory"))
+    assertTrue(com.example.ui.navigation.SarimRoute.isTopBarPrimaryRoute("dashboard"))
+    assertTrue(com.example.ui.navigation.SarimRoute.isTopBarPrimaryRoute("ledger"))
+    assertEquals("DAILY LEDGER", com.example.ui.navigation.SarimRoute.titleForRoute("ledger"))
+  }
 }

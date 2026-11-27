@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.*
@@ -175,40 +174,25 @@ fun AppShell(
                 }
               }
             }
-          } else {
-            // Standalone / Ledger screen top bar with Back Arrow and Cinzel title
+          } else if (currentRoute != SarimRoute.CloseFinancialYear.route) {
+            // Standalone / Ledger screen header (left-aligned Cinzel title, no back arrow to match web)
             Box(
               modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 8.dp),
+                .height(52.dp)
+                .padding(horizontal = 16.dp),
             ) {
-              IconButton(
-                onClick = {
-                  if (!navController.popBackStack()) {
-                    val fallbackRoute = SarimRoute.fromRoute(SarimRoute.routeForTab(state.visibleTabs().first()))
-                      ?: SarimRoute.Dashboard
-                    viewModel.openRoute(fallbackRoute)
-                  }
-                },
-                modifier = Modifier
-                  .align(Alignment.CenterStart)
-                  .size(48.dp)
-                  .testTag("standalone_back_btn"),
-              ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
-              }
               Text(
                 text = subScreenTitle ?: "DAILY LEDGER",
-                color = if (currentRoute == SarimRoute.CloseFinancialYear.route) palette.red else palette.textPrimary,
+                color = palette.textPrimary,
                 fontFamily = CinzelFontFamily,
                 fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                letterSpacing = 1.2.sp,
+                fontSize = 18.sp,
+                letterSpacing = 1.4.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.Center).padding(horizontal = 52.dp),
+                modifier = Modifier.align(Alignment.CenterStart),
               )
             }
           }

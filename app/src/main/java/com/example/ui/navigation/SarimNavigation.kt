@@ -29,7 +29,7 @@ sealed class SarimRoute(
   val title: String,
   val isPrimaryDestination: Boolean = false,
 ) {
-  // Primary Hub Views (Dashboard <-> Ledger)
+  // Primary Hub Views
   data object Dashboard : SarimRoute("dashboard", "Dashboard", isPrimaryDestination = true)
   data object Ledger : SarimRoute("ledger", "Daily Ledger", isPrimaryDestination = true)
 
@@ -158,7 +158,6 @@ sealed class SarimRoute(
   }
 
   companion object {
-
     fun routeForTab(tab: MainTab): String = when (tab) {
       MainTab.OVERVIEW -> Dashboard.route
       MainTab.PRODUCTION -> Production.route

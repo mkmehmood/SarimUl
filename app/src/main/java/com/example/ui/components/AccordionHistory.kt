@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,7 +39,68 @@ data class HistoryRecordDisplay<T>(
   val chipColor: Color? = null,
   val showStripe: Boolean = false,
   val showDots: Boolean = false,
+  val detailMetrics: List<Pair<String, String>> = emptyList(),
+  val detailNote: String = "",
 )
+
+@Composable
+fun SarimCollapsibleDropdownSection(
+  title: String,
+  accentColor: Color,
+  countText: String = "",
+  initiallyExpanded: Boolean = false,
+  modifier: Modifier = Modifier,
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  val palette = LocalSarimPalette.current
+  var expanded by remember(title) { mutableStateOf(initiallyExpanded) }
+  Surface(
+    shape = RoundedCornerShape(14.dp),
+    color = palette.surface,
+    border = BorderStroke(1.dp, accentColor.copy(alpha = if (expanded) 0.55f else 0.35f)),
+    modifier = modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
+      .clickable { expanded = !expanded },
+  ) {
+    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.weight(1f),
+        ) {
+          Text(
+            text = title,
+            color = accentColor,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.7.sp,
+          )
+          if (countText.isNotBlank()) {
+            SarimChip(countText, accentColor)
+          }
+        }
+        Icon(
+          imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+          contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+          tint = accentColor,
+          modifier = Modifier.size(20.dp),
+        )
+      }
+      AnimatedVisibility(visible = expanded) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          HorizontalDivider(color = palette.border)
+          content()
+        }
+      }
+    }
+  }
+}
 
 @Composable
 fun <T> AccordionHistoryList(
@@ -48,6 +110,7 @@ fun <T> AccordionHistoryList(
   daySummary: (List<HistoryRecordDisplay<T>>) -> String,
   emptyTitle: String = "No records found",
   emptySubtitle: String = "No records found for this selection.",
+  hasDropdownDetails: Boolean = false,
   onItemClick: ((HistoryRecordDisplay<T>) -> Unit)? = null,
   expandedContent: @Composable (HistoryRecordDisplay<T>) -> Unit = {},
 ) {
@@ -133,6 +196,7 @@ fun <T> AccordionHistoryList(
                         byDay.forEach { (dayLabel, dayItems) ->
                           val dKey = "$mKey-$dayLabel"
                           val dayOpen = dKey in expandedDays
+                          val firstEpoch = dayItems.firstOrNull()?.dateEpoch ?: 0L
                           Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = palette.surface,
@@ -142,30 +206,69 @@ fun <T> AccordionHistoryList(
                               Row(
                                 modifier = Modifier
                                   .fillMaxWidth()
-                                  .defaultMinSize(minHeight = 40.dp)
+                                  .defaultMinSize(minHeight = 44.dp)
                                   .clickable {
                                     expandedDays = if (dayOpen) expandedDays - dKey else expandedDays + dKey
                                   }
                                   .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                               ) {
-                                Text(dayLabel, color = palette.cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                Text(daySummary(dayItems), color = palette.textMuted, fontSize = 11.sp)
-                                Icon(if (dayOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+                                Column(
+                                  horizontalAlignment = Alignment.CenterHorizontally,
+                                  modifier = Modifier.width(34.dp),
+                                ) {
+                                  Text(
+                                    text = SarimFormat.formatDayNumber(firstEpoch),
+                                    color = palette.cyan,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                  )
+                                  Text(
+                                    text = SarimFormat.formatWeekday(firstEpoch),
+                                    color = palette.textMuted,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                  )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                  Text(
+                                    text = dayLabel,
+                                    color = palette.textPrimary,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                  )
+                                  Text(
+                                    text = daySummary(dayItems),
+                                    color = palette.textMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                  )
+                                }
+                                Icon(
+                                  if (dayOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                  contentDescription = null,
+                                  tint = palette.textMuted,
+                                  modifier = Modifier.size(18.dp),
+                                )
                               }
 
                               AnimatedVisibility(visible = dayOpen) {
                                 Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                   dayItems.forEachIndexed { idx, rec ->
                                     val recKey = "$dKey-$idx-${rec.item.hashCode()}"
-                                    val recOpen = onItemClick == null && recKey in expandedItemIds
+                                    val canExpandInline = rec.detailMetrics.isNotEmpty() || rec.detailNote.isNotBlank() || hasDropdownDetails || onItemClick == null
+                                    val recOpen = canExpandInline && recKey in expandedItemIds
                                     Surface(
                                       shape = RoundedCornerShape(14.dp),
                                       color = palette.surfaceElevated,
                                       border = BorderStroke(
                                         1.dp,
                                         when {
-                                          recOpen -> palette.green.copy(alpha = 0.5f)
+                                          recOpen -> palette.green.copy(alpha = 0.55f)
                                           rec.showStripe -> palette.amber.copy(alpha = 0.35f)
                                           else -> palette.border
                                         },
@@ -176,7 +279,7 @@ fun <T> AccordionHistoryList(
                                         .clickable {
                                           if (onItemClick != null) {
                                             onItemClick(rec)
-                                          } else {
+                                          } else if (canExpandInline) {
                                             expandedItemIds = if (recOpen) expandedItemIds - recKey else expandedItemIds + recKey
                                           }
                                         },
@@ -213,10 +316,10 @@ fun <T> AccordionHistoryList(
                                               }
                                             }
                                           }
-                                          .padding(10.dp),
+                                          .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = if (canExpandInline) 4.dp else 10.dp),
                                         verticalArrangement = Arrangement.spacedBy(8.dp),
                                       ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                           InitialsAvatar(rec.title, rec.amountColor, sizeDp = 34.dp)
                                           Column(modifier = Modifier.weight(1f)) {
                                             Text(rec.title, color = palette.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -228,11 +331,77 @@ fun <T> AccordionHistoryList(
                                               SarimChip(rec.chipText, rec.chipColor ?: rec.amountColor)
                                             }
                                           }
+                                          if (canExpandInline) {
+                                            IconButton(
+                                              onClick = {
+                                                expandedItemIds = if (recOpen) expandedItemIds - recKey else expandedItemIds + recKey
+                                              },
+                                              modifier = Modifier
+                                                .size(48.dp)
+                                                .testTag("history_expand_$idx"),
+                                            ) {
+                                              Icon(
+                                                imageVector = if (recOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                                contentDescription = if (recOpen) "Collapse details" else "Expand details",
+                                                tint = if (recOpen) palette.green else palette.textMuted,
+                                              )
+                                            }
+                                          }
                                         }
-                                        if (onItemClick == null) {
+                                        if (canExpandInline) {
                                           AnimatedVisibility(visible = recOpen) {
-                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Column(
+                                              modifier = Modifier.padding(end = 6.dp),
+                                              verticalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
                                               HorizontalDivider(color = palette.border)
+                                              if (rec.detailMetrics.isNotEmpty()) {
+                                                val pairs = rec.detailMetrics.chunked(2)
+                                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                  pairs.forEach { rowItems ->
+                                                    Row(
+                                                      modifier = Modifier.fillMaxWidth(),
+                                                      horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    ) {
+                                                      rowItems.forEach { (k, v) ->
+                                                        Surface(
+                                                          shape = RoundedCornerShape(10.dp),
+                                                          color = palette.surface,
+                                                          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+                                                          modifier = Modifier.weight(1f),
+                                                        ) {
+                                                          Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                                            Text(
+                                                              text = k,
+                                                              color = palette.textMuted,
+                                                              fontSize = 10.sp,
+                                                              maxLines = 1,
+                                                              overflow = TextOverflow.Ellipsis,
+                                                            )
+                                                            Text(
+                                                              text = v,
+                                                              color = palette.textPrimary,
+                                                              style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+                                                              maxLines = 1,
+                                                              overflow = TextOverflow.Ellipsis,
+                                                            )
+                                                          }
+                                                        }
+                                                      }
+                                                      if (rowItems.size == 1) {
+                                                        Spacer(Modifier.weight(1f))
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                              if (rec.detailNote.isNotBlank()) {
+                                                Text(
+                                                  text = rec.detailNote,
+                                                  color = palette.textMuted,
+                                                  fontSize = 11.5.sp,
+                                                )
+                                              }
                                               expandedContent(rec)
                                             }
                                           }
