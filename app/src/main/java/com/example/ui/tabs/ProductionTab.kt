@@ -207,7 +207,7 @@ fun ProductionTab(
             onAddUris = { attachedPhotos = attachedPhotos + it },
             onClearAll = { attachedPhotos = emptyList() },
             onViewPhotos = { idx -> viewModel.openPhotoViewer(attachedPhotos, idx) },
-            onError = { msg -> viewModel.postStatus(msg) },
+            onError = { msg -> viewModel.showDialog(AppDialogRequest("Photo Error", msg, tone = com.example.util.DialogTone.ERROR, cancelLabel = null)) },
           )
 
           // Formula cost panel
@@ -252,11 +252,31 @@ fun ProductionTab(
                 return@SarimPrimaryButton
               }
               if (contNum < 0.0 || unitsNum <= 0.0) {
-                viewModel.showDialog(AppDialogRequest("Invalid Input", "Container weight must be >= 0 and formula units > 0.", confirmLabel = "OK", cancelLabel = null))
+                viewModel.showDialog(AppDialogRequest("Invalid Input", "Container weight must be >= 0 and formula units > 0.", tone = com.example.util.DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
-              val store = selectedStore ?: return@SarimPrimaryButton
-              val formula = linkedFormula ?: return@SarimPrimaryButton
+              if (grossNum - contNum <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Net Weight", "Net production must be greater than zero. Please check weights.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              val store = selectedStore
+              if (store == null) {
+                viewModel.showDialog(AppDialogRequest("Store Required", "Please select a store before saving production.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              val formula = linkedFormula
+              if (formula == null) {
+                viewModel.showDialog(AppDialogRequest("Formula Required", "No formula is linked to ${store.name}. Assign a formula in Store Manager first.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (salePricePerKg <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Sale Price Missing", "Please set a sale price for ${store.name} in Store Manager first.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (unitCost <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Formula Cost Missing", "This formula has no cost (no ingredients or ingredient costs are zero). Set the formula and ingredient costs first.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
               viewModel.launchSafely(
                 errorTitle = "Production Save Failed",
                 successMessage = "Production entry saved",

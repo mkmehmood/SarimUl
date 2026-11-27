@@ -2116,6 +2116,60 @@ class SarimSyncAndBackupRepository(
     getRecycleBinItems().forEach { deleteForeverRecycleItem(it) }
   }
 
+  suspend fun deduplicateAllData(): Int {
+    val now = System.currentTimeMillis()
+    var removed = 0
+
+    // Deduplicate active customers by normalized (name, isRepCustomer)
+    val dupCusts = dao.getAllCustomers().filter { !it.isDeleted }
+      .groupBy { "${it.name.trim().lowercase()}|${it.isRepCustomer}" }
+    dupCusts.values.filter { it.size > 1 }.forEach { group ->
+      val sorted = group.sortedByDescending { it.updatedAt }
+      sorted.drop(1).forEach { dup ->
+        dao.upsertCustomer(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        enqueueSoftDelete("customers", dup.id, now)
+        removed++
+      }
+    }
+
+    // Deduplicate active payment entities by normalized name
+    val dupEntities = dao.getAllPaymentEntities().filter { !it.isDeleted }
+      .groupBy { it.name.trim().lowercase() }
+    dupEntities.values.filter { it.size > 1 }.forEach { group ->
+      val sorted = group.sortedByDescending { it.updatedAt }
+      sorted.drop(1).forEach { dup ->
+        dao.upsertPaymentEntity(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        enqueueSoftDelete("entities", dup.id, now)
+        removed++
+      }
+    }
+
+    // Deduplicate active raw materials by normalized name
+    val dupMats = dao.getAllRawMaterials().filter { !it.isDeleted }
+      .groupBy { it.name.trim().lowercase() }
+    dupMats.values.filter { it.size > 1 }.forEach { group ->
+      val sorted = group.sortedByDescending { it.updatedAt }
+      sorted.drop(1).forEach { dup ->
+        dao.upsertRawMaterial(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        enqueueSoftDelete("inventory", dup.id, now)
+        removed++
+      }
+    }
+
+    // Deduplicate active formulas by normalized name
+    val dupFormulas = dao.getAllFormulas().filter { !it.isDeleted }
+      .groupBy { it.name.trim().lowercase() }
+    dupFormulas.values.filter { it.size > 1 }.forEach { group ->
+      val sorted = group.sortedByDescending { it.updatedAt }
+      sorted.drop(1).forEach { dup ->
+        dao.upsertFormula(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        removed++
+      }
+    }
+
+    return removed
+  }
+
   // =====================================================================
   // JSON Backup Export & Restore (Web + Android compatible schema)
   // =====================================================================

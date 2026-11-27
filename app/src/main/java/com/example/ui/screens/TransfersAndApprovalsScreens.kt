@@ -529,12 +529,22 @@ fun ApprovalsScreen(
             modifier = Modifier.weight(1f),
             onClick = {
               val batch = filtered.toList()
-              viewModel.launchSafely(
-                errorTitle = "Approve All Failed",
-                successMessage = "Approved ${batch.size} request(s)",
-              ) {
-                viewModel.resolveApprovals(batch, approved = true)
-              }
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Approve All Pending?",
+                  body = "Approve all ${batch.size} pending request(s)?",
+                  tone = DialogTone.CONFIRM,
+                  confirmLabel = "Approve All",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Approve All Failed",
+                      successMessage = "Approved ${batch.size} request(s)",
+                    ) {
+                      viewModel.resolveApprovals(batch, approved = true)
+                    }
+                  },
+                )
+              )
             },
           )
           SarimDangerButton(
@@ -543,12 +553,22 @@ fun ApprovalsScreen(
             modifier = Modifier.weight(1f),
             onClick = {
               val batch = filtered.toList()
-              viewModel.launchSafely(
-                errorTitle = "Discard All Failed",
-                successMessage = "Discarded ${batch.size} request(s)",
-              ) {
-                viewModel.resolveApprovals(batch, approved = false)
-              }
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Discard All Pending?",
+                  body = "Permanently discard all ${batch.size} pending request(s)? This cannot be undone.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Discard All",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Discard All Failed",
+                      successMessage = "Discarded ${batch.size} request(s)",
+                    ) {
+                      viewModel.resolveApprovals(batch, approved = false)
+                    }
+                  },
+                )
+              )
             },
           )
         }
@@ -594,12 +614,22 @@ fun ApprovalsScreen(
               icon = Icons.Rounded.Close,
               modifier = Modifier.weight(1f),
               onClick = {
-                viewModel.launchSafely(
-                  errorTitle = "Discard Failed",
-                  successMessage = "Discarded by admin",
-                ) {
-                  viewModel.resolveApproval(req, approved = false)
-                }
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Discard Request?",
+                    body = "Discard ${req.actionKind} (${req.targetSummary}) from ${req.submittedBy}?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Discard",
+                    onConfirm = {
+                      viewModel.launchSafely(
+                        errorTitle = "Discard Failed",
+                        successMessage = "Discarded by admin",
+                      ) {
+                        viewModel.resolveApproval(req, approved = false)
+                      }
+                    },
+                  )
+                )
               },
             )
           }

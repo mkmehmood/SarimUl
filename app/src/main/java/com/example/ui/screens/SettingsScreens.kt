@@ -819,6 +819,25 @@ users/{uid} (root workspace doc: roles, approved, ownerUid, lastWrite)
           )
         }
 
+        if (state.isAdmin) {
+          SarimDangerButton(
+            text = "Deduplicate All Data",
+            icon = Icons.Rounded.DeleteSweep,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Deduplicate All Data",
+                  body = "Run a full deduplication scan?\n• Scan all records across every collection\n• Remove exact duplicate entries (keeping the newest version)\n• Sync cleaned data to the cloud\nThis cannot be undone.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Run Cleanup",
+                  onConfirm = { viewModel.runDeduplicationCleanup() },
+                )
+              )
+            },
+          )
+        }
+
         SarimCard(contentPadding = 12.dp) {
           Text("Financial Year Status", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

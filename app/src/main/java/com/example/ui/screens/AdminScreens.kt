@@ -347,18 +347,34 @@ fun StoreManagerScreen(
               viewModel.showDialog(AppDialogRequest("Invalid Price", "Sale price must be between 0.01 and 100,000,000.", tone = DialogTone.ERROR, cancelLabel = null))
               return@SarimPrimaryButton
             }
-            viewModel.launchSafely(
-              errorTitle = "Save Store Failed",
-              successMessage = "Store saved",
-              onSuccess = {
-                editingStoreKey = null
-                storeName = ""
-                formulaIndex = 0
-                salePriceText = "0"
-              },
-            ) {
-              viewModel.repository.saveStore(clean, selectedFormula.id, price, editingStoreKey)
+            val dupStore = stores.any { it.storeKey != editingStoreKey && it.name.equals(clean, ignoreCase = true) }
+            if (dupStore) {
+              viewModel.showDialog(AppDialogRequest("Duplicate Store", "A store named \"$clean\" already exists.", tone = DialogTone.WARNING, cancelLabel = null))
+              return@SarimPrimaryButton
             }
+            val isEditing = editingStoreKey != null
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = if (isEditing) "Update Store?" else "Save Store?",
+                body = "${if (isEditing) "Update" else "Add"} store \"$clean\"?\nFormula: ${selectedFormula.name}\nSale Price: ${SarimFormat.formatRs(price)}/kg",
+                tone = if (isEditing) DialogTone.WARNING else DialogTone.CONFIRM,
+                confirmLabel = if (isEditing) "Update" else "Save",
+                onConfirm = {
+                  viewModel.launchSafely(
+                    errorTitle = "Save Store Failed",
+                    successMessage = "Store saved",
+                    onSuccess = {
+                      editingStoreKey = null
+                      storeName = ""
+                      formulaIndex = 0
+                      salePriceText = "0"
+                    },
+                  ) {
+                    viewModel.repository.saveStore(clean, selectedFormula.id, price, editingStoreKey)
+                  }
+                },
+              )
+            )
           },
         )
       }
@@ -497,30 +513,56 @@ fun CloseFinancialYearScreen(
             enabled = password.isNotBlank(),
             modifier = Modifier.weight(1.4f),
             onClick = {
-              isProcessing = true
-              scope.launch {
-                try {
-                  stageText = "Initializing…"; progress = 0.2f; delay(300)
-                  stageText = "Exporting year-end snapshot…"; progress = 0.5f; delay(300)
-                  stageText = "Compacting opening balances…"; progress = 0.8f
-                  compactedCount = viewModel.closeFinancialYearAndBroadcast()
-                  progress = 1f
-                  isProcessing = false
-                  isComplete = true
-                } catch (e: CancellationException) {
-                  throw e
-                } catch (e: Exception) {
-                  isProcessing = false
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Close Year Failed",
-                      body = e.localizedMessage ?: "Unable to compact financial year.",
-                      confirmLabel = "OK",
-                      cancelLabel = null,
-                    )
-                  )
-                }
-              }
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Close Financial Year?",
+                  body = "This will verify your password, compact historical transactions into opening balances, and broadcast the year close to all devices.\nThis action cannot be undone.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Close Year",
+                  onConfirm = {
+                    isProcessing = true
+                    scope.launch {
+                      try {
+                        stageText = "Verifying password…"; progress = 0.1f
+                        val pwdCheck = viewModel.verifyPasswordForSensitiveAction(password)
+                        if (pwdCheck.isFailure) {
+                          isProcessing = false
+                          viewModel.showDialog(
+                            AppDialogRequest(
+                              title = "Incorrect Password",
+                              body = pwdCheck.exceptionOrNull()?.message ?: "Incorrect password. Please try again.",
+                              tone = DialogTone.ERROR,
+                              confirmLabel = "OK",
+                              cancelLabel = null,
+                            )
+                          )
+                          return@launch
+                        }
+                        stageText = "Initializing…"; progress = 0.25f; delay(250)
+                        stageText = "Exporting year-end snapshot…"; progress = 0.5f; delay(250)
+                        stageText = "Compacting opening balances…"; progress = 0.8f
+                        compactedCount = viewModel.closeFinancialYearAndBroadcast()
+                        progress = 1f
+                        isProcessing = false
+                        isComplete = true
+                      } catch (e: CancellationException) {
+                        throw e
+                      } catch (e: Exception) {
+                        isProcessing = false
+                        viewModel.showDialog(
+                          AppDialogRequest(
+                            title = "Close Year Failed",
+                            body = e.localizedMessage ?: "Unable to compact financial year.",
+                            tone = DialogTone.ERROR,
+                            confirmLabel = "OK",
+                            cancelLabel = null,
+                          )
+                        )
+                      }
+                    }
+                  },
+                )
+              )
             },
           )
         }

@@ -28,6 +28,8 @@ import com.example.ui.navigation.SarimRoute
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.storeColorForKey
+import com.example.util.AppDialogRequest
+import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
@@ -556,9 +558,20 @@ fun OverviewTab(
               SarimChip(chipText, chipColor)
             }
             if (snap.auditFindings.any { it.recordType == "LINK_REPAIR" }) {
+              val linkCount = snap.auditFindings.count { it.recordType == "LINK_REPAIR" }
               SarimSecondaryButton(
                 text = "Repair All Sale / Collection Links",
-                onClick = { viewModel.repairSaleLinks() },
+                onClick = {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Repair Payment Links",
+                      body = "$linkCount record(s) will be repaired. Collection cash that no sale confirms is applied to that customer's unpaid sales, newest first, and payments from deleted collections are taken off the sales. Records that are already correct are not touched.",
+                      tone = DialogTone.WARNING,
+                      confirmLabel = "Repair All",
+                      onConfirm = { viewModel.repairSaleLinks() },
+                    )
+                  )
+                },
                 modifier = Modifier.fillMaxWidth(),
                 testTag = "ov_repair_links_btn",
               )

@@ -1302,7 +1302,25 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
 
   fun toggleFingerprintLock() {
     feedbackManager.performTapFeedback()
-    viewModelScope.launch { runCatching { prefsManager.setFingerprintLock(!_uiState.value.prefs.fingerprintLockEnabled) } }
+    val currentlyEnabled = _uiState.value.prefs.fingerprintLockEnabled
+    if (currentlyEnabled) {
+      showDialog(
+        AppDialogRequest(
+          title = "Remove Biometric Lock",
+          body = "Remove the fingerprint lock from this app?\n• Anyone with access to this device can open the app without biometric verification\n• To re-enable, tap Enable Fingerprint Lock in Settings again\nYour data will not be affected.",
+          tone = DialogTone.PERMANENT,
+          confirmLabel = "Remove Lock",
+          onConfirm = {
+            viewModelScope.launch { runCatching { prefsManager.setFingerprintLock(false) } }
+          },
+        )
+      )
+    } else {
+      viewModelScope.launch {
+        runCatching { prefsManager.setFingerprintLock(true) }
+        postStatus("Biometric Lock Enabled")
+      }
+    }
   }
 
   fun setHapticIntensity(intensity: HapticIntensity) {
@@ -1396,6 +1414,18 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun syncDataNow() {
+    if (!isNetworkConnected() && !_uiState.value.isOfflineSession) {
+      showDialog(
+        AppDialogRequest(
+          title = "No Internet",
+          body = "Internet connection is required to sync with cloud. Your changes remain saved locally.",
+          tone = DialogTone.WARNING,
+          confirmLabel = "OK",
+          cancelLabel = null,
+        )
+      )
+      return
+    }
     viewModelScope.launch {
       _uiState.update { it.copy(isSyncing = true) }
       try {
@@ -1490,6 +1520,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     overrideChoice = overrideChoice,
   )
 
+  suspend fun verifyPasswordForSensitiveAction(password: String): Result<Unit> =
+    syncRepo.run { syncManager.verifyCurrentUserPassword(password) }
+
   fun recordCustomerMoneyOut(
     customer: CustomerEntity,
     dateEpoch: Long,
@@ -1499,11 +1532,11 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     onDone: () -> Unit = {},
   ) {
     if (amount <= 0.0) {
-      postStatus("Enter a positive amount")
+      showDialog(AppDialogRequest("Invalid Amount", "Enter a positive amount.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
       return
     }
     if (SarimFormat.isFutureDate(dateEpoch)) {
-      postStatus("Future dates are refused on customer payouts.")
+      showDialog(AppDialogRequest("Invalid Date", "Future dates are refused on customer payouts.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
       return
     }
     launchSafely(
@@ -1541,6 +1574,25 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun runDeduplicationCleanup() {
+    launchSafely(errorTitle = "Cleanup Failed") {
+      val removed = syncRepo.deduplicateAllData()
+      refreshDiagnostics()
+      if (removed > 0 && isNetworkConnected() && !_uiState.value.isOfflineSession) {
+        runCatching { syncRepo.syncWithFirestore(isGated = _uiState.value.isGatedSession, session = currentSessionInfo()) }
+      }
+      showDialog(
+        AppDialogRequest(
+          title = "Cleanup Complete",
+          body = if (removed > 0) "Done! $removed duplicate record(s) removed and synced." else "No duplicate records found. All collections are clean.",
+          tone = DialogTone.SUCCESS,
+          confirmLabel = "Done",
+          cancelLabel = null,
+        )
+      )
+    }
+  }
+
   fun applyAuditFix(finding: AuditFinding, newValueRaw: String) {
     if (finding.recordType == "LINK_REPAIR") {
       launchSafely(errorTitle = "Link Repair Failed", successMessage = "Repaired sale & collection links") {
@@ -1550,7 +1602,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
     val valNum = SarimFormat.parseSafeDouble(newValueRaw)
     if (valNum == null || valNum < 0.0) {
-      postStatus("Invalid numeric value")
+      showDialog(AppDialogRequest("Invalid Value", "Enter a valid non-negative number.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
       return
     }
     launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record successfully") {

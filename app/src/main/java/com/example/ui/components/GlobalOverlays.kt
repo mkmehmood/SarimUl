@@ -172,6 +172,39 @@ fun GlassAlertDialog(
           }
         }
 
+        if (request.choices.isNotEmpty()) {
+          Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            request.choices.forEach { choice ->
+              Surface(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(16.dp))
+                  .clickable {
+                    request.onChoiceSelected(choice.id)
+                    onDismiss()
+                  },
+                shape = RoundedCornerShape(16.dp),
+                color = palette.surfaceElevated,
+                border = BorderStroke(1.dp, palette.border),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(choice.label, color = palette.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    if (!choice.subtitle.isNullOrBlank()) {
+                      Text(choice.subtitle, color = palette.textMuted, fontSize = 11.5.sp)
+                    }
+                  }
+                  Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+                }
+              }
+            }
+          }
+        }
+
         if (request.requirePassword) {
           SarimTextField(
             value = passwordText,
@@ -208,26 +241,28 @@ fun GlassAlertDialog(
               testTag = "dialog_cancel_btn",
             )
           }
-          Surface(
-            modifier = Modifier
-              .weight(1f)
-              .height(46.dp)
-              .clip(RoundedCornerShape(50))
-              .testTag("dialog_confirm_btn")
-              .clickable {
-                request.onConfirm(passwordText)
-                onDismiss()
-              },
-            shape = RoundedCornerShape(50),
-            color = toneColor,
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Text(
-                request.confirmLabel,
-                color = if (toneColor == palette.amber || toneColor == palette.green) Color(0xFF041A0E) else Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-              )
+          if (request.choices.isEmpty()) {
+            Surface(
+              modifier = Modifier
+                .weight(1f)
+                .height(46.dp)
+                .clip(RoundedCornerShape(50))
+                .testTag("dialog_confirm_btn")
+                .clickable {
+                  request.onConfirm(passwordText)
+                  onDismiss()
+                },
+              shape = RoundedCornerShape(50),
+              color = toneColor,
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Text(
+                  request.confirmLabel,
+                  color = if (toneColor == palette.amber || toneColor == palette.green) Color(0xFF041A0E) else Color.White,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 14.sp,
+                )
+              }
             }
           }
         }

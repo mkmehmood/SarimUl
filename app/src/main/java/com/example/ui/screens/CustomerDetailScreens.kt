@@ -47,6 +47,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import com.example.util.DialogChoice
 import com.example.util.DialogTone
 import com.example.util.PdfExporter
 import com.example.util.SarimFormat
@@ -168,18 +169,43 @@ fun CustomerDetailsScreen(
               text = { Text("Statement PDF", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
               onClick = {
                 menuExpanded = false
-                val lines = custSales.take(80).map {
-                  "${SarimFormat.formatDate(it.dateEpoch)} | ${it.mode} ${it.paymentType} | ${SarimFormat.formatKg(it.quantityKg)} | ${SarimFormat.formatRs(it.totalValue, privacyHidden = state.hideMoneyFigures)} | Bal ${SarimFormat.formatRs(it.balanceAfter, privacyHidden = state.hideMoneyFigures)}"
-                }
-                PdfExporter.sharePdfReport(
-                  context = context,
-                  fileNamePrefix = "statement_${customer.name.replace(" ", "_")}",
-                  title = "Customer Statement — ${customer.name}",
-                  subtitle = "Current Debt: ${SarimFormat.formatRs(customer.currentCredit, privacyHidden = state.hideMoneyFigures)}",
-                  lines = lines.ifEmpty { listOf("No transactions recorded.") },
-                ).onFailure { err ->
-                  viewModel.postStatus(err.localizedMessage ?: "Unable to share PDF")
-                }
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Statement Range",
+                    body = "Choose the period to include in ${customer.name}'s statement PDF.",
+                    tone = DialogTone.CONFIRM,
+                    choices = listOf(
+                      DialogChoice("ALL", "All Time", "Include all transactions"),
+                      DialogChoice("MONTH", "This Month", "Transactions from the 1st of this month"),
+                      DialogChoice("LAST30", "Last 30 Days", "Recent 30 days of activity"),
+                    ),
+                    onChoiceSelected = { choiceId ->
+                      val now = System.currentTimeMillis()
+                      val cal = java.util.Calendar.getInstance()
+                      val cutoff = when (choiceId) {
+                        "MONTH" -> {
+                          cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                          SarimFormat.startOfDay(cal.timeInMillis)
+                        }
+                        "LAST30" -> now - 30L * 24L * 60L * 60L * 1000L
+                        else -> 0L
+                      }
+                      val rangedSales = custSales.filter { it.dateEpoch >= cutoff }
+                      val lines = rangedSales.take(120).map {
+                        "${SarimFormat.formatDate(it.dateEpoch)} | ${it.mode} ${it.paymentType} | ${SarimFormat.formatKg(it.quantityKg)} | ${SarimFormat.formatRs(it.totalValue, privacyHidden = state.hideMoneyFigures)} | Bal ${SarimFormat.formatRs(it.balanceAfter, privacyHidden = state.hideMoneyFigures)}"
+                      }
+                      PdfExporter.sharePdfReport(
+                        context = context,
+                        fileNamePrefix = "statement_${customer.name.replace(" ", "_")}",
+                        title = "Customer Statement — ${customer.name}",
+                        subtitle = "Current Debt: ${SarimFormat.formatRs(customer.currentCredit, privacyHidden = state.hideMoneyFigures)}",
+                        lines = lines.ifEmpty { listOf("No transactions recorded in selected range.") },
+                      ).onFailure { err ->
+                        viewModel.showDialog(AppDialogRequest("PDF Export Failed", err.localizedMessage ?: "Unable to share PDF.", tone = DialogTone.ERROR, cancelLabel = null))
+                      }
+                    },
+                  )
+                )
               },
             )
           }
@@ -505,7 +531,7 @@ fun CustomerDetailsScreen(
               onClick = {
                 val amt = SarimFormat.parseSafeDouble(moAmountText)
                 if (amt == null || amt <= 0.0) {
-                  viewModel.postStatus("Enter a valid positive amount")
+                  viewModel.showDialog(AppDialogRequest("Invalid Amount", "Enter a valid positive amount.", tone = DialogTone.ERROR, cancelLabel = null))
                   return@SarimPrimaryButton
                 }
                 viewModel.recordCustomerMoneyOut(

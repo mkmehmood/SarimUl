@@ -22,8 +22,11 @@ import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.Timestamp
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -428,6 +431,23 @@ class FirebaseSyncManager(
       val user = res.user ?: return Result.failure(IllegalStateException("Sign-in did not return a user account."))
       cachedWorkspaceUid = null
       Result.success(user)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Result.failure(IllegalStateException(mapAuthError(e)))
+    }
+  }
+
+  suspend fun verifyCurrentUserPassword(password: String): Result<Unit> {
+    if (!isFirebaseConfigured) return Result.success(Unit)
+    val user = _auth?.currentUser ?: return Result.success(Unit)
+    val usesPassword = user.providerData.any { it.providerId == EmailAuthProvider.PROVIDER_ID }
+    val email = user.email?.takeIf { it.isNotBlank() }
+    if (!usesPassword || email == null) return Result.success(Unit)
+    return try {
+      val cred = EmailAuthProvider.getCredential(email, password)
+      user.reauthenticate(cred).await()
+      Result.success(Unit)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {

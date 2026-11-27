@@ -13,16 +13,24 @@ data class DialogHighlight(
   val value: String,
 )
 
+data class DialogChoice(
+  val id: String,
+  val label: String,
+  val subtitle: String? = null,
+)
+
 data class AppDialogRequest(
   val title: String,
   val body: String,
   val tone: DialogTone? = null,
   val highlight: DialogHighlight? = null,
+  val choices: List<DialogChoice> = emptyList(),
   val confirmLabel: String = "Confirm",
   val cancelLabel: String? = "Cancel",
   val requirePassword: Boolean = false,
   val passwordHint: String = "Account password",
   val onConfirm: (String) -> Unit = {},
+  val onChoiceSelected: (String) -> Unit = {},
   val onCancel: () -> Unit = {},
 )
 

@@ -34,6 +34,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
@@ -440,7 +441,43 @@ fun CalculatorTab(
             testTag = "btn_save_calc_settlement",
             onClick = {
               if (SarimFormat.isFutureDate(toDate)) {
-                viewModel.showDialog(AppDialogRequest("Invalid Date", "Settlement date cannot be in the future.", confirmLabel = "OK", cancelLabel = null))
+                viewModel.showDialog(AppDialogRequest("Invalid Date", "Settlement date cannot be in the future.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (fromDate > toDate) {
+                viewModel.showDialog(AppDialogRequest("Invalid Date Range", "The From date must be on or before the To date.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (totalSoldKg <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Please enter valid units sold (must be greater than 0).", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (salePricePerKg <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Sale Price Missing", "Please set a sale price in Store Manager / Factory Formulas first.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (returnedKg < 0.0 || expiredKg < 0.0 || sharedNum < 0.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Returned, expired, and shared quantities cannot be negative.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (returnedKg > totalSoldKg) {
+                viewModel.showDialog(AppDialogRequest("Invalid Return", "Returned quantity cannot exceed total sold.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if ((returnedKg + expiredKg + sharedNum) > totalSoldKg + 1e-6) {
+                viewModel.showDialog(AppDialogRequest("Invalid Quantities", "Combined returned + expired + shared quantity cannot exceed total sold.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (creditQtyNum < 0.0 || recoveredNum < 0.0 || receivedNum < 0.0 || fieldExpTotal < 0.0 || commPerUnit < 0.0 || commPaidTotal < 0.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Amount", "Credit, cash, expense, and commission fields cannot be negative.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (commPerUnit > 100_000.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Commission", "Commission per unit cannot exceed 100,000.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (creditQtyNum > netSoldKg + 1e-6) {
+                viewModel.showDialog(AppDialogRequest("Credit Warning", "Credit sales cannot exceed net sold quantity.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
               val useTransfer = returnedKg > 0.0 && returnTargetMode == ReturnTargetMode.TRANSFER && otherReps.isNotEmpty()
@@ -500,9 +537,10 @@ fun CalculatorTab(
               if (statusLabel != "OK") {
                 viewModel.showDialog(
                   AppDialogRequest(
-                    title = "Settlement",
+                    title = if (cashDiff < 0) "Cash is Short" else "Cash is Over",
                     body = "Cash is ${statusLabel.lowercase()} by ${SarimFormat.formatRs(abs(cashDiff))}. Save anyway?",
-                    confirmLabel = "Save",
+                    tone = DialogTone.WARNING,
+                    confirmLabel = "Save Anyway",
                     onConfirm = { commitSettlement() },
                   )
                 )

@@ -276,9 +276,19 @@ fun BatchingScreen(
             }
             IconButton(
               onClick = {
-                viewModel.launchSafely(errorTitle = "Delete Failed") {
-                  viewModel.repository.deleteMixCalc(calc.id)
-                }
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Calculation",
+                    body = "Delete this saved calculation (${calc.name})?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Deleted saved calculation") {
+                        viewModel.repository.deleteMixCalc(calc.id)
+                      }
+                    },
+                  )
+                )
               }
             ) {
               Icon(Icons.Rounded.Delete, contentDescription = "Delete saved calc", tint = palette.red, modifier = Modifier.size(18.dp))
@@ -551,7 +561,17 @@ fun BatchCorrectionScreen(
       } else {
         savedList.forEach { calc ->
           Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable {
+                editingCalcId = calc.id
+                val fIdx = formulas.indexOfFirst { it.id == calc.formulaId }
+                if (fIdx >= 0) selectedFormulaIndex = fIdx + 1
+                unit = calc.unit
+                originalText = calc.inputValue.toString()
+                saveName = calc.name
+              }
+              .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
           ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -560,9 +580,19 @@ fun BatchCorrectionScreen(
             }
             IconButton(
               onClick = {
-                viewModel.launchSafely(errorTitle = "Delete Failed") {
-                  viewModel.repository.deleteMixCalc(calc.id)
-                }
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Correction",
+                    body = "Delete this saved correction (${calc.name})?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Deleted saved correction") {
+                        viewModel.repository.deleteMixCalc(calc.id)
+                      }
+                    },
+                  )
+                )
               }
             ) {
               Icon(Icons.Rounded.Delete, contentDescription = "Delete saved correction", tint = palette.red, modifier = Modifier.size(18.dp))

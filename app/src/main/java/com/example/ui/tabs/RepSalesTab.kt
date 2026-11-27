@@ -30,6 +30,8 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
+import com.example.util.DialogHighlight
+import com.example.util.DialogTone
 import com.example.util.PdfExporter
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
@@ -144,38 +146,71 @@ fun RepSalesTab(
           text = if (editingRepTxId == null) "Save Transaction" else "Update Transaction",
           onClick = {
             if (SarimFormat.isFutureDate(dateEpoch) || customerName.isBlank()) {
-              viewModel.showDialog(AppDialogRequest("Invalid Input", "Enter a valid non-future date and customer name.", confirmLabel = "OK", cancelLabel = null))
+              viewModel.showDialog(AppDialogRequest("Invalid Input", "Enter a valid non-future date and customer name.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+              return@SarimPrimaryButton
+            }
+            if (isNewCustomer && newCustPhone.isNotBlank() && !SarimFormat.isValidPhone(newCustPhone)) {
+              viewModel.showDialog(AppDialogRequest("Invalid Phone", "Phone number must have 7 to 15 digits.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
             val amtRec = SarimFormat.parseSafeDouble(amountReceivedText) ?: 0.0
             val expQty = SarimFormat.parseSafeDouble(expiredQtyText) ?: 0.0
             if (mode == RepTxMode.SALE && qtyNum !in 0.001..1_000_000.0) {
-              viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", confirmLabel = "OK", cancelLabel = null))
+              viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
             val currentEditId = editingRepTxId
-            viewModel.launchSafely(
-              errorTitle = "Save Rep Transaction Failed",
-              successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
-              onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
-            ) {
-              viewModel.repository.saveSaleOrCollection(
-                editingId = currentEditId,
-                dateEpoch = dateEpoch,
-                mode = mode.name,
-                customerName = customerName,
-                newCustomerPhone = newCustPhone,
-                repName = state.signedInDisplayName,
-                store = defaultStore,
-                quantityKg = if (mode == RepTxMode.SALE) qtyNum else 0.0,
-                costPerKg = defaultStore?.let { snap?.storeMetrics?.get(it.storeKey)?.avgCostPerKg } ?: 0.0,
-                paymentType = payType.name,
-                amountReceived = if (mode == RepTxMode.COLLECTION) amtRec else if (payType == RepPayType.CASH) txValue else 0.0,
-                expiredQtyKg = expQty,
-                returnedQtyKg = 0.0,
-                addToLedger = false,
-                isRepSale = true,
-              )
+            val commitRepTx: () -> Unit = {
+              viewModel.launchSafely(
+                errorTitle = "Save Rep Transaction Failed",
+                successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
+                onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
+              ) {
+                viewModel.repository.saveSaleOrCollection(
+                  editingId = currentEditId,
+                  dateEpoch = dateEpoch,
+                  mode = mode.name,
+                  customerName = customerName,
+                  newCustomerPhone = newCustPhone,
+                  repName = state.signedInDisplayName,
+                  store = defaultStore,
+                  quantityKg = if (mode == RepTxMode.SALE) qtyNum else 0.0,
+                  costPerKg = defaultStore?.let { snap?.storeMetrics?.get(it.storeKey)?.avgCostPerKg } ?: 0.0,
+                  paymentType = payType.name,
+                  amountReceived = if (mode == RepTxMode.COLLECTION) amtRec else if (payType == RepPayType.CASH) txValue else 0.0,
+                  expiredQtyKg = expQty,
+                  returnedQtyKg = 0.0,
+                  addToLedger = false,
+                  isRepSale = true,
+                )
+              }
+            }
+            if (mode == RepTxMode.COLLECTION) {
+              if (amtRec <= 0.0 && expQty <= 0.0) {
+                viewModel.showDialog(AppDialogRequest("Invalid Collection", "Enter amount received or expired qty.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              val currentDebt = matchedCustomer?.currentCredit ?: 0.0
+              if (currentEditId == null && amtRec > 0.0 && currentDebt <= 0.01) {
+                viewModel.showDialog(AppDialogRequest("No Outstanding Balance", "${customerName.trim()} has no pending credit balance to collect.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (amtRec > currentDebt + 0.01) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Over-Collection Warning",
+                    body = "Amount received exceeds customer's current credit.\nProceed only if this is an advance payment.",
+                    tone = DialogTone.WARNING,
+                    highlight = DialogHighlight("Balance After", SarimFormat.formatRs(currentDebt - amtRec)),
+                    confirmLabel = "Proceed",
+                    onConfirm = { commitRepTx() },
+                  )
+                )
+              } else {
+                commitRepTx()
+              }
+            } else {
+              commitRepTx()
             }
           },
         )

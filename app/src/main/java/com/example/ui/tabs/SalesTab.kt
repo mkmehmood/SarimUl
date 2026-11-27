@@ -40,6 +40,7 @@ import com.example.ui.theme.avatarColorForName
 import com.example.ui.theme.storeColorForKey
 import com.example.util.AppDialogRequest
 import com.example.util.DialogHighlight
+import com.example.util.DialogTone
 import com.example.util.PdfExporter
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
@@ -473,8 +474,12 @@ fun SalesTab(
             }
             when (mode) {
               SalesMode.SALE -> {
+                if (store == null || unitPriceKg <= 0.0) {
+                  viewModel.showDialog(AppDialogRequest("Sale Price Missing", "Sale price not configured for this store. Set prices in Store Manager first.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimPrimaryButton
+                }
                 if (qtyNum !in 0.001..1_000_000.0) {
-                  viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", confirmLabel = "OK", cancelLabel = null))
+                  viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
                 val effPayment = if (isRepSelected) PaymentChoice.CREDIT else paymentChoice
@@ -545,6 +550,7 @@ fun SalesTab(
                     AppDialogRequest(
                       title = "Over-Collection Warning",
                       body = "Amount received exceeds customer's current credit.\nProceed only if this is an advance payment.",
+                      tone = DialogTone.WARNING,
                       highlight = DialogHighlight("Balance After", SarimFormat.formatRs(currentDebt - amtRec)),
                       confirmLabel = "Proceed",
                       onConfirm = { commitCollection() },
@@ -556,6 +562,10 @@ fun SalesTab(
               }
 
               SalesMode.REP_RETURN -> {
+                if (selectedRep.isBlank() || selectedRep == "Direct") {
+                  viewModel.showDialog(AppDialogRequest("Rep Required", "Please select a sales representative.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimPrimaryButton
+                }
                 val repExp = SarimFormat.parseSafeDouble(repExpiredQtyText) ?: 0.0
                 val repRet = SarimFormat.parseSafeDouble(repReturnedQtyText) ?: 0.0
                 if (repExp <= 0.0 && repRet <= 0.0) {

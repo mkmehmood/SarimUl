@@ -128,7 +128,7 @@ fun PaymentsTab(
           onAddUris = { photoUris = photoUris + it },
           onClearAll = { photoUris = emptyList() },
           onViewPhotos = { idx -> viewModel.openPhotoViewer(photoUris, idx) },
-          onError = { msg -> viewModel.postStatus(msg) },
+          onError = { msg -> viewModel.showDialog(AppDialogRequest("Photo Error", msg, tone = DialogTone.ERROR, cancelLabel = null)) },
         )
 
         SarimFieldLabel("Transaction Type")
@@ -166,6 +166,13 @@ fun PaymentsTab(
               return@SarimPrimaryButton
             }
             val currentEditId = editingTxId
+            if (currentEditId != null) {
+              val orig = state.paymentTransactions.firstOrNull { it.id == currentEditId }
+              if (orig != null && orig.type != txType.code) {
+                viewModel.showDialog(AppDialogRequest("Type Locked", "The type cannot be changed while editing. Delete and re-enter it instead.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+            }
             viewModel.launchSafely(
               errorTitle = "Save Payment Failed",
               successMessage = if (currentEditId == null) "Payment transaction saved" else "Payment transaction updated",

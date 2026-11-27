@@ -447,7 +447,16 @@ fun FormulaEditScreen(
             viewModel.showDialog(AppDialogRequest("Invalid Cost Factor", "Cost adjustment factor must be > 0 and at most 100.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
+          val dupFormula = state.formulas.any { !it.isDeleted && it.id != existing?.id && it.name.equals(clean, ignoreCase = true) }
+          if (dupFormula) {
+            viewModel.showDialog(AppDialogRequest("Duplicate Formula", "A formula named \"$clean\" already exists. Choose a different name or edit that formula.", tone = DialogTone.WARNING, cancelLabel = null))
+            return@SarimPrimaryButton
+          }
           val validRows = rows.filter { it.refId.isNotBlank() }
+          if (validRows.isEmpty()) {
+            viewModel.showDialog(AppDialogRequest("Ingredients Required", "Add at least one ingredient with quantity.", tone = DialogTone.ERROR, cancelLabel = null))
+            return@SarimPrimaryButton
+          }
           if (validRows.any { it.qtyKg !in 0.001..1_000_000.0 }) {
             viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Ingredient quantity must be between 0.001 and 1,000,000 kg.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
