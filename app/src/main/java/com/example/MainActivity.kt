@@ -15,8 +15,6 @@ import com.example.ui.components.GlassAlertDialog
 import com.example.ui.shell.*
 import com.example.ui.theme.SarimTheme
 import com.example.viewmodel.SarimViewModel
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,8 +27,8 @@ class MainActivity : ComponentActivity() {
       val scope = rememberCoroutineScope()
       val credentialManager = remember(context) { CredentialManager.create(context) }
 
-      val firebaseUser by remember { Firebase.auth.authStateFlow() }.collectAsStateWithLifecycle(
-        initialValue = Firebase.auth.currentUser,
+      val firebaseUser by remember { viewModel.syncManager.authStateFlow() }.collectAsStateWithLifecycle(
+        initialValue = viewModel.syncManager.currentUser(),
       )
 
       LaunchedEffect(credentialManager) {
@@ -54,7 +52,8 @@ class MainActivity : ComponentActivity() {
               syncManager = viewModel.syncManager,
               authErrorMessage = state.authErrorMessage,
               onClearAuthError = { viewModel.clearAuthError() },
-              onGoogleAuthSuccess = { viewModel.onFirebaseAuthChanged(Firebase.auth.currentUser) },
+              onGoogleAuthSuccess = { viewModel.onFirebaseAuthChanged(viewModel.syncManager.currentUser()) },
+              onEnterOfflineMode = { emailHint -> viewModel.enterOfflineSession(emailHint) },
             )
           }
           state.isLockedByFingerprint -> {

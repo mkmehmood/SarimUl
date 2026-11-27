@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.example.data.local.AppAccountEntity
 import com.example.data.local.ApprovalRequestEntity
 import com.example.data.local.DeletionTombstoneEntity
@@ -42,6 +41,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -121,8 +121,7 @@ fun handleFirestoreError(exception: Throwable, operationType: OperationType, pat
     ?: causes.firstOrNull { it !is CancellationException }
     ?: exception
 
-  val auth = Firebase.auth
-  val currentUser = auth.currentUser
+  val currentUser = runCatching { Firebase.auth }.getOrNull()?.currentUser
 
   val providerInfoList = currentUser?.providerData?.map { provider ->
     JSONObject().apply {
@@ -159,9 +158,34 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 
 class FirebaseSyncManager(
   private val appContext: Context? = null,
-  private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
-  private val auth: FirebaseAuth = Firebase.auth,
+  db: FirebaseFirestore? = null,
+  auth: FirebaseAuth? = null,
 ) {
+  private val _db: FirebaseFirestore? = db ?: runCatching {
+    if (appContext == null || FirebaseApp.getApps(appContext).isNotEmpty()) {
+      FirebaseFirestore.getInstance()
+    } else {
+      null
+    }
+  }.getOrNull()
+
+  private val _auth: FirebaseAuth? = auth ?: runCatching {
+    if (appContext == null || FirebaseApp.getApps(appContext).isNotEmpty()) {
+      Firebase.auth
+    } else {
+      null
+    }
+  }.getOrNull()
+
+  val isFirebaseConfigured: Boolean
+    get() = _db != null && _auth != null
+
+  private val db: FirebaseFirestore
+    get() = _db ?: throw IllegalStateException("Firebase is not configured (missing google-services.json).")
+
+  private val auth: FirebaseAuth
+    get() = _auth ?: throw IllegalStateException("Firebase is not configured (missing google-services.json).")
+
   @Volatile private var cachedWorkspaceUid: Pair<String, String>? = null
   @Volatile private var lastEmitPingAt: Long = 0L
   @Volatile private var lastSeenPingTs: Long = 0L
@@ -175,10 +199,18 @@ class FirebaseSyncManager(
     }
   }
 
-  fun currentUser(): FirebaseUser? = auth.currentUser
+  fun currentUser(): FirebaseUser? = _auth?.currentUser
+
+  fun authStateFlow(): Flow<FirebaseUser?> = _auth?.authStateFlow() ?: flowOf(null)
+
+  private fun resolveWebClientId(context: Context): String? {
+    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+    if (resId == 0) return null
+    return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+  }
 
   private fun requireUserId(): String {
-    val uid = auth.currentUser?.uid
+    val uid = _auth?.currentUser?.uid
     if (uid.isNullOrBlank()) {
       throw IllegalStateException("User must be signed in before syncing with Firestore.")
     }
@@ -287,13 +319,17 @@ class FirebaseSyncManager(
     onAuthSuccess: () -> Unit,
     onUnauthenticated: () -> Unit,
   ) {
-    if (auth.currentUser != null) {
+    val activeAuth = _auth
+    if (activeAuth == null) {
+      onUnauthenticated()
+      return
+    }
+    if (activeAuth.currentUser != null) {
       onAuthSuccess()
       return
     }
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveWebClientId(context)
+    if (clientId == null) {
       onUnauthenticated()
       return
     }
@@ -328,9 +364,12 @@ class FirebaseSyncManager(
     onAuthError: (String) -> Unit,
     onAuthCancelled: () -> Unit = {},
   ) {
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    if (!isFirebaseConfigured) {
+      onAuthError("Firebase is not configured. Add app/google-services.json or continue in Offline Mode.")
+      return
+    }
+    val clientId = resolveWebClientId(context)
+    if (clientId == null) {
       onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
       return
     }
@@ -373,7 +412,7 @@ class FirebaseSyncManager(
           Log.w("Auth", "Failed to clear credential state: ${e.message}")
         } finally {
           cachedWorkspaceUid = null
-          auth.signOut()
+          runCatching { _auth?.signOut() }
           onSignOutComplete()
         }
       }
@@ -381,6 +420,9 @@ class FirebaseSyncManager(
   }
 
   suspend fun signInWithEmailPassword(email: String, password: String): Result<FirebaseUser> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured. Add app/google-services.json or continue in Offline Mode."))
+    }
     return try {
       val res = auth.signInWithEmailAndPassword(email.trim(), password).await()
       val user = res.user ?: return Result.failure(IllegalStateException("Sign-in did not return a user account."))
@@ -398,6 +440,9 @@ class FirebaseSyncManager(
     email: String,
     password: String,
   ): Result<FirebaseUser> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured. Use Offline Mode or add google-services.json."))
+    }
     return try {
       val res = auth.createUserWithEmailAndPassword(email.trim(), password).await()
       val user = res.user ?: return Result.failure(IllegalStateException("Registration did not return a user account."))
@@ -420,6 +465,9 @@ class FirebaseSyncManager(
   }
 
   suspend fun sendPasswordReset(email: String): Result<Unit> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured. Password reset requires cloud auth."))
+    }
     return try {
       auth.sendPasswordResetEmail(email.trim()).await()
       Result.success(Unit)
@@ -494,6 +542,9 @@ class FirebaseSyncManager(
   }
 
   suspend fun loadWorkspaceAccounts(wsUid: String): Result<List<AppAccountEntity>> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured."))
+    }
     return try {
       val selfUid = requireUserId()
       val usersCol = db.collection("users")
@@ -552,6 +603,9 @@ class FirebaseSyncManager(
     roles: List<String>,
     wsUid: String,
   ): Result<AdminAccountPrepareResult> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured. Cloud account management requires Firebase."))
+    }
     val cleanEmail = email.trim().lowercase()
     val cleanRoles = RolesHelper.cleanRoles(roles)
     val secondaryAuth = try {
@@ -623,6 +677,9 @@ class FirebaseSyncManager(
     roles: List<String>,
     wsUid: String,
   ): Result<AppAccountEntity> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured."))
+    }
     val cleanEmail = email.trim().lowercase()
     val cleanName = name.trim()
     val cleanRoles = RolesHelper.cleanRoles(roles)
@@ -685,6 +742,9 @@ class FirebaseSyncManager(
     nextRoles: List<String>,
     wsUid: String,
   ): Result<Unit> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured."))
+    }
     val cleanRoles = RolesHelper.cleanRoles(nextRoles)
     val targetUid = targetAcct.uid.ifBlank { targetAcct.id }
     return try {
@@ -724,6 +784,9 @@ class FirebaseSyncManager(
     newApproved: Boolean,
     wsUid: String,
   ): Result<Unit> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured."))
+    }
     val targetUid = targetAcct.uid.ifBlank { targetAcct.id }
     val actorEmail = auth.currentUser?.email ?: ""
     return try {
@@ -757,6 +820,9 @@ class FirebaseSyncManager(
     targetAcct: AppAccountEntity,
     wsUid: String,
   ): Result<Unit> {
+    if (!isFirebaseConfigured) {
+      return Result.failure(IllegalStateException("Firebase is not configured."))
+    }
     val targetUid = targetAcct.uid.ifBlank { targetAcct.id }
     val actorEmail = auth.currentUser?.email ?: ""
     val now = System.currentTimeMillis()
@@ -787,7 +853,7 @@ class FirebaseSyncManager(
   // =====================================================================
 
   suspend fun emitSyncUpdate(collections: Collection<String>) {
-    if (auth.currentUser == null || collections.isEmpty()) return
+    if (!isFirebaseConfigured || _auth?.currentUser == null || collections.isEmpty()) return
     val now = System.currentTimeMillis()
     if (now - lastEmitPingAt <= 2000L) return
     lastEmitPingAt = now
@@ -1252,7 +1318,7 @@ class FirebaseSyncManager(
   }
 
   suspend fun fetchLiveDatabaseDiagnostics(wsUid: String): Result<LiveFirestoreDiagnostics> {
-    if (auth.currentUser == null || wsUid.isBlank()) {
+    if (!isFirebaseConfigured || _auth?.currentUser == null || wsUid.isBlank()) {
       return Result.failure(IllegalStateException("Not authenticated"))
     }
     return try {
@@ -1335,7 +1401,7 @@ class FirebaseSyncManager(
     callbacks: RealtimeSyncCallbacks,
   ) {
     stopRealtimeListeners()
-    if (selfUid.isBlank() || wsUid.isBlank()) return
+    if (!isFirebaseConfigured || selfUid.isBlank() || wsUid.isBlank()) return
 
     val regs = mutableListOf<ListenerRegistration>()
     val selfRef = db.collection("users").document(selfUid)

@@ -1,6 +1,8 @@
 package com.example
 
 import com.example.data.local.CustomerEntity
+import com.example.data.local.JsonCodecs
+import com.example.data.local.PaymentTransactionEntity
 import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.AccountSessionInfo
 import com.example.data.model.ConflictRecordSnapshot
@@ -50,8 +52,13 @@ class SarimSyncAndAccountsUnitTest {
     assertTrue(RolesHelper.rolesRestrictMoney(listOf("sales", "production")))
 
     val prodOnlySession = RolesHelper.deriveSession(listOf("production"))
+    assertEquals("production", prodOnlySession.mode)
     assertEquals(listOf(MainTab.PRODUCTION), prodOnlySession.tabs)
     assertFalse(RolesHelper.rolesRestrictMoney(listOf("production")))
+
+    assertEquals("rep", RolesHelper.deriveSession(listOf("rep")).mode)
+    assertEquals("factory", RolesHelper.deriveSession(listOf("factory")).mode)
+    assertEquals("userrole", RolesHelper.deriveSession(listOf("payments")).mode)
   }
 
   @Test
@@ -320,15 +327,20 @@ class SarimSyncAndAccountsUnitTest {
     assertFalse(registry.isDirtyId(SarimWebSchema.COL_PRODUCTION, localId))
     assertTrue(registry.skipUpload(SarimWebSchema.COL_PRODUCTION, localId))
 
-    // Downloaded remote ID skips future download unless newDeviceRestore is enabled
+    // Downloaded remote ID skips future download when absent locally unless newDeviceRestore is enabled,
+    // but allows updates to existing local records to proceed to conflict resolution.
     val remoteId = "sale-01900000-0000-4120-8000-deadbeefcafe"
     assertTrue(registry.shouldApplyCloud(SarimWebSchema.COL_SALES, remoteId))
+    assertTrue(registry.shouldApplyCloudForRecord(SarimWebSchema.COL_SALES, remoteId, hasLocal = false))
     registry.markDownloaded(SarimWebSchema.COL_SALES, remoteId, nowMs = t0 + 20L)
     assertTrue(registry.skipDownload(SarimWebSchema.COL_SALES, remoteId))
     assertFalse(registry.shouldApplyCloud(SarimWebSchema.COL_SALES, remoteId))
+    assertFalse(registry.shouldApplyCloudForRecord(SarimWebSchema.COL_SALES, remoteId, hasLocal = false))
+    assertTrue(registry.shouldApplyCloudForRecord(SarimWebSchema.COL_SALES, remoteId, hasLocal = true))
 
     registry.setNewDeviceRestore(true)
     assertTrue(registry.shouldApplyCloud(SarimWebSchema.COL_SALES, remoteId))
+    assertTrue(registry.shouldApplyCloudForRecord(SarimWebSchema.COL_SALES, remoteId, hasLocal = false))
     registry.setNewDeviceRestore(false)
 
     // Quota tracking and 24h auto-reset
@@ -351,6 +363,127 @@ class SarimSyncAndAccountsUnitTest {
 
     reloaded.clearAll()
     assertFalse(reloaded.wasUploaded(SarimWebSchema.COL_PRODUCTION, localId))
+    SarimUuid.clearDeviceState()
+  }
+
+  @Test
+  fun sarimUuid_modeDerivationTimestampValidationAndCrossDeviceTieBreaker() {
+    assertEquals(SarimUuid.MODE_ADMIN, SarimUuid.deriveAppMode(emptyList()))
+    assertEquals(SarimUuid.MODE_ADMIN, SarimUuid.deriveAppMode(listOf("admin", "rep")))
+    assertEquals(SarimUuid.MODE_REP, SarimUuid.deriveAppMode(listOf("rep")))
+    assertEquals(SarimUuid.MODE_PRODUCTION, SarimUuid.deriveAppMode(listOf("production")))
+    assertEquals(SarimUuid.MODE_FACTORY, SarimUuid.deriveAppMode(listOf("factory")))
+    assertEquals(SarimUuid.MODE_USERROLE, SarimUuid.deriveAppMode(listOf("sales", "payments")))
+
+    val now = 1_760_000_000_000L
+    assertTrue(SarimUuid.validateTimestamp(now, allowFuture = false, nowMs = now))
+    assertFalse(SarimUuid.validateTimestamp(500_000_000_000L, allowFuture = false, nowMs = now))
+    assertFalse(SarimUuid.validateTimestamp(now + 10L * 60L * 1000L, allowFuture = false, nowMs = now))
+    assertTrue(SarimUuid.validateTimestamp(now + 10L * 60L * 1000L, allowFuture = true, nowMs = now))
+
+    SarimUuid.clearDeviceState()
+    val devA = SarimUuid.newDeviceId(now)
+    val shardA = SarimUuid.initDeviceShard(devA)
+    val idA = SarimUuid.generateUUID(SarimUuid.PREFIX_PROD, tsMs = now, modeOverride = SarimUuid.MODE_PRODUCTION)
+    val idB = SarimUuid.generateUUID(SarimUuid.PREFIX_PROD, tsMs = now + 5L, modeOverride = SarimUuid.MODE_FACTORY)
+
+    val metaA = SarimUuid.extractUUIDMeta(idA)!!
+    val metaB = SarimUuid.extractUUIDMeta(idB)!!
+    assertEquals(shardA, metaA.deviceShard)
+    assertEquals(SarimUuid.MODE_PRODUCTION, metaA.appMode)
+    assertEquals(SarimUuid.MODE_FACTORY, metaB.appMode)
+    assertTrue(SarimUuid.compareRecordVersions(idB, 1000L, 1000L, 1000L, idA, 1000L, 1000L, 1000L) > 0)
+    assertTrue(SarimUuid.compareRecordVersions(idA, 2000L, 1000L, 1000L, idB, 1000L, 1000L, 1000L) > 0)
+    SarimUuid.clearDeviceState()
+  }
+
+  @Test
+  fun sarimWebSchema_gatedCollectionsMatchFirestoreRulesAndSyncRegistryQuotaAnchors() = runBlocking {
+    val expectedGated = setOf(
+      "production", "sales", "rep", "clients", "customers", "calculator",
+      "inventory", "factory", "entities", "transactions", "expenses", "returns",
+    )
+    assertEquals(expectedGated, SarimWebSchema.GATED_COLLECTIONS)
+    assertFalse(SarimWebSchema.isGatedCollection(SarimWebSchema.COL_PHOTOS))
+    assertFalse(SarimWebSchema.isGatedCollection(SarimWebSchema.COL_SETTINGS))
+    assertFalse(SarimWebSchema.isGatedCollection(SarimWebSchema.COL_PENDING))
+    assertFalse(SarimWebSchema.isGatedCollection(SarimWebSchema.COL_DELETIONS))
+
+    val kv = InMemoryKvStorePersistence()
+    val reg = UuidSyncRegistry(kv)
+    val pastAnchor = 1_700_000_000_000L
+    val stats = reg.trackFirestoreRead(count = 7, nowMs = pastAnchor)
+    assertEquals(7, stats.reads)
+    assertEquals(pastAnchor, stats.lastReset)
+    val beforeReset = reg.getDbStats(nowMs = pastAnchor + DbQuotaStats.RESET_INTERVAL_MS - 1_000L)
+    assertEquals(7, beforeReset.reads)
+    val afterReset = reg.getDbStats(nowMs = pastAnchor + DbQuotaStats.RESET_INTERVAL_MS)
+    assertEquals(0, afterReset.reads)
+    assertEquals(0, afterReset.writes)
+  }
+
+  @Test
+  fun transactionsUuidConsumedCreditsAndDailyLedgerPrefixMatchWeb() {
+    SarimUuid.clearDeviceState()
+    val now = 1_760_100_000_000L
+    val devId = SarimUuid.newDeviceId(now)
+    SarimUuid.initDeviceShard(devId)
+
+    val payId = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
+    val expId = SarimUuid.generateUUID(SarimUuid.PREFIX_EXP, tsMs = now)
+    val entId = SarimUuid.generateUUID(SarimUuid.PREFIX_ENT, tsMs = now)
+    val pairId = SarimUuid.generateUUID(SarimUuid.PREFIX_TRFPAIR, tsMs = now)
+    val dlId = SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)
+
+    assertTrue(payId.startsWith("pay-"))
+    assertTrue(expId.startsWith("exp-"))
+    assertTrue(entId.startsWith("ent-"))
+    assertTrue(pairId.startsWith("trfpair-"))
+    assertTrue(dlId.startsWith("dl_-"))
+
+    listOf(payId, expId, entId, pairId, dlId).forEach { id ->
+      assertTrue("Expected valid UUID: $id", SarimUuid.validateUUID(id))
+      assertNotNull("Expected extractable v3 meta: $id", SarimUuid.extractUUIDMeta(id))
+    }
+
+    // Round-trip transactions document with web consumedCredits [{id, amount}] format
+    val remoteDoc = mapOf<String, Any?>(
+      "id" to payId,
+      "entityId" to entId,
+      "entityName" to "Supplier Co",
+      "type" to "OUT",
+      "amount" to 5000.0,
+      "date" to "2026-11-27",
+      "description" to "Lot settlement",
+      "isPayable" to true,
+      "isExpense" to false,
+      "expenseId" to expId,
+      "ledgerId" to dlId,
+      "materialIds" to listOf("mat-1", "mat-2"),
+      "consumedCredits" to listOf(
+        mapOf("id" to "pay-credit-1", "amount" to 1500.0),
+        mapOf("id" to "pay-credit-2", "amount" to 500.0),
+      ),
+      "createdAt" to now,
+      "updatedAt" to now + 50L,
+      "timestamp" to now,
+    )
+    val entity: PaymentTransactionEntity? = SarimWebSchema.mapToTransaction(payId, remoteDoc)
+    assertNotNull(entity)
+    entity!!
+    val decodedCredits = JsonCodecs.decodeConsumedCredits(entity.consumedCreditsJson)
+    assertEquals(2, decodedCredits.size)
+    assertEquals(JsonCodecs.ConsumedCreditItem("pay-credit-1", 1500.0), decodedCredits[0])
+    assertEquals(JsonCodecs.ConsumedCreditItem("pay-credit-2", 500.0), decodedCredits[1])
+
+    val serialized = SarimWebSchema.transactionToMap(entity)
+    @Suppress("UNCHECKED_CAST")
+    val outCredits = serialized["consumedCredits"] as List<Map<String, Any?>>
+    assertEquals(2, outCredits.size)
+    assertEquals("pay-credit-1", outCredits[0]["id"])
+    assertEquals(1500.0, outCredits[0]["amount"] as Double, 0.001)
+    assertEquals(expId, serialized["expenseId"])
+    assertEquals(dlId, serialized["ledgerId"])
     SarimUuid.clearDeviceState()
   }
 }

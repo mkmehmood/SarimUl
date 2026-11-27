@@ -665,7 +665,9 @@ object SarimWebSchema {
 
   fun transactionToMap(e: PaymentTransactionEntity): Map<String, Any?> {
     val matIds = JsonCodecs.decodeStrings(e.materialIdsJson)
-    val consumed = JsonCodecs.decodeStrings(e.consumedCreditsJson)
+    val consumed = JsonCodecs.decodeConsumedCredits(e.consumedCreditsJson).map {
+      linkedMapOf<String, Any?>("id" to it.id, "amount" to it.amount)
+    }
     return linkedMapOf(
       "id" to e.id,
       "entityId" to (e.entityId ?: ""),
@@ -705,7 +707,17 @@ object SarimWebSchema {
       else -> "PAYMENT_OUT"
     }
     val matIds = (m["materialIds"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
-    val consumed = (m["consumedCredits"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+    val consumed = (m["consumedCredits"] as? List<*>)?.mapNotNull { item ->
+      when (item) {
+        is Map<*, *> -> {
+          val cid = str(item["id"]).trim()
+          if (cid.isNotBlank()) JsonCodecs.ConsumedCreditItem(id = cid, amount = num(item["amount"])) else null
+        }
+        else -> item?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+          JsonCodecs.ConsumedCreditItem(id = it, amount = 0.0)
+        }
+      }
+    }.orEmpty()
     return PaymentTransactionEntity(
       id = id,
       dateEpoch = epoch,
@@ -723,7 +735,7 @@ object SarimWebSchema {
       entityType = str(m["entityType"]),
       materialId = m["materialId"]?.toString(),
       materialIdsJson = JsonCodecs.encodeStrings(matIds),
-      consumedCreditsJson = JsonCodecs.encodeStrings(consumed),
+      consumedCreditsJson = JsonCodecs.encodeConsumedCredits(consumed),
       category = m["category"]?.toString(),
       supplierCreditAmount = num(m["supplierCreditAmount"]),
       editHistoryJson = mapEditHistoryFromWeb(m["editHistory"]),

@@ -56,6 +56,7 @@ fun AuthScreen(
   authErrorMessage: String? = null,
   onClearAuthError: () -> Unit = {},
   onGoogleAuthSuccess: () -> Unit,
+  onEnterOfflineMode: ((String) -> Unit)? = null,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
@@ -310,6 +311,19 @@ fun AuthScreen(
               )
             },
           )
+
+          if (!syncManager.isFirebaseConfigured && onEnterOfflineMode != null) {
+            SarimCallout(
+              text = "Firebase is not configured (missing app/google-services.json). Use Offline Mode to test locally or add google-services.json for cloud sync.",
+              toneColor = palette.amber,
+            )
+            SarimSecondaryButton(
+              text = "Continue in Offline Mode",
+              modifier = Modifier.fillMaxWidth(),
+              testTag = "offline_mode_btn",
+              onClick = { onEnterOfflineMode(email) },
+            )
+          }
         }
       }
 

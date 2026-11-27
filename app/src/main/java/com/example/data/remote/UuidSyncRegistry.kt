@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.withLock
 data class DbQuotaStats(
   val reads: Int = 0,
   val writes: Int = 0,
-  val lastReset: Long = System.currentTimeMillis(),
+  val lastReset: Long = 0L,
 ) {
   companion object {
     const val READ_WARN = 40_000
@@ -227,6 +227,18 @@ class UuidSyncRegistry(
   fun shouldApplyCloud(col: String, docId: String, forceFullPull: Boolean = false): Boolean =
     !skipDownload(col, docId, forceFullPull)
 
+  /**
+   * Record-aware cloud apply check matching web `sync.js` / `UUIDSyncRegistry.shouldApplyCloud`:
+   * when a local record already exists, allow cloud candidates to reach timestamp/UUID conflict resolution
+   * even on incremental/realtime snapshots (`forceFullPull = false`).
+   */
+  fun shouldApplyCloudForRecord(
+    col: String,
+    docId: String,
+    hasLocal: Boolean,
+    forceFullPull: Boolean = false,
+  ): Boolean = if (hasLocal) true else !skipDownload(col, docId, forceFullPull)
+
   suspend fun markLocalModified(col: String, docId: String?, nowMs: Long = System.currentTimeMillis()) = mutex.withLock {
     lastLocalModTs[col] = nowMs
     kv.put("lastLocalMod_$col", nowMs.toString(), collection = col, rowType = "meta", ts = nowMs)
@@ -430,7 +442,7 @@ class UuidSyncRegistry(
     return DbQuotaStats(
       reads = parts[0].toIntOrNull() ?: 0,
       writes = parts[1].toIntOrNull() ?: 0,
-      lastReset = parts[2].toLongOrNull() ?: System.currentTimeMillis(),
+      lastReset = parts[2].toLongOrNull() ?: 0L,
     )
   }
 

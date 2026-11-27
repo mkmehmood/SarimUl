@@ -325,7 +325,12 @@ object RolesHelper {
       return DerivedAccountSession(mode = "admin", tabs = MainTab.entries, roles = cur)
     }
     val tabs = tabsForRoles(cur)
-    return DerivedAccountSession(mode = "userrole", tabs = tabs, roles = cur)
+    val mode = if (cur.size == 1 && cur[0] in setOf("rep", "production", "factory")) {
+      cur[0]
+    } else {
+      "userrole"
+    }
+    return DerivedAccountSession(mode = mode, tabs = tabs, roles = cur)
   }
 
   fun isWorkspaceMember(userDoc: Map<String, Any?>?, uid: String): Boolean {

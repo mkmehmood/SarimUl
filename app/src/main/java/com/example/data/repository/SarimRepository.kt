@@ -1397,7 +1397,11 @@ class SarimRepository(
     val delta = signedOpening - prevSigned
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) history.add(0, EditHistoryEntry(now, "Edited entity $name"))
-    val rec = (existing ?: PaymentEntityRecord(name = name.trim())).copy(
+    val rec = (existing ?: PaymentEntityRecord(
+      id = SarimUuid.generateUUID(SarimUuid.PREFIX_ENT, tsMs = now),
+      name = name.trim(),
+      createdAt = now,
+    )).copy(
       name = name.trim(),
       phone = phone.trim(),
       wallet = wallet.trim(),
@@ -1592,7 +1596,7 @@ class SarimRepository(
 
     val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
     val ledgerId = if (addToLedger && amount > 0.0) (existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)) else null
-    val expId = existing?.expenseId ?: if (type == "EXPENSE") txId else SarimUuid.generateUUID(SarimUuid.PREFIX_EXP, tsMs = now)
+    val expId = existing?.expenseId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_EXP, tsMs = now)
 
     val expenseRec = ExpenseRecordEntity(
       id = expId,
@@ -2104,6 +2108,7 @@ class SarimRepository(
   suspend fun saveStockTransfer(from: StoreEntity, to: StoreEntity, dateEpoch: Long, qtyKg: Double, note: String) {
     val now = System.currentTimeMillis()
     val transfer = StockTransferEntity(
+      id = SarimUuid.generateUUID(SarimUuid.PREFIX_TRFPAIR, tsMs = now),
       dateEpoch = dateEpoch,
       fromStoreKey = from.storeKey,
       fromStoreName = from.name,
@@ -2112,6 +2117,9 @@ class SarimRepository(
       quantityKg = qtyKg,
       note = note.trim(),
       dateStr = SarimFormat.dateInput(dateEpoch),
+      outDocId = SarimUuid.generateUUID(SarimUuid.PREFIX_TRF, tsMs = now),
+      inDocId = SarimUuid.generateUUID(SarimUuid.PREFIX_TRF, tsMs = now),
+      createdAt = now,
       updatedAt = now,
     )
     dao.upsertStockTransfer(transfer)
@@ -2158,6 +2166,7 @@ class SarimRepository(
     enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedTo.id, SarimWebSchema.entityToMap(updatedTo))
 
     val transfer = PaymentTransferEntity(
+      id = SarimUuid.generateUUID(SarimUuid.PREFIX_TRFPAIR, tsMs = now),
       dateEpoch = dateEpoch,
       fromEntityId = from.id,
       fromEntityName = from.name,
@@ -2167,6 +2176,9 @@ class SarimRepository(
       note = note.trim(),
       photoUri = photoUri,
       dateStr = SarimFormat.dateInput(dateEpoch),
+      outDocId = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now),
+      inDocId = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now),
+      createdAt = now,
       updatedAt = now,
     )
     dao.upsertPaymentTransfer(transfer)
@@ -2420,6 +2432,55 @@ class SarimRepository(
       )
     )
     return compacted
+  }
+
+  suspend fun applyAuditFix(recordType: String, recordId: String, valNum: Double): Boolean {
+    val now = System.currentTimeMillis()
+    return when (recordType) {
+      "SALE" -> {
+        val sale = dao.getAllSales().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+        val newTotal = sale.quantityKg * valNum
+        val newProfit = newTotal - sale.totalCost
+        val updated = sale.copy(
+          pricePerKg = valNum,
+          totalValue = newTotal,
+          profit = newProfit,
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertSale(updated)
+        val col = if (updated.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+        enqueueOutboxSet(col, updated.id, SarimWebSchema.saleToMap(updated))
+        true
+      }
+      "PRODUCTION" -> {
+        val prod = dao.getAllProductionEntries().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+        val net = (valNum - prod.containerWeightKg).coerceAtLeast(0.0)
+        val costPerKg = if (net > 0.0001) prod.totalFormulaCost / net else 0.0
+        val totalVal = net * prod.salePricePerKg
+        val updated = prod.copy(
+          grossWeightKg = valNum,
+          netWeightKg = net,
+          costPerKg = costPerKg,
+          profitPerKg = prod.salePricePerKg - costPerKg,
+          totalValue = totalVal,
+          totalProfit = totalVal - prod.totalFormulaCost,
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertProductionEntry(updated)
+        enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, updated.id, SarimWebSchema.productionToMap(updated))
+        true
+      }
+      "MATERIAL" -> {
+        val mat = dao.getAllRawMaterials().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+        val updated = mat.copy(stockKg = valNum, syncPending = true, updatedAt = now)
+        dao.upsertRawMaterial(updated)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updated.id, SarimWebSchema.materialToMap(updated))
+        true
+      }
+      else -> false
+    }
   }
 
   private companion object {

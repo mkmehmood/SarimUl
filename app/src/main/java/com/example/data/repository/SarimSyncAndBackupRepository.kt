@@ -330,6 +330,7 @@ class SarimSyncAndBackupRepository(
       val touchedCols = linkedSetOf<String>()
 
       // 1. Drain local ndapp_outbox queue first (gated members route into /pending)
+      val outboxWritesByCol = linkedMapOf<String, Int>()
       safeReader.getOutboxAllOnce().forEach { op ->
         val isEditFlag = uuidRegistry.wasDownloaded(op.collection, op.docId)
         val res = syncManager.drainOutboxOp(
@@ -344,6 +345,7 @@ class SarimSyncAndBackupRepository(
           dao.removeOutbox(op.id)
           if (isGated && SarimWebSchema.isGatedCollection(op.collection)) {
             touchedCols += SarimWebSchema.COL_PENDING
+            outboxWritesByCol[SarimWebSchema.COL_PENDING] = (outboxWritesByCol[SarimWebSchema.COL_PENDING] ?: 0) + 1
             markLocalDocNotPending(op.collection, op.docId)
             if (op.action == "delete") {
               dao.getAllDeletions().firstOrNull { it.id == op.docId || it.recordId == op.docId }?.let { del ->
@@ -353,7 +355,10 @@ class SarimSyncAndBackupRepository(
             uuidRegistry.clearDirty(op.collection, op.docId)
             synced++
           } else if (!isGated) {
-            if (op.collection.isNotBlank()) touchedCols += op.collection
+            if (op.collection.isNotBlank()) {
+              touchedCols += op.collection
+              outboxWritesByCol[op.collection] = (outboxWritesByCol[op.collection] ?: 0) + 1
+            }
             markLocalDocNotPending(op.collection, op.docId)
             if (op.action == "delete") {
               uuidRegistry.clearDirty(op.collection, op.docId)
@@ -365,6 +370,9 @@ class SarimSyncAndBackupRepository(
         } else {
           dao.bumpOutboxAttempt(op.id, now)
         }
+      }
+      outboxWritesByCol.forEach { (col, writes) ->
+        uuidRegistry.updateSyncStats(col, 0, writes, now)
       }
 
       if (isGated) {
@@ -739,8 +747,8 @@ class SarimSyncAndBackupRepository(
 
   private suspend fun pushInventoryAndPurchases(): Int {
     var count = 0
-    val mats = dao.getAllRawMaterials().filter { it.syncPending }
-    val purchases = dao.getAllPurchases().filter { it.syncPending }
+    val mats = dao.getAllRawMaterials().filter { it.syncPending && !it.isDeleted }
+    val purchases = dao.getAllPurchases().filter { it.syncPending && !it.isDeleted }
     val batch = mats.map { it.id to SarimWebSchema.materialToMap(it) } +
       purchases.map { it.id to SarimWebSchema.purchaseLotToMap(it) }
     if (batch.isNotEmpty()) {
@@ -757,7 +765,7 @@ class SarimSyncAndBackupRepository(
   }
 
   private suspend fun pushFactoryBatches(): Int {
-    val batches = dao.getAllFactoryBatches().filter { it.syncPending }
+    val batches = dao.getAllFactoryBatches().filter { it.syncPending && !it.isDeleted }
     if (batches.isEmpty()) return 0
     val docs = batches.map { it.id to SarimWebSchema.factoryBatchToMap(it) }
     val res = syncManager.pushCollectionBatch(SarimWebSchema.COL_FACTORY, docs)
@@ -771,8 +779,8 @@ class SarimSyncAndBackupRepository(
   }
 
   private suspend fun pushProductionAndTransfers(): Int {
-    val prod = dao.getAllProductionEntries().filter { it.syncPending }
-    val transfers = dao.getAllStockTransfers().filter { it.syncPending }
+    val prod = dao.getAllProductionEntries().filter { it.syncPending && !it.isDeleted }
+    val transfers = dao.getAllStockTransfers().filter { it.syncPending && !it.isDeleted }
     val docs = mutableListOf<Pair<String, Map<String, Any?>>>()
     prod.forEach { docs += it.id to SarimWebSchema.productionToMap(it) }
     transfers.forEach { t ->
@@ -794,7 +802,7 @@ class SarimSyncAndBackupRepository(
 
   private suspend fun pushCustomersAndClients(): Int {
     var count = 0
-    val all = dao.getAllCustomers().filter { it.syncPending }
+    val all = dao.getAllCustomers().filter { it.syncPending && !it.isDeleted }
     val customers = all.filter { !it.isRepCustomer }
     if (customers.isNotEmpty()) {
       val docs = customers.map { it.id to SarimWebSchema.customerToMap(it) }
@@ -822,7 +830,7 @@ class SarimSyncAndBackupRepository(
 
   private suspend fun pushSalesAndRep(): Int {
     var count = 0
-    val all = dao.getAllSales().filter { it.syncPending }
+    val all = dao.getAllSales().filter { it.syncPending && !it.isDeleted }
     val sales = all.filter { !it.isRepSale }
     if (sales.isNotEmpty()) {
       val docs = sales.map { it.id to SarimWebSchema.saleToMap(it) }
@@ -850,7 +858,7 @@ class SarimSyncAndBackupRepository(
 
   private suspend fun pushEntitiesTransactionsExpenses(): Int {
     var count = 0
-    val entities = dao.getAllPaymentEntities().filter { it.syncPending }
+    val entities = dao.getAllPaymentEntities().filter { it.syncPending && !it.isDeleted }
     if (entities.isNotEmpty()) {
       val docs = entities.map { it.id to SarimWebSchema.entityToMap(it) }
       val res = syncManager.pushCollectionBatch(SarimWebSchema.COL_ENTITIES, docs)
@@ -861,8 +869,8 @@ class SarimSyncAndBackupRepository(
         uuidRegistry.updateSyncStats(SarimWebSchema.COL_ENTITIES, 0, docs.size)
       }
     }
-    val txs = dao.getAllPaymentTransactions().filter { it.syncPending }
-    val transfers = dao.getAllPaymentTransfers().filter { it.syncPending }
+    val txs = dao.getAllPaymentTransactions().filter { it.syncPending && !it.isDeleted }
+    val transfers = dao.getAllPaymentTransfers().filter { it.syncPending && !it.isDeleted }
     val txDocs = mutableListOf<Pair<String, Map<String, Any?>>>()
     txs.forEach { txDocs += it.id to SarimWebSchema.transactionToMap(it) }
     transfers.forEach { tr ->
@@ -880,7 +888,7 @@ class SarimSyncAndBackupRepository(
         uuidRegistry.updateSyncStats(SarimWebSchema.COL_TRANSACTIONS, 0, txDocs.size)
       }
     }
-    val exps = dao.getAllExpenses().filter { it.syncPending }
+    val exps = dao.getAllExpenses().filter { it.syncPending && !it.isDeleted }
     if (exps.isNotEmpty()) {
       val docs = exps.map { it.id to SarimWebSchema.expenseToMap(it) }
       val res = syncManager.pushCollectionBatch(SarimWebSchema.COL_EXPENSES, docs)
@@ -895,7 +903,7 @@ class SarimSyncAndBackupRepository(
   }
 
   private suspend fun pushReturns(): Int {
-    val rows = dao.getAllReturns().filter { it.syncPending }
+    val rows = dao.getAllReturns().filter { it.syncPending && !it.isDeleted }
     if (rows.isEmpty()) return 0
     val docs = rows.map { it.id to SarimWebSchema.returnLogToMap(it) }
     val res = syncManager.pushCollectionBatch(SarimWebSchema.COL_RETURNS, docs)
@@ -909,7 +917,7 @@ class SarimSyncAndBackupRepository(
   }
 
   private suspend fun pushSettlements(): Int {
-    val rows = dao.getAllSettlements().filter { it.syncPending }
+    val rows = dao.getAllSettlements().filter { it.syncPending && !it.isDeleted }
     if (rows.isEmpty()) return 0
     val docs = rows.map { it.id to SarimWebSchema.settlementToMap(it) }
     val res = syncManager.pushCollectionBatch(SarimWebSchema.COL_CALCULATOR, docs)
@@ -1533,29 +1541,33 @@ class SarimSyncAndBackupRepository(
         val localMats = dao.getAllRawMaterials().associateBy { it.id }
         val localLots = dao.getAllPurchases().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             if (SarimWebSchema.bool(m["isPurchaseLot"])) {
               SarimWebPullMappers.mapToPurchaseLot(id, m)?.let { remote ->
                 val local = localLots[id]
-                val localSnap = local?.let {
-                  ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending, supplierId = it.supplierId, paymentStatus = it.paymentStatus)
-                }
-                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false, supplierId = remote.supplierId, paymentStatus = remote.paymentStatus)
-                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                  dao.upsertPurchase(remote)
-                  downloadedIds += id
+                if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                  val localSnap = local?.let {
+                    ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending, supplierId = it.supplierId, paymentStatus = it.paymentStatus)
+                  }
+                  val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false, supplierId = remote.supplierId, paymentStatus = remote.paymentStatus)
+                  if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                    dao.upsertPurchase(remote)
+                    downloadedIds += id
+                  }
                 }
               }
             } else {
               SarimWebPullMappers.mapToMaterial(id, m)?.let { remote ->
                 val local = localMats[id]
-                val localSnap = local?.let {
-                  ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending, supplierId = it.supplierId, paymentStatus = it.paymentStatus)
-                }
-                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false, supplierId = remote.supplierId, paymentStatus = remote.paymentStatus)
-                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                  dao.upsertRawMaterial(remote)
-                  downloadedIds += id
+                if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                  val localSnap = local?.let {
+                    ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending, supplierId = it.supplierId, paymentStatus = it.paymentStatus)
+                  }
+                  val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false, supplierId = remote.supplierId, paymentStatus = remote.paymentStatus)
+                  if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                    dao.upsertRawMaterial(remote)
+                    downloadedIds += id
+                  }
                 }
               }
             }
@@ -1573,14 +1585,16 @@ class SarimSyncAndBackupRepository(
       SarimWebSchema.COL_FACTORY -> {
         val localMap = dao.getAllFactoryBatches().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebPullMappers.mapToFactoryBatch(id, m)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertFactoryBatch(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertFactoryBatch(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1593,30 +1607,50 @@ class SarimSyncAndBackupRepository(
         val localProd = dao.getAllProductionEntries().associateBy { it.id }
         val localTransfers = dao.getAllStockTransfers().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToProduction(id, m)?.let { remote ->
               val local = localProd[id]
-              val localSnap = local?.let {
-                ConflictRecordSnapshot(
-                  id = it.id, updatedAt = it.updatedAt, timestamp = it.dateEpoch, createdAt = it.createdAt, syncPending = it.syncPending,
-                  isReturn = it.isReturn, formulaUnitsUsed = it.formulaUnitsUsed, totalFormulaCost = it.totalFormulaCost,
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let {
+                  ConflictRecordSnapshot(
+                    id = it.id, updatedAt = it.updatedAt, timestamp = it.dateEpoch, createdAt = it.createdAt, syncPending = it.syncPending,
+                    isReturn = it.isReturn, formulaUnitsUsed = it.formulaUnitsUsed, totalFormulaCost = it.totalFormulaCost,
+                  )
+                }
+                val remoteSnap = ConflictRecordSnapshot(
+                  id = remote.id, updatedAt = remote.updatedAt, timestamp = remote.dateEpoch, createdAt = remote.createdAt, syncPending = false,
+                  isReturn = remote.isReturn, formulaUnitsUsed = remote.formulaUnitsUsed, totalFormulaCost = remote.totalFormulaCost,
                 )
-              }
-              val remoteSnap = ConflictRecordSnapshot(
-                id = remote.id, updatedAt = remote.updatedAt, timestamp = remote.dateEpoch, createdAt = remote.createdAt, syncPending = false,
-                isReturn = remote.isReturn, formulaUnitsUsed = remote.formulaUnitsUsed, totalFormulaCost = remote.totalFormulaCost,
-              )
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertProductionEntry(remote)
-                downloadedIds += id
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertProductionEntry(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
         }
         SarimWebPullMappers.reconstructStockTransfers(docs).forEach { rt ->
           val local = localTransfers[rt.id]
-          if (local == null || (!local.syncPending && rt.updatedAt >= local.updatedAt)) {
-            dao.upsertStockTransfer(rt)
+          if (!isTombstoned(tombstones, collection, rt.id) &&
+            !isTombstoned(tombstones, collection, rt.outDocId) &&
+            !isTombstoned(tombstones, collection, rt.inDocId) &&
+            uuidRegistry.shouldApplyCloudForRecord(collection, rt.outDocId, local != null, isFullPull)
+          ) {
+            val resolved = if (local != null && remoteIds.none { it == rt.inDocId }) {
+              rt.copy(inDocId = local.inDocId)
+            } else rt
+            val apply = local == null || (
+              !local.syncPending &&
+                SarimUuid.compareRecordVersions(
+                  resolved.id, resolved.updatedAt, resolved.dateEpoch, resolved.createdAt,
+                  local.id, local.updatedAt, local.dateEpoch, local.createdAt,
+                ) >= 0
+              )
+            if (apply) {
+              dao.upsertStockTransfer(resolved)
+              downloadedIds += resolved.outDocId
+              if (resolved.inDocId in remoteIds) downloadedIds += resolved.inDocId
+            }
           }
         }
         val toRemove = if (isFullPull) localProd.values.filter { !it.syncPending && !it.isDeleted && it.id !in remoteIds }.map { it.id } else removedIds
@@ -1632,14 +1666,16 @@ class SarimSyncAndBackupRepository(
         val isRep = collection == SarimWebSchema.COL_CLIENTS
         val localMap = dao.getAllCustomers().filter { it.isRepCustomer == isRep }.associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToCustomer(id, m, isRepCustomer = isRep)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertCustomer(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertCustomer(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1653,14 +1689,16 @@ class SarimSyncAndBackupRepository(
         val isRep = collection == SarimWebSchema.COL_REP
         val localMap = dao.getAllSales().filter { it.isRepSale == isRep }.associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToSale(id, m, isRep = isRep)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertSale(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertSale(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1672,14 +1710,16 @@ class SarimSyncAndBackupRepository(
       SarimWebSchema.COL_ENTITIES -> {
         val localMap = dao.getAllPaymentEntities().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToEntity(id, m)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertPaymentEntity(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, 0L, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, 0L, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertPaymentEntity(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1691,22 +1731,42 @@ class SarimSyncAndBackupRepository(
         val localTx = dao.getAllPaymentTransactions().associateBy { it.id }
         val localTransfers = dao.getAllPaymentTransfers().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToTransaction(id, m)?.let { remote ->
               val local = localTx[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertPaymentTransaction(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertPaymentTransaction(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
         }
         SarimWebPullMappers.reconstructPaymentTransfers(docs).forEach { rt ->
           val local = localTransfers[rt.id]
-          if (local == null || (!local.syncPending && rt.updatedAt >= local.updatedAt)) {
-            dao.upsertPaymentTransfer(rt)
+          if (!isTombstoned(tombstones, collection, rt.id) &&
+            !isTombstoned(tombstones, collection, rt.outDocId) &&
+            !isTombstoned(tombstones, collection, rt.inDocId) &&
+            uuidRegistry.shouldApplyCloudForRecord(collection, rt.outDocId, local != null, isFullPull)
+          ) {
+            val resolved = if (local != null && remoteIds.none { it == rt.inDocId }) {
+              rt.copy(inDocId = local.inDocId)
+            } else rt
+            val apply = local == null || (
+              !local.syncPending &&
+                SarimUuid.compareRecordVersions(
+                  resolved.id, resolved.updatedAt, resolved.dateEpoch, resolved.createdAt,
+                  local.id, local.updatedAt, local.dateEpoch, local.createdAt,
+                ) >= 0
+              )
+            if (apply) {
+              dao.upsertPaymentTransfer(resolved)
+              downloadedIds += resolved.outDocId
+              if (resolved.inDocId in remoteIds) downloadedIds += resolved.inDocId
+            }
           }
         }
         val toRemove = if (isFullPull) localTx.values.filter { !it.syncPending && !it.isDeleted && it.id !in remoteIds }.map { it.id } else removedIds
@@ -1721,14 +1781,16 @@ class SarimSyncAndBackupRepository(
       SarimWebSchema.COL_EXPENSES -> {
         val localMap = dao.getAllExpenses().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebSchema.mapToExpense(id, m)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertExpense(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertExpense(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1740,14 +1802,16 @@ class SarimSyncAndBackupRepository(
       SarimWebSchema.COL_RETURNS -> {
         val localMap = dao.getAllReturns().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebPullMappers.mapToReturnLog(id, m)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
-              val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertReturnLog(remote)
-                downloadedIds += id
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let { ConflictRecordSnapshot(it.id, it.updatedAt, it.dateEpoch, it.createdAt, it.syncPending) }
+                val remoteSnap = ConflictRecordSnapshot(remote.id, remote.updatedAt, remote.dateEpoch, remote.createdAt, false)
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertReturnLog(remote)
+                  downloadedIds += id
+                }
               }
             }
           }
@@ -1759,22 +1823,24 @@ class SarimSyncAndBackupRepository(
       SarimWebSchema.COL_CALCULATOR -> {
         val localMap = dao.getAllSettlements().associateBy { it.id }
         docs.forEach { (id, m) ->
-          if (!isTombstoned(tombstones, collection, id) && uuidRegistry.shouldApplyCloud(collection, id, isFullPull)) {
+          if (!isTombstoned(tombstones, collection, id)) {
             SarimWebPullMappers.mapToSettlement(id, m)?.let { remote ->
               val local = localMap[id]
-              val localSnap = local?.let {
-                ConflictRecordSnapshot(
-                  id = it.id, updatedAt = it.updatedAt, timestamp = it.dateEpoch, createdAt = it.createdAt, syncPending = it.syncPending,
-                  totalSoldKg = it.totalSoldKg, grossRevenue = it.grossRevenue,
+              if (uuidRegistry.shouldApplyCloudForRecord(collection, id, local != null, isFullPull)) {
+                val localSnap = local?.let {
+                  ConflictRecordSnapshot(
+                    id = it.id, updatedAt = it.updatedAt, timestamp = it.dateEpoch, createdAt = it.createdAt, syncPending = it.syncPending,
+                    totalSoldKg = it.totalSoldKg, grossRevenue = it.grossRevenue,
+                  )
+                }
+                val remoteSnap = ConflictRecordSnapshot(
+                  id = remote.id, updatedAt = remote.updatedAt, timestamp = remote.dateEpoch, createdAt = remote.createdAt, syncPending = false,
+                  totalSoldKg = remote.totalSoldKg, grossRevenue = remote.grossRevenue,
                 )
-              }
-              val remoteSnap = ConflictRecordSnapshot(
-                id = remote.id, updatedAt = remote.updatedAt, timestamp = remote.dateEpoch, createdAt = remote.createdAt, syncPending = false,
-                totalSoldKg = remote.totalSoldKg, grossRevenue = remote.grossRevenue,
-              )
-              if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
-                dao.upsertSettlement(remote)
-                downloadedIds += id
+                if (!SarimUuid.shouldLocalWinConflict(collection, localSnap, remoteSnap)) {
+                  dao.upsertSettlement(remote)
+                  downloadedIds += id
+                }
               }
             }
           }

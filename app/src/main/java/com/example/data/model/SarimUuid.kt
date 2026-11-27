@@ -50,7 +50,7 @@ object SarimUuid {
   const val PREFIX_SUPP = "supp"
   const val PREFIX_PAY = "pay"
   const val PREFIX_FPROD = "fprod"
-  const val PREFIX_DAILY_LEDGER = "dl"
+  const val PREFIX_DAILY_LEDGER = "dl_"
   const val PREFIX_ENT = "ent"
   const val PREFIX_EXP = "exp"
   const val PREFIX_RET = "ret"

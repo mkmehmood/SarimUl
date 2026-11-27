@@ -495,6 +495,10 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       val prefs = _uiState.value.prefs
       val lockNeeded = prefs.fingerprintLockEnabled && (user != null || prefs.offlineModeActive)
       val cachedRoles = cached?.let { RolesHelper.toUserRoleSet(it.roles, it.legacy) } ?: setOf(UserRole.ADMIN)
+      SarimUuid.currentAppMode = SarimUuid.deriveAppMode(RolesHelper.fromUserRoleSet(cachedRoles))
+      if (deviceId.isBlank()) {
+        deviceId = uuidRegistry.loadOrInitDeviceId(cached?.ts)
+      }
       val display = (cached?.name?.takeIf { it.isNotBlank() }
         ?: user?.displayName
         ?: user?.email?.substringBefore("@")
@@ -757,18 +761,22 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun enterOfflineSession(emailHint: String) {
-    viewModelScope.launch {
-      runCatching {
-        prefsManager.setOfflineMode(true)
-        if (emailHint.isNotBlank()) prefsManager.setSavedEmail(emailHint.trim())
-      }
-      repository.initDefaults()
-    }
     val matchedAccount = _uiState.value.accounts.firstOrNull { it.email.equals(emailHint.trim(), ignoreCase = true) }
     val roles = matchedAccount?.rolesCsv?.split(",")
       ?.mapNotNull { r -> enumValues<UserRole>().firstOrNull { it.name.equals(r.trim(), ignoreCase = true) } }
       ?.toSet()
       ?.takeIf { it.isNotEmpty() } ?: setOf(UserRole.ADMIN)
+    SarimUuid.currentAppMode = SarimUuid.deriveAppMode(RolesHelper.fromUserRoleSet(roles))
+    viewModelScope.launch {
+      runCatching {
+        prefsManager.setOfflineMode(true)
+        if (emailHint.isNotBlank()) prefsManager.setSavedEmail(emailHint.trim())
+      }
+      if (deviceId.isBlank()) {
+        deviceId = runCatching { uuidRegistry.loadOrInitDeviceId() }.getOrDefault("")
+      }
+      repository.initDefaults()
+    }
     val display = (matchedAccount?.name ?: emailHint.trim().substringBefore("@").ifBlank { "GULL AND ZUBAIR" }).uppercase()
     _uiState.update {
       val allowedTabs = it.copy(activeRoles = roles).visibleTabs()
@@ -1461,36 +1469,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       return
     }
     launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record successfully") {
-      when (finding.recordType) {
-        "SALE" -> {
-          val sale = _uiState.value.sales.firstOrNull { it.id == finding.recordId } ?: return@launchSafely
-          val newTotal = sale.quantityKg * valNum
-          val newProfit = newTotal - sale.totalCost
-          dao.upsertSale(sale.copy(pricePerKg = valNum, totalValue = newTotal, profit = newProfit, syncPending = true, updatedAt = System.currentTimeMillis()))
-        }
-        "PRODUCTION" -> {
-          val prod = _uiState.value.productionEntries.firstOrNull { it.id == finding.recordId } ?: return@launchSafely
-          val net = (valNum - prod.containerWeightKg).coerceAtLeast(0.0)
-          val costPerKg = if (net > 0.0001) prod.totalFormulaCost / net else 0.0
-          val totalVal = net * prod.salePricePerKg
-          dao.upsertProductionEntry(
-            prod.copy(
-              grossWeightKg = valNum,
-              netWeightKg = net,
-              costPerKg = costPerKg,
-              profitPerKg = prod.salePricePerKg - costPerKg,
-              totalValue = totalVal,
-              totalProfit = totalVal - prod.totalFormulaCost,
-              syncPending = true,
-              updatedAt = System.currentTimeMillis(),
-            )
-          )
-        }
-        "MATERIAL" -> {
-          val mat = _uiState.value.rawMaterials.firstOrNull { it.id == finding.recordId } ?: return@launchSafely
-          dao.upsertRawMaterial(mat.copy(stockKg = valNum, syncPending = true, updatedAt = System.currentTimeMillis()))
-        }
-      }
+      repository.applyAuditFix(finding.recordType, finding.recordId, valNum)
     }
   }
 }
