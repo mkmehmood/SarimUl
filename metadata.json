@@ -1,0 +1,6 @@
+{
+  "name": "Gull & Zubair",
+  "description": "Production, sales, inventory, credit, and cash ledger app for Gull and Zubair Naswar Dealers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

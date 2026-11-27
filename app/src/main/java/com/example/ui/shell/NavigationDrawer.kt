@@ -1,0 +1,244 @@
+package com.example.ui.shell
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.model.MainTab
+import com.example.data.model.StandaloneScreen
+import com.example.ui.components.SarimChip
+import com.example.ui.navigation.SarimRoute
+import com.example.ui.theme.CinzelFontFamily
+import com.example.ui.theme.LocalSarimPalette
+import com.example.viewmodel.SarimUiState
+
+@Composable
+fun SarimNavigationDrawerContent(
+  state: SarimUiState,
+  onSelectTab: (MainTab) -> Unit,
+  onOpenRoute: (SarimRoute) -> Unit,
+  onOpenStandalone: (StandaloneScreen) -> Unit,
+  onLogout: () -> Unit,
+) {
+  val palette = LocalSarimPalette.current
+  val visibleTabs = state.visibleTabs()
+  val pendingApprovals = state.approvals.count { it.status == "PENDING" }
+
+  ModalDrawerSheet(
+    drawerContainerColor = palette.surface,
+    drawerContentColor = palette.textPrimary,
+    modifier = Modifier.widthIn(max = 310.dp),
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxHeight()
+        .systemBarsPadding()
+        .verticalScroll(rememberScrollState())
+        .padding(horizontal = 14.dp, vertical = 16.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      // Header
+      Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+          "GULL AND ZUBAIR",
+          color = palette.green,
+          fontFamily = CinzelFontFamily,
+          fontWeight = FontWeight.Bold,
+          fontSize = 18.sp,
+          letterSpacing = 1.6.sp,
+        )
+        Text(
+          state.signedInEmail.ifBlank { if (state.isOfflineSession) "Offline Local Workspace" else "Signed In" },
+          color = palette.textMuted,
+          fontSize = 11.5.sp,
+        )
+      }
+      HorizontalDivider(color = palette.border)
+      Spacer(Modifier.height(4.dp))
+
+      DrawerGroupHeader("NAVIGATION")
+      visibleTabs.forEach { tab ->
+        val icon = when (tab) {
+          MainTab.OVERVIEW -> Icons.Filled.Dashboard
+          MainTab.PRODUCTION -> Icons.Filled.PrecisionManufacturing
+          MainTab.SALES -> Icons.Filled.PointOfSale
+          MainTab.CALCULATOR -> Icons.Filled.Calculate
+          MainTab.FACTORY -> Icons.Filled.Factory
+          MainTab.PAYMENTS -> Icons.Filled.AccountBalanceWallet
+          MainTab.REP_SALES -> Icons.Filled.Badge
+        }
+        val label = if (tab == MainTab.PRODUCTION) "Production" else tab.title
+        val tabRoute = SarimRoute.routeForTab(tab)
+        DrawerItemRow(
+          label = label,
+          icon = icon,
+          selected = state.activeRoute == tabRoute,
+          testTag = "drawer_tab_${tab.name.lowercase()}",
+          onClick = { onSelectTab(tab) },
+        )
+      }
+      DrawerItemRow(
+        label = "Inventory",
+        icon = Icons.Filled.Inventory2,
+        selected = state.activeRoute == SarimRoute.Inventory.route,
+        testTag = "drawer_route_inventory",
+        onClick = { onOpenRoute(SarimRoute.Inventory) },
+      )
+
+      if (state.isAdmin) {
+        Spacer(Modifier.height(6.dp))
+        DrawerGroupHeader("DAILY WORK")
+        DrawerItemRow(
+          label = "Approvals",
+          icon = Icons.Filled.Verified,
+          selected = state.activeStandalone is StandaloneScreen.Approvals,
+          badgeCount = pendingApprovals,
+          testTag = "drawer_approvals",
+          onClick = { onOpenStandalone(StandaloneScreen.Approvals) },
+        )
+        DrawerItemRow(
+          label = "Daily Ledger",
+          icon = Icons.AutoMirrored.Filled.MenuBook,
+          selected = state.activeStandalone is StandaloneScreen.DailyLedger,
+          testTag = "drawer_daily_ledger",
+          onClick = { onOpenStandalone(StandaloneScreen.DailyLedger) },
+        )
+        DrawerItemRow(
+          label = "Stock Transfer",
+          icon = Icons.Filled.SwapHoriz,
+          selected = state.activeStandalone is StandaloneScreen.StockTransfer,
+          testTag = "drawer_stock_transfer",
+          onClick = { onOpenStandalone(StandaloneScreen.StockTransfer) },
+        )
+        DrawerItemRow(
+          label = "Payment Transfer",
+          icon = Icons.Filled.CurrencyExchange,
+          selected = state.activeStandalone is StandaloneScreen.PaymentTransfer,
+          testTag = "drawer_payment_transfer",
+          onClick = { onOpenStandalone(StandaloneScreen.PaymentTransfer) },
+        )
+
+        Spacer(Modifier.height(6.dp))
+        DrawerGroupHeader("RECORDS")
+        DrawerItemRow(
+          label = "Add Entity",
+          icon = Icons.Filled.PersonAdd,
+          selected = state.activeStandalone is StandaloneScreen.AddEntity,
+          testTag = "drawer_add_entity",
+          onClick = { onOpenStandalone(StandaloneScreen.AddEntity()) },
+        )
+        DrawerItemRow(
+          label = "Add Raw Materials",
+          icon = Icons.Filled.Inventory2,
+          selected = state.activeStandalone is StandaloneScreen.AddRawMaterial,
+          testTag = "drawer_add_raw_materials",
+          onClick = { onOpenStandalone(StandaloneScreen.AddRawMaterial()) },
+        )
+        DrawerItemRow(
+          label = "Formula Store",
+          icon = Icons.Filled.Science,
+          selected = state.activeStandalone is StandaloneScreen.FormulaStore,
+          testTag = "drawer_formula_store",
+          onClick = { onOpenStandalone(StandaloneScreen.FormulaStore) },
+        )
+      }
+
+      Spacer(Modifier.weight(1f))
+      HorizontalDivider(color = palette.border)
+      Spacer(Modifier.height(4.dp))
+
+      if (state.isAdmin) {
+        DrawerItemRow(
+          label = "Settings",
+          icon = Icons.Filled.Settings,
+          selected = state.activeStandalone is StandaloneScreen.Settings,
+          testTag = "drawer_settings",
+          onClick = { onOpenStandalone(StandaloneScreen.Settings) },
+        )
+      }
+      DrawerItemRow(
+        label = "Logout",
+        icon = Icons.AutoMirrored.Filled.Logout,
+        selected = false,
+        tint = palette.red,
+        testTag = "drawer_logout",
+        onClick = onLogout,
+      )
+    }
+  }
+}
+
+@Composable
+private fun DrawerGroupHeader(title: String) {
+  val palette = LocalSarimPalette.current
+  Text(
+    text = title,
+    color = palette.textMuted,
+    fontSize = 10.5.sp,
+    fontWeight = FontWeight.Bold,
+    letterSpacing = 1.1.sp,
+    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+  )
+}
+
+@Composable
+private fun DrawerItemRow(
+  label: String,
+  icon: ImageVector,
+  selected: Boolean,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  tint: Color? = null,
+  badgeCount: Int = 0,
+  testTag: String = "drawer_item",
+) {
+  val palette = LocalSarimPalette.current
+  val fg = tint ?: if (selected) palette.green else palette.textPrimary
+  Surface(
+    modifier = modifier
+      .fillMaxWidth()
+      .defaultMinSize(minHeight = 46.dp)
+      .clip(RoundedCornerShape(50))
+      .testTag(testTag)
+      .clickable(onClick = onClick),
+    shape = RoundedCornerShape(50),
+    color = if (selected) palette.green.copy(alpha = 0.16f) else Color.Transparent,
+    border = if (selected) BorderStroke(1.dp, palette.green.copy(alpha = 0.5f)) else null,
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(19.dp))
+      Text(
+        text = label,
+        color = fg,
+        fontSize = 13.5.sp,
+        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        modifier = Modifier.weight(1f),
+      )
+      if (badgeCount > 0) {
+        SarimChip(badgeCount.toString(), palette.amber)
+      }
+    }
+  }
+}
