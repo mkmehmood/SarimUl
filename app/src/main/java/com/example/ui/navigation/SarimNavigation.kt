@@ -165,11 +165,16 @@ sealed class SarimRoute(
   }
 
   companion object {
-    val primaryDestinations: List<Pair<SarimRoute, ImageVector>> = listOf(
-      Dashboard to Icons.Filled.Dashboard,
-      Inventory to Icons.Filled.Inventory2,
-      Ledger to Icons.AutoMirrored.Filled.MenuBook,
-    )
+    // Must be lazy: the companion initializes together with the SarimRoute superclass, which can
+    // run while a subclass object (e.g. Dashboard) is still mid-initialization. An eager list would
+    // capture null for those objects and crash the bottom nav bar with an NPE on `dest.route`.
+    val primaryDestinations: List<Pair<SarimRoute, ImageVector>> by lazy {
+      listOf(
+        Dashboard to Icons.Filled.Dashboard,
+        Inventory to Icons.Filled.Inventory2,
+        Ledger to Icons.AutoMirrored.Filled.MenuBook,
+      )
+    }
 
     fun routeForTab(tab: MainTab): String = when (tab) {
       MainTab.OVERVIEW -> Dashboard.route
