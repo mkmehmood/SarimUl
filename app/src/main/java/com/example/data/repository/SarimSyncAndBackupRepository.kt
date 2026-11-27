@@ -2116,6 +2116,20 @@ class SarimSyncAndBackupRepository(
     getRecycleBinItems().forEach { deleteForeverRecycleItem(it) }
   }
 
+  private suspend fun recordDedupDeletion(collection: String, docId: String, now: Long) {
+    dao.upsertDeletion(
+      DeletionTombstoneEntity(
+        id = docId,
+        recordId = docId,
+        collection = collection,
+        recordType = collection,
+        deletedAt = now,
+        expiresAt = now + SarimWebSchema.TOMBSTONE_EXPIRY_MS,
+        syncedToCloud = false,
+      )
+    )
+  }
+
   suspend fun deduplicateAllData(): Int {
     val now = System.currentTimeMillis()
     var removed = 0
@@ -2126,8 +2140,8 @@ class SarimSyncAndBackupRepository(
     dupCusts.values.filter { it.size > 1 }.forEach { group ->
       val sorted = group.sortedByDescending { it.updatedAt }
       sorted.drop(1).forEach { dup ->
-        dao.upsertCustomer(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
-        enqueueSoftDelete("customers", dup.id, now)
+        dao.softDeleteCustomer(dup.id, now)
+        recordDedupDeletion(SarimWebSchema.COL_CUSTOMERS, dup.id, now)
         removed++
       }
     }
@@ -2138,8 +2152,8 @@ class SarimSyncAndBackupRepository(
     dupEntities.values.filter { it.size > 1 }.forEach { group ->
       val sorted = group.sortedByDescending { it.updatedAt }
       sorted.drop(1).forEach { dup ->
-        dao.upsertPaymentEntity(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
-        enqueueSoftDelete("entities", dup.id, now)
+        dao.softDeletePaymentEntity(dup.id, now)
+        recordDedupDeletion(SarimWebSchema.COL_ENTITIES, dup.id, now)
         removed++
       }
     }
@@ -2150,8 +2164,8 @@ class SarimSyncAndBackupRepository(
     dupMats.values.filter { it.size > 1 }.forEach { group ->
       val sorted = group.sortedByDescending { it.updatedAt }
       sorted.drop(1).forEach { dup ->
-        dao.upsertRawMaterial(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
-        enqueueSoftDelete("inventory", dup.id, now)
+        dao.softDeleteRawMaterial(dup.id, now)
+        recordDedupDeletion(SarimWebSchema.COL_INVENTORY, dup.id, now)
         removed++
       }
     }
@@ -2162,7 +2176,7 @@ class SarimSyncAndBackupRepository(
     dupFormulas.values.filter { it.size > 1 }.forEach { group ->
       val sorted = group.sortedByDescending { it.updatedAt }
       sorted.drop(1).forEach { dup ->
-        dao.upsertFormula(dup.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        dao.softDeleteFormula(dup.id, now)
         removed++
       }
     }
