@@ -108,7 +108,16 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Create placeholder upload keystore for Gradle
+        run: |
+          # build.gradle.kts requires ${rootDir}/my-upload-key.jks (alias "upload") to exist.
+          # The final release APK is re-signed in the packaging step below.
+          keytool -genkeypair -keystore my-upload-key.jks -storepass android -alias upload -keypass android -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Placeholder,O=CI,C=US"
+
       - name: Build & Verify Release and Debug APKs
+        env:
+          STORE_PASSWORD: android
+          KEY_PASSWORD: android
         run: gradle :app:testDebugUnitTest assembleRelease assembleDebug --no-daemon
 
       - name: Package & Sign Latest APKs
@@ -143,8 +152,19 @@ jobs:
             rm -f /tmp/release.keystore /tmp/aligned-release.apk
             SIGN_MODE="Custom release keystore (GitHub Secrets)"
           else
-            cp "$RAW_RELEASE" "$OUT_RELEASE"
-            SIGN_MODE="Stable repository keystore (debug.keystore.base64)"
+            echo "No release secrets set; signing release APK with stable debug.keystore..."
+            BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+            "$BUILD_TOOLS_DIR/zipalign" -p -f 4 "$RAW_RELEASE" /tmp/aligned-release.apk
+            "$BUILD_TOOLS_DIR/apksigner" sign \
+              --ks debug.keystore \
+              --ks-pass "pass:android" \
+              --ks-key-alias androiddebugkey \
+              --key-pass "pass:android" \
+              --out "$OUT_RELEASE" \
+              /tmp/aligned-release.apk
+            "$BUILD_TOOLS_DIR/apksigner" verify "$OUT_RELEASE"
+            rm -f /tmp/aligned-release.apk
+            SIGN_MODE="Stable repository keystore (debug.keystore)"
           fi
 
           SHA1_FP=$(keytool -printcert -jarfile "$OUT_RELEASE" | grep -m1 "SHA1:" | sed 's/.*SHA1:[[:space:]]*//')
