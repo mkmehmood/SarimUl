@@ -16,9 +16,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.FactoryBatchEntity
+import com.example.data.local.FormulaEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
+import com.example.data.repository.FormulaCalculator
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -34,6 +36,34 @@ private enum class InventorySort(val label: String) {
   TOTAL_VALUE("Total Value"),
 }
 
+private data class IngredientLine(
+  val name: String,
+  val kg: Double,
+  val cost: Double,
+  val missing: Boolean,
+  val shortKg: Double,
+)
+
+/** Same behaviour as the web picker: nothing -> "No formula", one -> plain label, 2+ -> toggle. */
+@Composable
+private fun FormulaChoice(
+  options: List<FormulaEntity>,
+  selected: FormulaEntity?,
+  onSelect: (FormulaEntity) -> Unit,
+) {
+  val palette = LocalSarimPalette.current
+  when {
+    options.isEmpty() || selected == null -> Text("No formula", color = palette.textMuted, fontSize = 13.sp)
+    options.size == 1 -> Text(options.first().name, color = palette.green, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    else -> SarimToggleGroup(
+      options = options,
+      selected = selected,
+      labelOf = { it.name },
+      onSelect = onSelect,
+    )
+  }
+}
+
 @Composable
 fun FactoryTab(
   state: SarimUiState,
@@ -44,9 +74,9 @@ fun FactoryTab(
   val hideMoney = state.hideMoneyFigures
 
   var factoryDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
-  var selectedFormulaId by remember(state.formulas) { mutableStateOf(state.formulas.firstOrNull()?.id ?: "") }
+  var selectedFormulaId by remember { mutableStateOf("") }
   var unitsText by remember { mutableStateOf("1") }
-  var availFormulaId by remember(state.formulas) { mutableStateOf(state.formulas.firstOrNull()?.id ?: "") }
+  var availFormulaId by remember { mutableStateOf("") }
   var invSort by remember { mutableStateOf(InventorySort.MATERIAL) }
   var invAsc by remember { mutableStateOf(true) }
   var summaryPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
@@ -54,10 +84,36 @@ fun FactoryTab(
   var editingBatchId by remember { mutableStateOf<String?>(null) }
   var sheetBatch by remember { mutableStateOf<FactoryBatchEntity?>(null) }
 
-  val selectedFormula = state.formulas.firstOrNull { it.id == selectedFormulaId } ?: state.formulas.firstOrNull()
+  // Only formulas selected on a store in Store Manager can be produced (matches the web Factory tab).
+  val liveFormulas = state.formulas.filter { !it.isDeleted }
+  val usedFormulaIds = state.stores.filter { !it.isDeleted && it.formulaId.isNotBlank() }.map { it.formulaId }.toSet()
+  val editingFormulaId = editingBatchId?.let { id -> state.factoryBatches.firstOrNull { it.id == id }?.formulaId }
+  val entryFormulas = liveFormulas.filter { it.id in usedFormulaIds || it.id == editingFormulaId }
+  // Units Available also keeps formulas that still have stock even if no store uses them any more.
+  val availFormulas = liveFormulas.filter { it.id in usedFormulaIds || it.unitsAvailable > 0.0 }
+
+  val selectedFormula = entryFormulas.firstOrNull { it.id == selectedFormulaId } ?: entryFormulas.firstOrNull()
   val selectedSummary = selectedFormula?.let { snap?.formulaSummaries?.get(it.id) }
   val unitsInt = (SarimFormat.parseSafeDouble(unitsText)?.toInt() ?: 0).coerceAtLeast(0)
   val batchTotalCost = (selectedSummary?.totalCostPerUnit ?: 0.0) * unitsInt
+  val previewUnits = unitsInt.coerceAtLeast(1)
+  val ingredientLines = remember(selectedFormula, previewUnits, state.formulas, state.rawMaterials) {
+    if (selectedFormula == null) emptyList() else {
+      val mats = state.rawMaterials.filter { !it.isDeleted }.associateBy { it.id }
+      val formulasById = liveFormulas.associateBy { it.id }
+      FormulaCalculator.flattenRawMaterials(selectedFormula, previewUnits.toDouble(), formulasById, mats)
+        .map { (matId, kg) ->
+          val mat = mats[matId]
+          IngredientLine(
+            name = mat?.name?.takeIf { it.isNotBlank() } ?: "Material",
+            kg = kg,
+            cost = kg * (mat?.avgCostPerKg ?: 0.0),
+            missing = mat == null,
+            shortKg = if (mat != null && mat.stockKg + 1e-6 < kg) kg - mat.stockKg else 0.0,
+          )
+        }
+    }
+  }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -82,15 +138,8 @@ fun FactoryTab(
         }
         SarimDatePickerField("Date", factoryDate, onDateSelected = { factoryDate = it }, testTag = "factory_date")
 
-        if (state.formulas.isNotEmpty()) {
-          SarimFieldLabel("Formula")
-          SarimToggleGroup(
-            options = state.formulas,
-            selected = selectedFormula ?: state.formulas.first(),
-            labelOf = { it.name },
-            onSelect = { selectedFormulaId = it.id },
-          )
-        }
+        SarimFieldLabel("Formula")
+        FormulaChoice(entryFormulas, selectedFormula) { selectedFormulaId = it.id }
 
         SarimTextField(
           value = unitsText,
@@ -105,27 +154,57 @@ fun FactoryTab(
           toneColor = palette.red,
         )
 
-        // Formula preview
+        // Formula preview (flattened through sub-formulas, live cost + stock check, like the web tab)
         Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
-          Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (selectedFormula == null) {
-              Text("Select a formula...", color = palette.textMuted, fontSize = 12.5.sp)
+              Text(
+                "No formula selected. Choose a formula for a store in Store Manager first.",
+                color = palette.textMuted,
+                fontSize = 12.5.sp,
+              )
             } else {
-              Text("${selectedFormula.name} · ${SarimFormat.formatQty(selectedFormula.unitsAvailable, 1)} avail", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-              val ings = JsonCodecs.decodeIngredients(selectedFormula.ingredientsJson)
-              if (ings.isEmpty()) {
+              Text(
+                "${selectedFormula.name} Formula ($previewUnits ${if (previewUnits == 1) "Unit" else "Units"})",
+                color = palette.green,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+              )
+              if (ingredientLines.isEmpty()) {
                 Text("No ingredients configured yet. Edit in Formula Store.", color = palette.textMuted, fontSize = 12.sp)
               } else {
-                ings.forEach { ing ->
-                  Text("• ${ing.refName}: ${SarimFormat.formatKg(ing.qtyKg * unitsInt.coerceAtLeast(1))}", color = palette.textPrimary, fontSize = 12.sp)
+                ingredientLines.forEach { line ->
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                      Text("${line.name} (${SarimFormat.formatKg(line.kg)})", color = palette.textPrimary, fontSize = 12.sp)
+                      when {
+                        line.missing -> Text("not in inventory", color = palette.red, fontSize = 11.sp)
+                        line.shortKg > 0.0 -> Text("short ${SarimFormat.formatKg(line.shortKg)}", color = palette.amber, fontSize = 11.sp)
+                      }
+                    }
+                    Text(
+                      SarimFormat.formatRs(line.cost, true, hideMoney),
+                      color = palette.textPrimary,
+                      style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                  }
+                }
+                if (selectedFormula.additionalCostPerUnit > 0.0) {
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                      "Additional Cost (${SarimFormat.formatRs(selectedFormula.additionalCostPerUnit, false, hideMoney)} per unit)",
+                      color = palette.red,
+                      fontSize = 12.sp,
+                      modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    Text(
+                      SarimFormat.formatRs(selectedFormula.additionalCostPerUnit * previewUnits, true, hideMoney),
+                      color = palette.red,
+                      style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                  }
                 }
               }
-              Text(
-                "Additional Cost: ${SarimFormat.formatRs(selectedFormula.additionalCostPerUnit * unitsInt.coerceAtLeast(1), true, hideMoney)}",
-                color = palette.red,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-              )
             }
           }
         }
@@ -138,7 +217,11 @@ fun FactoryTab(
               viewModel.showDialog(AppDialogRequest("Invalid Date", "Future dates are not allowed.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
-            if (unitsInt < 1 || selectedFormula == null) {
+            if (selectedFormula == null) {
+              viewModel.showDialog(AppDialogRequest("No Formula", "Select a formula for a store in Store Manager before saving production.", confirmLabel = "OK", cancelLabel = null))
+              return@SarimPrimaryButton
+            }
+            if (unitsInt < 1) {
               viewModel.showDialog(AppDialogRequest("Invalid Units", "Units to produce must be at least 1.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
@@ -162,9 +245,16 @@ viewModel.launchSafely(
     }
 
     // 2. Units Available Card (admin)
-    if (state.isAdmin && state.formulas.isNotEmpty()) {
+    if (state.isAdmin) {
       item {
-        val availFormula = state.formulas.firstOrNull { it.id == availFormulaId } ?: state.formulas.first()
+        val availFormula = availFormulas.firstOrNull { it.id == availFormulaId } ?: availFormulas.firstOrNull()
+        if (availFormula == null) {
+          SarimCard {
+            Text("Units Available", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            FormulaChoice(emptyList(), null) {}
+          }
+          return@item
+        }
         val fSum = snap?.formulaSummaries?.get(availFormula.id)
         val unitWeight = fSum?.unitWeightKg ?: 0.0
         val costPerUnit = fSum?.totalCostPerUnit ?: 0.0
@@ -174,12 +264,7 @@ viewModel.launchSafely(
 
         SarimCard {
           Text("Units Available", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-          SarimToggleGroup(
-            state.formulas,
-            availFormula,
-            { it.name },
-            { availFormulaId = it.id },
-          )
+          FormulaChoice(availFormulas, availFormula) { availFormulaId = it.id }
           SarimFieldLabel("UNITS")
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Available", SarimFormat.formatQty(availFormula.unitsAvailable, 2), Modifier.weight(1f), palette.green)
