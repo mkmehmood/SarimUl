@@ -19,6 +19,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -952,18 +955,16 @@ private fun SoundHapticsDropdownCard(
       }
       SarimSecondaryButton(text = buttonText, onClick = onButtonClick, testTag = "${testTag}_test")
     }
-    ExposedDropdownMenuBox(
-      expanded = expanded,
-      onExpandedChange = onExpandedChange,
-      modifier = Modifier.fillMaxWidth(),
-    ) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var anchorWidthPx by remember { mutableIntStateOf(0) }
+    Box(modifier = Modifier.fillMaxWidth()) {
       Surface(
         shape = RoundedCornerShape(16.dp),
         color = palette.surfaceElevated,
         border = BorderStroke(1.dp, if (expanded) accentColor else palette.border),
         modifier = Modifier
           .fillMaxWidth()
-          .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
+          .onSizeChanged { anchorWidthPx = it.width }
           .defaultMinSize(minHeight = 52.dp)
           .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
@@ -974,14 +975,19 @@ private fun SoundHapticsDropdownCard(
             Text(selectedLabel, color = accentColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Text(selectedDescription, color = palette.textMuted, fontSize = 12.sp)
           }
-          ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+          Icon(
+            Icons.Rounded.ArrowDropDown,
+            contentDescription = if (expanded) "Hide options" else "Show options",
+            tint = palette.textMuted,
+            modifier = Modifier.size(24.dp).rotate(if (expanded) 180f else 0f),
+          )
         }
       }
-      ExposedDropdownMenu(
+      DropdownMenu(
         expanded = expanded,
         onDismissRequest = { onExpandedChange(false) },
         modifier = Modifier
-          .exposedDropdownSize(matchAnchorWidth = true)
+          .width(with(density) { anchorWidthPx.toDp() })
           .background(palette.surfaceElevated)
           .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
       ) {

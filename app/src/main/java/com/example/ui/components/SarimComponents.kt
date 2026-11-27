@@ -23,14 +23,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -333,7 +336,20 @@ fun SarimSearchFieldWithDropdown(
                 )
               }
             }
-            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isMenuVisible)
+            IconButton(
+              onClick = {
+                filterActive = false
+                showDropdown = !isMenuVisible
+              },
+              modifier = Modifier.size(40.dp).testTag("${testTag}_toggle"),
+            ) {
+              Icon(
+                Icons.Rounded.ArrowDropDown,
+                contentDescription = if (isMenuVisible) "Hide options" else "Show options",
+                tint = palette.textMuted,
+                modifier = Modifier.size(24.dp).rotate(if (isMenuVisible) 180f else 0f),
+              )
+            }
           }
         },
         textFieldModifier = Modifier
@@ -401,7 +417,6 @@ fun SarimSearchFieldWithDropdown(
   }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SarimPopoverSelector(
   label: String,
@@ -412,18 +427,17 @@ fun SarimPopoverSelector(
   testTag: String = "popover_selector",
 ) {
   val palette = LocalSarimPalette.current
+  val density = LocalDensity.current
   var expanded by remember { mutableStateOf(false) }
+  var anchorWidthPx by remember { mutableIntStateOf(0) }
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
     if (label.isNotBlank()) SarimFieldLabel(label)
-    ExposedDropdownMenuBox(
-      expanded = expanded,
-      onExpandedChange = { expanded = it },
-      modifier = Modifier.fillMaxWidth(),
-    ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+      // One tap handler only: the arrow and the whole field toggle the menu.
       Surface(
         modifier = Modifier
           .fillMaxWidth()
-          .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
+          .onSizeChanged { anchorWidthPx = it.width }
           .defaultMinSize(minHeight = 48.dp)
           .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
@@ -433,7 +447,7 @@ fun SarimPopoverSelector(
         border = BorderStroke(1.dp, if (expanded) palette.green else palette.border),
       ) {
         Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+          modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           Text(
@@ -445,14 +459,19 @@ fun SarimPopoverSelector(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-          ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+          Icon(
+            Icons.Rounded.ArrowDropDown,
+            contentDescription = if (expanded) "Hide options" else "Show options",
+            tint = palette.textMuted,
+            modifier = Modifier.size(24.dp).rotate(if (expanded) 180f else 0f),
+          )
         }
       }
-      ExposedDropdownMenu(
+      DropdownMenu(
         expanded = expanded,
         onDismissRequest = { expanded = false },
         modifier = Modifier
-          .exposedDropdownSize(matchAnchorWidth = true)
+          .width(with(density) { anchorWidthPx.toDp() })
           .heightIn(max = 320.dp)
           .background(palette.surfaceElevated)
           .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
