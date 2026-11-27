@@ -268,6 +268,17 @@ class SarimRepository(
   suspend fun deleteStore(key: String) {
     val now = System.currentTimeMillis()
     val s = dao.getAllStores().firstOrNull { it.storeKey == key }
+    val usage = SarimLinkEngine.storeUsage(
+      storeKey = key,
+      production = dao.getAllProductionEntries(),
+      factoryBatches = dao.getAllFactoryBatches(),
+      sales = dao.getAllSales(),
+      returns = dao.getAllReturns(),
+      stockTransfers = dao.getAllStockTransfers(),
+    )
+    usage.blockMessage(s?.name ?: key)?.let { msg ->
+      throw IllegalStateException(msg)
+    }
     dao.softDeleteStore(key, now)
     val snapshot = s?.let {
       linkedMapOf<String, Any?>(
@@ -309,6 +320,47 @@ class SarimRepository(
     }
   }
 
+  suspend fun repriceSalesForProductionDay(storeKey: String, dateStr: String, now: Long = System.currentTimeMillis()) {
+    val cleanKey = storeKey.trim()
+    val cleanDate = dateStr.trim()
+    if (cleanKey.isBlank() || cleanDate.isBlank()) return
+    val prods = dao.getAllProductionEntries().filter {
+      !it.isDeleted && !it.isReturn && it.storeKey.equals(cleanKey, ignoreCase = true) &&
+        it.dateStr.ifBlank { SarimFormat.dateInput(it.dateEpoch) } == cleanDate
+    }
+    val totNet = prods.sumOf { it.netWeightKg }
+    val totCost = prods.sumOf { it.totalFormulaCost }
+    val unitCostPerKg = if (totNet > 0.0001) {
+      totCost / totNet
+    } else {
+      val store = dao.getAllStores().firstOrNull { !it.isDeleted && it.storeKey.equals(cleanKey, ignoreCase = true) }
+        ?: return
+      val formulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
+      val materials = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
+      val f = formulas[store.formulaId] ?: return
+      FormulaCalculator.computeFormulaSummary(f, formulas, materials).costPerKgAdjusted
+    }
+    dao.getAllSales().filter { s ->
+      !s.isDeleted && !s.isRepSale && !s.isRepReturn && !s.isRepTransfer &&
+        s.mode == "SALE" && s.storeKey.equals(cleanKey, ignoreCase = true) &&
+        s.dateStr.ifBlank { SarimFormat.dateInput(s.dateEpoch) } == cleanDate &&
+        (s.costSource.isNullOrBlank() || s.costSource == "store")
+    }.forEach { sale ->
+      val newTotalCost = SarimLinkEngine.round2(sale.quantityKg * unitCostPerKg)
+      val newProfit = SarimLinkEngine.round2(sale.totalValue - newTotalCost)
+      if (kotlin.math.abs(sale.totalCost - newTotalCost) > 0.01 || kotlin.math.abs(sale.profit - newProfit) > 0.01) {
+        val updated = sale.copy(
+          totalCost = newTotalCost,
+          profit = newProfit,
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertSale(updated)
+        enqueueOutboxSet(SarimWebSchema.COL_SALES, updated.id, SarimWebSchema.saleToMap(updated))
+      }
+    }
+  }
+
   suspend fun saveProductionEntry(
     editingId: String?,
     dateEpoch: Long,
@@ -327,6 +379,23 @@ class SarimRepository(
       assertStoreRemainingNonNegative(existing.storeKey, existing.id, 0.0)
     }
     assertStoreRemainingNonNegative(store.storeKey, existing?.id, netKg)
+
+    // Guard against drawing more formula units than available (matches web factory-prod pool rule)
+    if (existing == null) {
+      if (unitsUsed > formula.unitsAvailable + 1e-6) {
+        throw IllegalStateException("Insufficient ${formula.name} units available (${SarimLinkEngine.round2(formula.unitsAvailable)} left, requested ${SarimLinkEngine.round2(unitsUsed)}).")
+      }
+    } else if (existing.formulaId == formula.id) {
+      val deltaUnits = unitsUsed - existing.formulaUnitsUsed
+      if (deltaUnits > formula.unitsAvailable + 1e-6) {
+        throw IllegalStateException("Insufficient ${formula.name} units available for edit (${SarimLinkEngine.round2(formula.unitsAvailable)} left).")
+      }
+    } else {
+      if (unitsUsed > formula.unitsAvailable + 1e-6) {
+        throw IllegalStateException("Insufficient ${formula.name} units available (${SarimLinkEngine.round2(formula.unitsAvailable)} left, requested ${SarimLinkEngine.round2(unitsUsed)}).")
+      }
+    }
+
     val totalFormulaCost = unitsUsed * unitCost
     val costPerKg = if (netKg > 0.0001) totalFormulaCost / netKg else 0.0
     val salePrice = store.salePricePerKg
@@ -457,13 +526,27 @@ class SarimRepository(
     }
 
     enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, entity.id, SarimWebSchema.productionToMap(entity))
+    if (!entity.isReturn) {
+      repriceSalesForProductionDay(entity.storeKey, entity.dateStr, now)
+      if (existing != null && (!existing.storeKey.equals(entity.storeKey, true) || existing.dateStr != entity.dateStr)) {
+        repriceSalesForProductionDay(existing.storeKey, existing.dateStr, now)
+      }
+    }
   }
 
   suspend fun deleteProductionEntry(id: String) {
     val now = System.currentTimeMillis()
     val item = dao.getAllProductionEntries().firstOrNull { it.id == id }
-    if (item != null && !item.isReturn) {
-      assertStoreRemainingNonNegative(item.storeKey, item.id, 0.0)
+    if (item != null) {
+      if (item.isReturn) {
+        val calcOwner = dao.getAllSettlements().firstOrNull { !it.isDeleted && it.returnEntryId == item.id }
+        if (calcOwner != null) {
+          throw IllegalStateException("This return belongs to a Calculator settlement for ${calcOwner.repName}. Delete that settlement first.")
+        }
+      }
+      if (!item.isReturn || !item.returnLogId.isNullOrBlank()) {
+        assertStoreRemainingNonNegative(item.storeKey, item.id, 0.0)
+      }
     }
     val groupId = if (item?.isReturn == true && !item.returnLogId.isNullOrBlank()) {
       SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_prod", tsMs = now)
@@ -511,6 +594,9 @@ class SarimRepository(
       snapshotMap = item?.let { SarimWebSchema.productionToMap(it) },
       groupId = groupId,
     )
+    if (item != null && !item.isReturn) {
+      repriceSalesForProductionDay(item.storeKey, item.dateStr.ifBlank { SarimFormat.dateInput(item.dateEpoch) }, now)
+    }
   }
 
   suspend fun saveRawMaterialPurchase(
@@ -607,7 +693,11 @@ class SarimRepository(
   suspend fun deletePurchaseLot(lotId: String) {
     val now = System.currentTimeMillis()
     val lot = dao.getAllPurchases().firstOrNull { it.id == lotId } ?: return
-    dao.getAllRawMaterials().firstOrNull { it.id == lot.materialId && !it.isDeleted }?.let { mat ->
+    val mat = dao.getAllRawMaterials().firstOrNull { it.id == lot.materialId && !it.isDeleted }
+    SarimLinkEngine.getPurchaseLotDeleteBlockReason(lot, mat)?.let { msg ->
+      throw IllegalStateException(msg)
+    }
+    if (mat != null) {
       val newStock = (mat.stockKg - lot.totalKg).coerceAtLeast(0.0)
       val newCollected = (mat.collectedKg - lot.totalKg).coerceAtLeast(0.0)
       val newAvg = if (newStock > 0.0001) {
@@ -717,6 +807,13 @@ class SarimRepository(
   suspend fun deleteFormula(id: String) {
     val now = System.currentTimeMillis()
     val f = dao.getAllFormulas().firstOrNull { it.id == id }
+    if (f != null) {
+      SarimLinkEngine.getFormulaDeleteBlockReason(
+        formula = f,
+        stores = dao.getAllStores(),
+        formulas = dao.getAllFormulas(),
+      )?.let { msg -> throw IllegalStateException(msg) }
+    }
     dao.softDeleteFormula(id, now)
     val snapshot = f?.let {
       linkedMapOf<String, Any?>(
@@ -747,12 +844,52 @@ class SarimRepository(
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllFactoryBatches().firstOrNull { it.id == id && !it.isDeleted } }
 
+    // Validate before any DB mutation so failed checks leave stocks & formulas untouched
+    val allFormulasInit = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }.toMutableMap()
+    val allMaterialsInit = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }.toMutableMap()
+    if (existing != null) {
+      val oldFormula = allFormulasInit[existing.formulaId]
+      if (oldFormula != null && (oldFormula.unitsAvailable + 0.0005) < existing.unitsProduced) {
+        throw IllegalStateException("Some units from this batch have already been consumed.")
+      }
+      val oldMatsUsed = JsonCodecs.decodeFormulaMaterialsUsed(existing.materialsUsedJson)
+      if (oldMatsUsed.isNotEmpty()) {
+        oldMatsUsed.forEach { used ->
+          allMaterialsInit[used.id]?.let { mat ->
+            allMaterialsInit[mat.id] = mat.copy(stockKg = mat.stockKg + used.quantity)
+          }
+        }
+      } else if (oldFormula != null) {
+        val flatOld = FormulaCalculator.flattenRawMaterials(oldFormula, existing.unitsProduced, allFormulasInit, allMaterialsInit)
+        flatOld.forEach { (matId, kgUsed) ->
+          allMaterialsInit[matId]?.let { mat ->
+            allMaterialsInit[mat.id] = mat.copy(stockKg = mat.stockKg + kgUsed)
+          }
+        }
+      }
+      if (oldFormula != null) {
+        allFormulasInit[oldFormula.id] = oldFormula.copy(
+          unitsAvailable = (oldFormula.unitsAvailable - existing.unitsProduced).coerceAtLeast(0.0),
+        )
+      }
+    }
+
+    val targetFormulaCheck = allFormulasInit[formula.id] ?: formula
+    val flatRawCheck = FormulaCalculator.flattenRawMaterials(targetFormulaCheck, units, allFormulasInit, allMaterialsInit)
+    flatRawCheck.forEach { (matId, kgUsed) ->
+      val mat = allMaterialsInit[matId]
+        ?: throw IllegalStateException("Missing raw material ($matId) required by ${targetFormulaCheck.name}.")
+      if (mat.stockKg + 1e-6 < kgUsed) {
+        throw IllegalStateException(
+          "Insufficient ${mat.name} stock: need ${SarimLinkEngine.round2(kgUsed)} kg, available ${SarimLinkEngine.round2(mat.stockKg)} kg."
+        )
+      }
+    }
+
+    // All checks passed — apply reversals (if edit) & new deductions
     if (existing != null) {
       val priorFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
       val oldFormula = priorFormulas[existing.formulaId]
-      if (oldFormula != null && (oldFormula.unitsAvailable + 0.0001) < existing.unitsProduced) {
-        throw IllegalStateException("Some units from this batch have already been consumed.")
-      }
       val priorMats = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
       val oldMatsUsed = JsonCodecs.decodeFormulaMaterialsUsed(existing.materialsUsedJson)
       if (oldMatsUsed.isNotEmpty()) {
@@ -852,6 +989,13 @@ class SarimRepository(
     val batch = dao.getAllFactoryBatches().firstOrNull { it.id == id } ?: return
     val allMats = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
     val allFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
+
+    SarimLinkEngine.getFactoryBatchDeleteBlockReason(
+      batch = batch,
+      formula = allFormulas[batch.formulaId],
+      factoryBatches = dao.getAllFactoryBatches(),
+      production = dao.getAllProductionEntries(),
+    )?.let { msg -> throw IllegalStateException(msg) }
 
     val matsUsed = JsonCodecs.decodeFormulaMaterialsUsed(batch.materialsUsedJson)
     if (matsUsed.isNotEmpty()) {
@@ -997,6 +1141,7 @@ class SarimRepository(
 
     if (existing != null && (!existing.name.equals(cleanName, true) || existing.phone != entity.phone)) {
       val saleCol = if (entity.isRepCustomer) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+      var touchedLedger = false
       dao.getAllSales().filter {
         !it.isDeleted && it.isRepSale == entity.isRepCustomer &&
           (it.customerId == entity.id || it.customerName.equals(existing.name, true))
@@ -1010,7 +1155,28 @@ class SarimRepository(
         )
         dao.upsertSale(updatedTx)
         enqueueOutboxSet(saleCol, updatedTx.id, SarimWebSchema.saleToMap(updatedTx))
+        s.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
+          dao.getAllDailyLedger().firstOrNull { it.id == lid && !it.isDeleted }?.let { led ->
+            dao.upsertLedgerEntry(led.copy(party = cleanName, updatedAt = now))
+            touchedLedger = true
+          }
+        }
       }
+      if (!entity.isRepCustomer) {
+        dao.getAllDailyLedger().filter {
+          !it.isDeleted && it.party.equals(existing.name, true)
+        }.forEach { led ->
+          val link = JsonCodecs.decodeLedgerLink(led.linkJson)
+          if (link?.get("kind") == "customer") {
+            val updatedLink = link.toMutableMap().apply { this["name"] = cleanName }
+            dao.upsertLedgerEntry(
+              led.copy(party = cleanName, linkJson = JsonCodecs.encodeLedgerLink(updatedLink), updatedAt = now)
+            )
+            touchedLedger = true
+          }
+        }
+      }
+      if (touchedLedger) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
       val oldPKey = customerPhotoKey(existing)
       val newPKey = customerPhotoKey(entity)
       if (oldPKey != newPKey) {
@@ -1027,6 +1193,19 @@ class SarimRepository(
       markPhotoDeleted(pKey, now)
     }
     return entity
+  }
+
+  private suspend fun forgetLedgerParty(partyName: String, now: Long) {
+    val clean = partyName.trim()
+    if (clean.isBlank()) return
+    var touched = false
+    dao.getAllDailyLedger().filter {
+      !it.isDeleted && it.sourceType == "MANUAL" && it.party.equals(clean, ignoreCase = true)
+    }.forEach { led ->
+      dao.upsertLedgerEntry(led.copy(party = "", updatedAt = now))
+      touched = true
+    }
+    if (touched) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
   }
 
   suspend fun deleteCustomer(id: String) {
@@ -1056,6 +1235,7 @@ class SarimRepository(
           groupId = groupId,
         )
       }
+      forgetLedgerParty(c.name, now)
       markPhotoDeleted(customerPhotoKey(c), now)
     }
 
@@ -1172,12 +1352,11 @@ class SarimRepository(
     lng: Double? = null,
     notes: String = "",
     costSource: String? = null,
-  ) {
+    linkedLedgerId: String? = null,
+  ): SaleTransactionEntity {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllSales().firstOrNull { it.id == id } }
-    if (existing != null) {
-      applySaleReversalOnDeleteOrEdit(existing, now)
-    }
+    val allSettlementsPre = dao.getAllSettlements()
 
     val cleanRep = repName.trim().ifBlank { "Direct" }
     val isRepLinkedAdmin = !isRepSale && mode == "SALE" &&
@@ -1187,11 +1366,40 @@ class SarimRepository(
     val effectiveAddToLedger = if (isRepLinkedAdmin) false else addToLedger
 
     val allCusts = dao.getAllCustomers().filter { !it.isDeleted }
+    val existingCustMatch = if (isRepLinkedAdmin) null else {
+      allCusts.firstOrNull { it.name.equals(effectiveCustomerName, ignoreCase = true) && it.isRepCustomer == isRepSale }
+    }
+    val repPriceContact = if (isRepLinkedAdmin) {
+      allCusts.firstOrNull { !it.isRepCustomer && it.name.equals(effectiveCustomerName, ignoreCase = true) }
+    } else null
+    val fallbackStorePrice = store?.salePricePerKg ?: 400.0
+    val anticipatedPricePerKg = existingCustMatch?.customSalePrice ?: repPriceContact?.customSalePrice ?: fallbackStorePrice
+    val anticipatedTotal = if (mode == "SALE") SarimLinkEngine.round2(quantityKg * anticipatedPricePerKg) else amountReceived
+
+    if (existing != null) {
+      SarimLinkEngine.getSaleEditLinkIssue(
+        existing = existing,
+        newMode = mode,
+        newPaymentType = effectivePaymentType,
+        newCustomerName = effectiveCustomerName,
+        newTotalValue = anticipatedTotal,
+        settlements = allSettlementsPre,
+      )?.let { msg -> throw IllegalStateException(msg) }
+      if ((existing.mode == "COLLECTION" || existing.isCollection) && existing.expiredQtyKg > 0.0 && expiredQtyKg < existing.expiredQtyKg) {
+        val diff = existing.expiredQtyKg - expiredQtyKg
+        val choraStock = dao.getAllRawMaterials().firstOrNull { !it.isDeleted && it.name.equals("CHORA", true) }?.stockKg ?: 0.0
+        if (choraStock + 1e-6 < diff) {
+          throw IllegalStateException("Cannot reduce expired qty by ${SarimLinkEngine.round2(diff)} kg: insufficient CHORA stock.")
+        }
+      }
+      applySaleReversalOnDeleteOrEdit(existing, now)
+    }
+
     var cust = if (isRepLinkedAdmin) {
       null
     } else {
-      allCusts.firstOrNull {
-        it.name.equals(effectiveCustomerName, ignoreCase = true) && it.isRepCustomer == isRepSale
+      dao.getAllCustomers().firstOrNull {
+        !it.isDeleted && it.name.equals(effectiveCustomerName, ignoreCase = true) && it.isRepCustomer == isRepSale
       } ?: saveCustomer(
         editingId = null,
         name = effectiveCustomerName,
@@ -1206,11 +1414,6 @@ class SarimRepository(
       )
     }
 
-    // Rep-linked admin deliveries may carry a custom price on a contact matching the rep name if present, else store price
-    val repPriceContact = if (isRepLinkedAdmin) {
-      allCusts.firstOrNull { !it.isRepCustomer && it.name.equals(effectiveCustomerName, ignoreCase = true) }
-    } else null
-    val fallbackStorePrice = store?.salePricePerKg ?: 400.0
     val pricePerKg = cust?.customSalePrice ?: repPriceContact?.customSalePrice ?: fallbackStorePrice
 
     val allSalesNow = dao.getAllSales()
@@ -1337,7 +1540,7 @@ class SarimRepository(
         (mode == "COLLECTION" && amountReceived > 0.0) ||
         (mode == "MONEY_OUT" && amountReceived > 0.0)
       )
-    val ledgerId = if (ledgerEligible) {
+    val ledgerId = linkedLedgerId?.takeIf { it.isNotBlank() } ?: if (ledgerEligible) {
       existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)
     } else null
 
@@ -1396,7 +1599,7 @@ class SarimRepository(
     dao.upsertSale(saleEntity)
     enqueueOutboxSet(saleCol, saleEntity.id, SarimWebSchema.saleToMap(saleEntity))
 
-    if (ledgerId != null) {
+    if (linkedLedgerId == null && ledgerEligible && ledgerId != null) {
       val ledgerType = if (mode == "MONEY_OUT") "OUT" else "IN"
       val amt = if (mode == "SALE") totalValue else amountReceived
       if (amt > 0.0) {
@@ -1420,6 +1623,7 @@ class SarimRepository(
         touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
       }
     }
+    return saleEntity
   }
 
   suspend fun saveRepReturn(
@@ -1514,8 +1718,11 @@ class SarimRepository(
     val now = System.currentTimeMillis()
     val sale = dao.getAllSales().firstOrNull { it.id == id }
     if (sale != null) {
-      if (sale.isRepReturn && sale.id in SarimLinkEngine.reconciledRepReturnIds(dao.getAllSettlements())) {
-        throw IllegalStateException("This return is already reconciled in the Calculator. Delete the Calculator settlement first.")
+      SarimLinkEngine.getSaleBlockReason(sale, dao.getAllSettlements())?.let { msg ->
+        throw IllegalStateException(msg)
+      }
+      SarimLinkEngine.getCollectionDeleteBlockReason(sale, dao.getAllRawMaterials())?.let { msg ->
+        throw IllegalStateException(msg)
       }
       applySaleReversalOnDeleteOrEdit(sale, now)
     }
@@ -1622,10 +1829,42 @@ class SarimRepository(
     return rec
   }
 
+  private suspend fun assertPaymentTxCashDeleteAllowed(tx: PaymentTransactionEntity) {
+    if (tx.type == "PAYMENT_IN" && !tx.isPayable) {
+      val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+        sales = dao.getAllSales(),
+        settlements = dao.getAllSettlements(),
+        payments = dao.getAllPaymentTransactions(),
+        factoryBatches = dao.getAllFactoryBatches(),
+      ).netCash
+      if (cashNow >= -0.01 && (cashNow - tx.amount) < -0.01) {
+        throw IllegalStateException(
+          "Cannot delete Payment IN (${SarimFormat.formatRs(tx.amount)}): net cash in hand would drop below zero."
+        )
+      }
+    }
+  }
+
   suspend fun deletePaymentEntity(id: String) {
     val now = System.currentTimeMillis()
     val e = dao.getAllPaymentEntities().firstOrNull { it.id == id }
     val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_ent", tsMs = now)
+
+    val linkedTxs = dao.getAllPaymentTransactions().filter { !it.isDeleted && it.entityId == id }
+    val nonPayableInTotal = linkedTxs.filter { it.type == "PAYMENT_IN" && !it.isPayable }.sumOf { it.amount }
+    if (nonPayableInTotal > 0.01) {
+      val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+        sales = dao.getAllSales(),
+        settlements = dao.getAllSettlements(),
+        payments = dao.getAllPaymentTransactions(),
+        factoryBatches = dao.getAllFactoryBatches(),
+      ).netCash
+      if (cashNow >= -0.01 && (cashNow - nonPayableInTotal) < -0.01) {
+        throw IllegalStateException(
+          "Cannot delete entity ${e?.name ?: id}: reversing received payments would drop net cash in hand below zero."
+        )
+      }
+    }
 
     // Unlink supplier from raw materials & purchase lots
     dao.getAllRawMaterials().filter { !it.isDeleted && it.supplierId == id }.forEach { mat ->
@@ -1640,7 +1879,7 @@ class SarimRepository(
     }
 
     // Cascade delete linked payment transactions + expenses + ledger + photos
-    dao.getAllPaymentTransactions().filter { !it.isDeleted && it.entityId == id }.forEach { tx ->
+    linkedTxs.forEach { tx ->
       tx.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
         dao.softDeleteLedgerEntry(lid, now)
         touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
@@ -1676,6 +1915,7 @@ class SarimRepository(
       deletePaymentTransfer(tr.id, groupIdOverride = groupId)
     }
 
+    if (e != null) forgetLedgerParty(e.name, now)
     markPhotoDeleted("entity:$id", now)
     dao.softDeletePaymentEntity(id, now)
     enqueueOutboxDelete(
@@ -1771,7 +2011,8 @@ class SarimRepository(
     photoUri: String,
     addToLedger: Boolean,
     category: String? = null,
-  ) {
+    linkedLedgerId: String? = null,
+  ): PaymentTransactionEntity {
     val now = System.currentTimeMillis()
     val cleanName = name.trim()
     val dateStr = SarimFormat.dateInput(dateEpoch)
@@ -1885,7 +2126,8 @@ class SarimRepository(
     }
 
     val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
-    val ledgerId = if (addToLedger && amount > 0.0) (existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)) else null
+    val ledgerId = linkedLedgerId?.takeIf { it.isNotBlank() }
+      ?: if (addToLedger && amount > 0.0) (existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)) else null
     val expId = existing?.expenseId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_EXP, tsMs = now)
 
     val expenseRec = ExpenseRecordEntity(
@@ -1919,7 +2161,7 @@ class SarimRepository(
       amount = amount,
       description = description.trim(),
       photoUri = photoUri,
-      addToLedger = addToLedger,
+      addToLedger = addToLedger || !linkedLedgerId.isNullOrBlank(),
       dateStr = dateStr,
       timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
       isExpense = (type == "EXPENSE"),
@@ -1946,29 +2188,32 @@ class SarimRepository(
       markPhotoDeleted(pKey, now)
     }
 
-    if (ledgerId != null) {
-      dao.upsertLedgerEntry(
-        DailyLedgerEntity(
-          id = ledgerId,
-          dateEpoch = dateEpoch,
-          type = if (type == "PAYMENT_IN") "IN" else "OUT",
-          amount = amount,
-          mode = "Cash",
-          party = cleanName,
-          note = description.trim(),
-          category = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else type,
-          sourceType = "PAYMENT",
-          sourceId = txId,
-          dateStr = dateStr,
-          linkJson = JsonCodecs.encodeLedgerLink(mapOf("txId" to txId, "expenseId" to expenseRec.id)),
-          updatedAt = now,
+    if (linkedLedgerId == null) {
+      if (addToLedger && ledgerId != null) {
+        dao.upsertLedgerEntry(
+          DailyLedgerEntity(
+            id = ledgerId,
+            dateEpoch = dateEpoch,
+            type = if (type == "PAYMENT_IN") "IN" else "OUT",
+            amount = amount,
+            mode = "Cash",
+            party = cleanName,
+            note = description.trim(),
+            category = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else type,
+            sourceType = "PAYMENT",
+            sourceId = txId,
+            dateStr = dateStr,
+            linkJson = JsonCodecs.encodeLedgerLink(mapOf("txId" to txId, "expenseId" to expenseRec.id)),
+            updatedAt = now,
+          )
         )
-      )
-      touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
-    } else if (existing?.ledgerId != null) {
-      dao.softDeleteLedgerEntry(existing.ledgerId, now)
-      touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+        touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+      } else if (existing?.ledgerId != null) {
+        dao.softDeleteLedgerEntry(existing.ledgerId, now)
+        touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+      }
     }
+    return txEntity
   }
 
   suspend fun deletePaymentTransaction(id: String) {
@@ -1977,6 +2222,7 @@ class SarimRepository(
     val groupId = if (tx?.expenseId != null) SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_pay", tsMs = now) else null
 
     if (tx != null) {
+      assertPaymentTxCashDeleteAllowed(tx)
       revertPaymentTransactionEffects(tx, now)
 
       tx.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
@@ -2018,6 +2264,188 @@ class SarimRepository(
       .forEach { deletePaymentTransaction(it.id) }
   }
 
+  suspend fun resolveLedgerTargetForInput(
+    type: String,
+    scope: String,
+    party: String,
+    category: String,
+    overrideChoice: String? = null,
+  ): SarimLinkEngine.LedgerLinkTarget {
+    return SarimLinkEngine.resolveLedgerTarget(
+      type = type,
+      scope = scope,
+      party = party,
+      category = category,
+      entities = dao.getAllPaymentEntities(),
+      customers = dao.getAllCustomers(),
+      sales = dao.getAllSales(),
+      overrideChoice = overrideChoice,
+    )
+  }
+
+  private suspend fun checkAndRemoveLedgerLink(entry: DailyLedgerEntity, now: Long, groupId: String? = null) {
+    val link = JsonCodecs.decodeLedgerLink(entry.linkJson) ?: return
+    val kind = link["kind"]?.toString()?.trim()?.lowercase().orEmpty()
+    when (kind) {
+      "entity", "expense" -> {
+        val txId = link["txId"]?.toString()?.takeIf { it.isNotBlank() }
+        if (txId != null) {
+          val tx = dao.getAllPaymentTransactions().firstOrNull { it.id == txId && !it.isDeleted }
+          if (tx != null) {
+            assertPaymentTxCashDeleteAllowed(tx)
+            revertPaymentTransactionEffects(tx, now)
+            tx.expenseId?.let { expId ->
+              val exp = dao.getAllExpenses().firstOrNull { it.id == expId }
+              dao.softDeleteExpense(expId, now)
+              markPhotoDeleted("expense:$expId", now)
+              enqueueOutboxDelete(
+                collection = SarimWebSchema.COL_EXPENSES,
+                docId = expId,
+                title = tx.entityOrExpenseName,
+                subtitle = "Expense",
+                amountText = "Rs ${tx.amount}",
+                snapshotMap = exp?.let { SarimWebSchema.expenseToMap(it) },
+                groupId = groupId,
+              )
+            }
+            dao.softDeletePaymentTransaction(tx.id, now)
+            enqueueOutboxDelete(
+              collection = SarimWebSchema.COL_TRANSACTIONS,
+              docId = tx.id,
+              title = "${tx.type}: ${tx.entityOrExpenseName}",
+              subtitle = tx.description,
+              amountText = "Rs ${tx.amount}",
+              snapshotMap = SarimWebSchema.transactionToMap(tx),
+              groupId = groupId,
+            )
+          }
+        } else {
+          val expId = link["expenseId"]?.toString()?.takeIf { it.isNotBlank() }
+          if (expId != null) {
+            val exp = dao.getAllExpenses().firstOrNull { it.id == expId && !it.isDeleted }
+            if (exp != null) {
+              dao.softDeleteExpense(expId, now)
+              markPhotoDeleted("expense:$expId", now)
+              enqueueOutboxDelete(
+                collection = SarimWebSchema.COL_EXPENSES,
+                docId = expId,
+                title = exp.name,
+                subtitle = "Expense",
+                amountText = "Rs ${exp.amount}",
+                snapshotMap = SarimWebSchema.expenseToMap(exp),
+                groupId = groupId,
+              )
+            }
+          }
+        }
+      }
+      "customer" -> {
+        val saleId = link["saleId"]?.toString()?.takeIf { it.isNotBlank() }
+        if (saleId != null) {
+          val sale = dao.getAllSales().firstOrNull { it.id == saleId && !it.isDeleted }
+          if (sale != null) {
+            SarimLinkEngine.getSaleBlockReason(sale, dao.getAllSettlements())?.let { throw IllegalStateException(it) }
+            SarimLinkEngine.getCollectionDeleteBlockReason(sale, dao.getAllRawMaterials())?.let { throw IllegalStateException(it) }
+            applySaleReversalOnDeleteOrEdit(sale, now)
+            dao.softDeleteSale(sale.id, now)
+            enqueueOutboxDelete(
+              collection = SarimWebSchema.COL_SALES,
+              docId = sale.id,
+              title = "${sale.mode}: ${sale.customerName}",
+              subtitle = "${sale.quantityKg} kg",
+              amountText = "Rs ${sale.amountReceived.takeIf { it > 0.0 } ?: sale.totalValue}",
+              snapshotMap = SarimWebSchema.saleToMap(sale),
+              groupId = groupId,
+            )
+          }
+        }
+      }
+    }
+  }
+
+  private suspend fun postLedgerLink(
+    entry: DailyLedgerEntity,
+    target: SarimLinkEngine.LedgerLinkTarget,
+  ): String {
+    return when (target) {
+      is SarimLinkEngine.LedgerLinkTarget.EntityTarget -> {
+        val payType = if (entry.type == "IN") "PAYMENT_IN" else "PAYMENT_OUT"
+        val tx = savePaymentTransaction(
+          editingId = null,
+          dateEpoch = entry.dateEpoch,
+          type = payType,
+          name = target.entity.name,
+          amount = entry.amount,
+          description = entry.note,
+          photoUri = "",
+          addToLedger = false,
+          category = entry.category,
+          linkedLedgerId = entry.id,
+        )
+        JsonCodecs.encodeLedgerLink(
+          mapOf(
+            "kind" to "entity",
+            "entityId" to target.entity.id,
+            "txId" to tx.id,
+            "name" to target.entity.name,
+          )
+        )
+      }
+      is SarimLinkEngine.LedgerLinkTarget.CustomerTarget -> {
+        val saleMode = if (entry.type == "OUT") "MONEY_OUT" else "COLLECTION"
+        val sale = saveSaleOrCollection(
+          editingId = null,
+          dateEpoch = entry.dateEpoch,
+          mode = saleMode,
+          customerName = target.name,
+          newCustomerPhone = "",
+          repName = "Direct",
+          store = null,
+          quantityKg = 0.0,
+          costPerKg = 0.0,
+          paymentType = if (saleMode == "MONEY_OUT") "MONEY_OUT" else "COLLECTION",
+          amountReceived = entry.amount,
+          expiredQtyKg = 0.0,
+          returnedQtyKg = 0.0,
+          addToLedger = false,
+          isRepSale = false,
+          notes = entry.note,
+          linkedLedgerId = entry.id,
+        )
+        JsonCodecs.encodeLedgerLink(
+          mapOf(
+            "kind" to "customer",
+            "saleId" to sale.id,
+            "name" to target.name,
+          )
+        )
+      }
+      is SarimLinkEngine.LedgerLinkTarget.ExpenseTarget -> {
+        val tx = savePaymentTransaction(
+          editingId = null,
+          dateEpoch = entry.dateEpoch,
+          type = "EXPENSE",
+          name = target.name,
+          amount = entry.amount,
+          description = entry.note,
+          photoUri = "",
+          addToLedger = false,
+          category = entry.category.ifBlank { target.name },
+          linkedLedgerId = entry.id,
+        )
+        JsonCodecs.encodeLedgerLink(
+          mapOf(
+            "kind" to "expense",
+            "txId" to tx.id,
+            "expenseId" to (tx.expenseId ?: ""),
+            "name" to target.name,
+          )
+        )
+      }
+      SarimLinkEngine.LedgerLinkTarget.None, is SarimLinkEngine.LedgerLinkTarget.AmbiguousTarget -> ""
+    }
+  }
+
   suspend fun saveDailyLedgerEntry(
     editingId: String?,
     dateEpoch: Long,
@@ -2030,38 +2458,69 @@ class SarimRepository(
     note: String,
     category: String? = null,
     scope: String = "",
+    linkedTargetChoice: String? = null, // null = auto, "NONE", "ENTITY", "CUSTOMER", "EXPENSE"
   ) {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllDailyLedger().firstOrNull { it.id == id } }
+    if (existing != null && SarimLinkEngine.isTabOwnedLedgerRow(existing)) {
+      throw IllegalStateException(SarimLinkEngine.tabEntryNotice(existing))
+    }
+
     val resolvedCat = category?.takeIf { it.isNotBlank() }
       ?: if (type == "TRANSFER") "Account Transfer" else if (party.isNotBlank()) party.trim() else (existing?.category ?: "General")
-    dao.upsertLedgerEntry(
-      DailyLedgerEntity(
-        id = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now),
-        dateEpoch = dateEpoch,
-        type = type,
-        amount = amount,
-        mode = mode.trim().ifBlank { "Cash" },
-        toMode = if (type == "TRANSFER") toMode.trim() else "",
-        party = if (type == "TRANSFER") "" else party.trim(),
-        refNo = refNo.trim(),
-        note = note.trim(),
-        category = resolvedCat,
-        sourceType = existing?.sourceType ?: "MANUAL",
-        sourceId = existing?.sourceId ?: "",
-        scope = scope.ifBlank { existing?.scope ?: "" },
-        dateStr = SarimFormat.dateInput(dateEpoch),
-        linkJson = existing?.linkJson ?: "",
-        createdAt = existing?.createdAt ?: now,
-        updatedAt = now,
-      )
+    val entryId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)
+    val draft = DailyLedgerEntity(
+      id = entryId,
+      dateEpoch = dateEpoch,
+      type = type,
+      amount = amount,
+      mode = mode.trim().ifBlank { "Cash" },
+      toMode = if (type == "TRANSFER") toMode.trim() else "",
+      party = if (type == "TRANSFER") "" else party.trim(),
+      refNo = refNo.trim(),
+      note = note.trim(),
+      category = resolvedCat,
+      sourceType = "MANUAL",
+      sourceId = "",
+      scope = scope.ifBlank { existing?.scope ?: "" },
+      dateStr = SarimFormat.dateInput(dateEpoch),
+      linkJson = "",
+      createdAt = existing?.createdAt ?: now,
+      updatedAt = now,
     )
+
+    if (existing != null) {
+      checkAndRemoveLedgerLink(existing, now)
+    }
+
+    val resolvedTarget = SarimLinkEngine.resolveLedgerTarget(
+      type = draft.type,
+      scope = draft.scope,
+      party = draft.party,
+      category = draft.category,
+      entities = dao.getAllPaymentEntities(),
+      customers = dao.getAllCustomers(),
+      sales = dao.getAllSales(),
+      overrideChoice = linkedTargetChoice,
+    )
+    val linkJson = postLedgerLink(draft, resolvedTarget)
+
+    dao.upsertLedgerEntry(draft.copy(linkJson = linkJson))
     touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
   }
 
   suspend fun deleteDailyLedgerEntry(id: String) {
     val now = System.currentTimeMillis()
     val l = dao.getAllDailyLedger().firstOrNull { it.id == id }
+    if (l != null && SarimLinkEngine.isTabOwnedLedgerRow(l)) {
+      throw IllegalStateException(SarimLinkEngine.tabEntryNotice(l))
+    }
+    val groupId = if (l != null && !l.linkJson.isNullOrBlank()) {
+      SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_dl", tsMs = now)
+    } else null
+    if (l != null) {
+      checkAndRemoveLedgerLink(l, now, groupId = groupId)
+    }
     dao.softDeleteLedgerEntry(id, now)
     recordSingletonDeletion(
       collection = SarimWebSchema.COL_DAILY_LEDGER,
@@ -2070,8 +2529,105 @@ class SarimRepository(
       subtitle = l?.category ?: l?.type ?: "",
       amountText = "Rs ${l?.amount ?: 0.0}",
       snapshotMap = l?.let { SarimWebSchema.dailyLedgerEntryToMap(it) },
+      groupId = groupId,
     )
   }
+
+  /** Reconciles tab-owned Daily Ledger rows against live Sales, Payments, and Calculator Settlements. */
+  suspend fun syncLedgerFromTabs(now: Long = System.currentTimeMillis()) {
+    val allLedger = dao.getAllDailyLedger()
+    val byId = allLedger.associateBy { it.id }
+    val activeSales = dao.getAllSales().filter { !it.isDeleted }.associateBy { it.id }
+    val activePayments = dao.getAllPaymentTransactions().filter { !it.isDeleted }.associateBy { it.id }
+    val activeCalcs = dao.getAllSettlements().filter { !it.isDeleted }.associateBy { it.id }
+    var changed = false
+
+    // 1. Prune orphan tab-owned rows whose source record was deleted or toggled addToLedger = false
+    allLedger.filter { !it.isDeleted && SarimLinkEngine.isTabOwnedLedgerRow(it) }.forEach { led ->
+      val keep = when (led.sourceType.uppercase()) {
+        "SALE" -> activeSales[led.sourceId]?.let { s ->
+          s.addToLedger && (s.mode == "COLLECTION" || s.mode == "MONEY_OUT" || (s.mode == "SALE" && s.paymentType == "CASH"))
+        } == true
+        "PAYMENT" -> activePayments[led.sourceId]?.addToLedger == true
+        "CALCULATOR" -> activeCalcs[led.sourceId]?.addToLedger == true
+        else -> true
+      }
+      if (!keep) {
+        dao.softDeleteLedgerEntry(led.id, now)
+        changed = true
+      }
+    }
+
+    // 2. Ensure Sales with addToLedger=true have an up-to-date ledger row
+    activeSales.values.filter { s ->
+      !s.isRepSale && s.addToLedger && (
+        (s.mode == "SALE" && s.paymentType == "CASH" && s.totalValue > 0.0) ||
+          ((s.mode == "COLLECTION" || s.mode == "MONEY_OUT") && (s.amountReceived > 0.0 || s.totalValue > 0.0))
+        )
+    }.forEach { s ->
+      val lid = s.ledgerId?.takeIf { it.isNotBlank() } ?: return@forEach
+      val amt = if (s.mode == "SALE") s.totalValue else s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue
+      val wantType = if (s.mode == "MONEY_OUT") "OUT" else "IN"
+      val cur = byId[lid]
+      if (cur == null || cur.isDeleted || kotlin.math.abs(cur.amount - amt) > 0.01 || cur.party != s.customerName || cur.type != wantType) {
+        dao.upsertLedgerEntry(
+          DailyLedgerEntity(
+            id = lid,
+            dateEpoch = s.dateEpoch,
+            type = wantType,
+            amount = amt,
+            mode = cur?.mode?.takeIf { it.isNotBlank() } ?: "Cash",
+            party = s.customerName,
+            note = modeLabelForSale(s),
+            category = if (s.mode == "SALE") "Cash Sale" else if (s.mode == "COLLECTION") "Collection" else "Customer Payout",
+            sourceType = "SALE",
+            sourceId = s.id,
+            dateStr = s.dateStr.ifBlank { SarimFormat.dateInput(s.dateEpoch) },
+            linkJson = JsonCodecs.encodeLedgerLink(mapOf("saleId" to s.id, "isRep" to s.isRepSale)),
+            createdAt = cur?.createdAt ?: s.createdAt,
+            updatedAt = now,
+          )
+        )
+        changed = true
+      }
+    }
+
+    // 3. Ensure Payments with addToLedger=true have an up-to-date ledger row
+    activePayments.values.filter { it.addToLedger && it.amount > 0.0 }.forEach { tx ->
+      val lid = tx.ledgerId?.takeIf { it.isNotBlank() } ?: return@forEach
+      val wantType = if (tx.type == "PAYMENT_IN") "IN" else "OUT"
+      val cur = byId[lid]
+      val linkedByManual = cur?.let { !SarimLinkEngine.isTabOwnedLedgerRow(it) } == true
+      if (!linkedByManual && (cur == null || cur.isDeleted || kotlin.math.abs(cur.amount - tx.amount) > 0.01 || cur.party != tx.entityOrExpenseName || cur.type != wantType)) {
+        dao.upsertLedgerEntry(
+          DailyLedgerEntity(
+            id = lid,
+            dateEpoch = tx.dateEpoch,
+            type = wantType,
+            amount = tx.amount,
+            mode = cur?.mode?.takeIf { it.isNotBlank() } ?: "Cash",
+            party = tx.entityOrExpenseName,
+            note = tx.description,
+            category = if (tx.type == "EXPENSE") (tx.category ?: tx.entityOrExpenseName) else tx.type,
+            sourceType = "PAYMENT",
+            sourceId = tx.id,
+            dateStr = tx.dateStr.ifBlank { SarimFormat.dateInput(tx.dateEpoch) },
+            linkJson = JsonCodecs.encodeLedgerLink(mapOf("txId" to tx.id, "expenseId" to (tx.expenseId ?: ""))),
+            createdAt = cur?.createdAt ?: tx.createdAt,
+            updatedAt = now,
+          )
+        )
+        changed = true
+      }
+    }
+
+    if (changed) {
+      touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+    }
+  }
+
+  private fun modeLabelForSale(s: SaleTransactionEntity): String =
+    "${s.mode} · ${s.storeName}".trim(' ', '·')
 
   private suspend fun revertSettlementLinks(s: CalculatorSettlementEntity, now: Long, groupId: String?) {
     val allSales = dao.getAllSales()
@@ -2775,13 +3331,49 @@ class SarimRepository(
     return compacted
   }
 
+  suspend fun repairSaleLinks(): Int {
+    val now = System.currentTimeMillis()
+    val allSales = dao.getAllSales()
+    val plan = SarimLinkEngine.planLinkRepairs(allSales, now)
+    if (plan.updatedSales.isEmpty()) return 0
+
+    val touchedCustomers = linkedSetOf<Pair<String, Boolean>>()
+    plan.updatedSales.forEach { s ->
+      dao.upsertSale(s)
+      val col = if (s.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+      enqueueOutboxSet(col, s.id, SarimWebSchema.saleToMap(s))
+      if (s.customerName.isNotBlank()) touchedCustomers += (s.customerName.lowercase() to s.isRepSale)
+    }
+
+    val updatedSalesAll = dao.getAllSales()
+    val settlements = dao.getAllSettlements()
+    dao.getAllCustomers().filter { !it.isDeleted }.forEach { c ->
+      if ((c.name.lowercase() to c.isRepCustomer) in touchedCustomers) {
+        val recomputedCredit = SarimLinkEngine.partyOutstanding(
+          name = c.name,
+          sales = updatedSalesAll,
+          isRepProfile = c.isRepCustomer,
+          settlements = settlements,
+        )
+        if (kotlin.math.abs(c.currentCredit - recomputedCredit) > 0.01) {
+          val updatedCust = c.copy(currentCredit = recomputedCredit, syncPending = true, updatedAt = now)
+          dao.upsertCustomer(updatedCust)
+          val custCol = if (updatedCust.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
+          enqueueOutboxSet(custCol, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
+        }
+      }
+    }
+    return plan.updatedSales.size
+  }
+
   suspend fun applyAuditFix(recordType: String, recordId: String, valNum: Double): Boolean {
     val now = System.currentTimeMillis()
     return when (recordType) {
+      "LINK_REPAIR" -> repairSaleLinks() > 0
       "SALE" -> {
         val sale = dao.getAllSales().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
-        val newTotal = sale.quantityKg * valNum
-        val newProfit = newTotal - sale.totalCost
+        val newTotal = SarimLinkEngine.round2(sale.quantityKg * valNum)
+        val newProfit = SarimLinkEngine.round2(newTotal - sale.totalCost)
         val updated = sale.copy(
           pricePerKg = valNum,
           totalValue = newTotal,
@@ -2811,6 +3403,9 @@ class SarimRepository(
         )
         dao.upsertProductionEntry(updated)
         enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, updated.id, SarimWebSchema.productionToMap(updated))
+        if (!updated.isReturn) {
+          repriceSalesForProductionDay(updated.storeKey, updated.dateStr.ifBlank { SarimFormat.dateInput(updated.dateEpoch) }, now)
+        }
         true
       }
       "MATERIAL" -> {
@@ -2818,6 +3413,43 @@ class SarimRepository(
         val updated = mat.copy(stockKg = valNum, syncPending = true, updatedAt = now)
         dao.upsertRawMaterial(updated)
         enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updated.id, SarimWebSchema.materialToMap(updated))
+        true
+      }
+      "PAYMENT" -> {
+        val tx = dao.getAllPaymentTransactions().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+        savePaymentTransaction(
+          editingId = tx.id,
+          dateEpoch = tx.dateEpoch,
+          type = tx.type,
+          name = tx.entityOrExpenseName,
+          amount = valNum,
+          description = tx.description,
+          photoUri = tx.photoUri,
+          addToLedger = tx.addToLedger,
+          category = tx.category,
+        )
+        true
+      }
+      "EXPENSE" -> {
+        val exp = dao.getAllExpenses().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+        val linkedTx = dao.getAllPaymentTransactions().firstOrNull { !it.isDeleted && it.expenseId == exp.id }
+        if (linkedTx != null) {
+          savePaymentTransaction(
+            editingId = linkedTx.id,
+            dateEpoch = linkedTx.dateEpoch,
+            type = linkedTx.type,
+            name = linkedTx.entityOrExpenseName,
+            amount = valNum,
+            description = linkedTx.description,
+            photoUri = linkedTx.photoUri,
+            addToLedger = linkedTx.addToLedger,
+            category = linkedTx.category,
+          )
+        } else {
+          val updated = exp.copy(amount = valNum, syncPending = true, updatedAt = now)
+          dao.upsertExpense(updated)
+          enqueueOutboxSet(SarimWebSchema.COL_EXPENSES, updated.id, SarimWebSchema.expenseToMap(updated))
+        }
         true
       }
       else -> false

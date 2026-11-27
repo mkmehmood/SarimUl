@@ -6,6 +6,7 @@ import com.example.data.model.ConflictRecordSnapshot
 import com.example.data.model.RolesHelper
 import com.example.data.model.SarimUuid
 import com.example.data.remote.*
+import com.example.util.SarimFormat
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
@@ -80,6 +81,8 @@ class SarimSyncAndBackupRepository(
   private val safeReader: SafeSqliteCacheReader = SafeSqliteCacheReader(dao),
   val uuidRegistry: UuidSyncRegistry = UuidSyncRegistry(RoomKvStorePersistence(dao, safeReader)),
 ) {
+  private val recycleRestoreEngine = SarimRecycleRestoreEngine(dao, uuidRegistry)
+
   suspend fun countPendingSync(): Int {
     return dao.countOutbox() +
       dao.getStoreCounts().pendingCount +
@@ -2063,60 +2066,11 @@ class SarimSyncAndBackupRepository(
     return list.sortedByDescending { it.deletedAt }
   }
 
-  private suspend fun removeTombstoneAndEnqueueCloudDelete(docId: String, now: Long) {
-    dao.deleteDeletion(docId)
-    dao.removeOutboxForDoc(SarimWebSchema.COL_DELETIONS, docId)
-    dao.insertOutbox(
-      NdappOutboxEntity(
-        id = SarimUuid.generateUUID(SarimUuid.PREFIX_OB, tsMs = now),
-        action = "delete",
-        collection = SarimWebSchema.COL_DELETIONS,
-        docId = docId,
-        payload = null,
-        createdAt = now,
-      )
-    )
-  }
+  private suspend fun removeTombstoneAndEnqueueCloudDelete(docId: String, now: Long) =
+    recycleRestoreEngine.removeTombstoneAndEnqueueCloudDelete(docId, now)
 
-  suspend fun restoreRecycleItem(item: RecycleBinRecord) {
-    val now = System.currentTimeMillis()
-    when (item.entityType) {
-      "SALE" -> dao.restoreSale(item.id)
-      "PRODUCTION" -> dao.restoreProductionEntry(item.id)
-      "SETTLEMENT" -> dao.restoreSettlement(item.id)
-      "BATCH" -> dao.restoreFactoryBatch(item.id)
-      "PAYMENT" -> {
-        dao.restorePaymentTransaction(item.id)
-        dao.getAllPaymentTransactions().firstOrNull { it.id == item.id }?.expenseId?.let { expId ->
-          dao.restoreExpense(expId)
-          removeTombstoneAndEnqueueCloudDelete(expId, now)
-        }
-      }
-      "EXPENSE" -> dao.restoreExpense(item.id)
-      "RETURN" -> dao.restoreReturnLog(item.id)
-      "LEDGER" -> dao.restoreLedgerEntry(item.id)
-      "FORMULA" -> dao.restoreFormula(item.id)
-      "MATERIAL" -> dao.restoreRawMaterial(item.id)
-      "PURCHASE_LOT" -> dao.restorePurchase(item.id)
-      "CUSTOMER" -> dao.restoreCustomer(item.id)
-      "ENTITY" -> dao.restorePaymentEntity(item.id)
-      "STOCK_TRANSFER" -> {
-        dao.restoreStockTransfer(item.id)
-        dao.getAllStockTransfers().firstOrNull { it.id == item.id }?.let { tr ->
-          removeTombstoneAndEnqueueCloudDelete(tr.outDocId, now)
-          removeTombstoneAndEnqueueCloudDelete(tr.inDocId, now)
-        }
-      }
-      "PAYMENT_TRANSFER" -> {
-        dao.restorePaymentTransfer(item.id)
-        dao.getAllPaymentTransfers().firstOrNull { it.id == item.id }?.let { tr ->
-          removeTombstoneAndEnqueueCloudDelete(tr.outDocId, now)
-          removeTombstoneAndEnqueueCloudDelete(tr.inDocId, now)
-        }
-      }
-    }
-    removeTombstoneAndEnqueueCloudDelete(item.id, now)
-  }
+  suspend fun restoreRecycleItem(item: RecycleBinRecord) =
+    recycleRestoreEngine.restoreRecycleItem(item)
 
   suspend fun deleteForeverRecycleItem(item: RecycleBinRecord) {
     val now = System.currentTimeMillis()

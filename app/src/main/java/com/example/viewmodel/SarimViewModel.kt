@@ -137,6 +137,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         val st = _uiState.value
         if (!st.isAuthenticated || st.isOfflineSession) return@launch
         syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
+        runCatching { repository.syncLedgerFromTabs() }
         refreshDiagnostics()
       }
     }
@@ -204,6 +205,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
               repository.initDefaults()
               if (isNetworkConnected() && st.isAuthenticated && !st.isOfflineSession) {
                 syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
+                runCatching { repository.syncLedgerFromTabs() }
               }
               refreshDiagnostics()
             }
@@ -236,6 +238,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         runCatching {
           syncRepo.applyRemoteDailyLedgerDoc(doc)
+          repository.syncLedgerFromTabs()
           refreshDiagnostics()
         }
       }
@@ -275,6 +278,15 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         runCatching {
           syncRepo.applyRemoteRecordSnapshot(collection, docs, removedIds, isFullPull = false)
+          if (collection in setOf(
+              SarimWebSchema.COL_SALES,
+              SarimWebSchema.COL_REP,
+              SarimWebSchema.COL_TRANSACTIONS,
+              SarimWebSchema.COL_CALCULATOR,
+            )
+          ) {
+            repository.syncLedgerFromTabs()
+          }
           refreshDiagnostics()
         }
       }
@@ -1371,6 +1383,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       try {
         val st = _uiState.value
         syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
+        runCatching { repository.syncLedgerFromTabs() }
         refreshDiagnostics()
       } catch (e: CancellationException) {
         throw e
@@ -1390,6 +1403,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         val result = syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
         result.fold(
           onSuccess = { count ->
+            runCatching { repository.syncLedgerFromTabs() }
             refreshDiagnostics()
             showDialog(
               AppDialogRequest(
@@ -1462,7 +1476,78 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  suspend fun resolveLedgerTarget(
+    type: String,
+    scope: String,
+    party: String,
+    category: String,
+    overrideChoice: String? = null,
+  ): SarimLinkEngine.LedgerLinkTarget = repository.resolveLedgerTargetForInput(
+    type = type,
+    scope = scope,
+    party = party,
+    category = category,
+    overrideChoice = overrideChoice,
+  )
+
+  fun recordCustomerMoneyOut(
+    customer: CustomerEntity,
+    dateEpoch: Long,
+    amount: Double,
+    note: String,
+    addToLedger: Boolean,
+    onDone: () -> Unit = {},
+  ) {
+    if (amount <= 0.0) {
+      postStatus("Enter a positive amount")
+      return
+    }
+    if (SarimFormat.isFutureDate(dateEpoch)) {
+      postStatus("Future dates are refused on customer payouts.")
+      return
+    }
+    launchSafely(
+      errorTitle = "Money Out Failed",
+      successMessage = "Recorded Money Out for ${customer.name}",
+      onSuccess = onDone,
+    ) {
+      repository.saveSaleOrCollection(
+        editingId = null,
+        dateEpoch = dateEpoch,
+        mode = "MONEY_OUT",
+        customerName = customer.name,
+        newCustomerPhone = customer.phone,
+        repName = if (customer.isRepCustomer) customer.repName else "Direct",
+        store = null,
+        quantityKg = 0.0,
+        costPerKg = 0.0,
+        paymentType = "MONEY_OUT",
+        amountReceived = amount,
+        expiredQtyKg = 0.0,
+        returnedQtyKg = 0.0,
+        addToLedger = addToLedger,
+        isRepSale = customer.isRepCustomer,
+        notes = note,
+      )
+    }
+  }
+
+  fun repairSaleLinks() {
+    launchSafely(errorTitle = "Link Repair Failed") {
+      val repaired = repository.repairSaleLinks()
+      postStatus(
+        if (repaired > 0) "Repaired $repaired linked sale/collection record(s)" else "All sale/collection links are clean"
+      )
+    }
+  }
+
   fun applyAuditFix(finding: AuditFinding, newValueRaw: String) {
+    if (finding.recordType == "LINK_REPAIR") {
+      launchSafely(errorTitle = "Link Repair Failed", successMessage = "Repaired sale & collection links") {
+        repository.applyAuditFix("LINK_REPAIR", finding.recordId, 0.0)
+      }
+      return
+    }
     val valNum = SarimFormat.parseSafeDouble(newValueRaw)
     if (valNum == null || valNum < 0.0) {
       postStatus("Invalid numeric value")

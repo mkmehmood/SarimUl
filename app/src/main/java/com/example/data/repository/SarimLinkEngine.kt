@@ -1,16 +1,29 @@
 package com.example.data.repository
 
 import com.example.data.local.CalculatorSettlementEntity
+import com.example.data.local.CustomerEntity
+import com.example.data.local.DailyLedgerEntity
+import com.example.data.local.FactoryBatchEntity
+import com.example.data.local.FormulaEntity
 import com.example.data.local.JsonCodecs
+import com.example.data.local.PaymentEntityRecord
 import com.example.data.local.PaymentTransactionEntity
+import com.example.data.local.ProductionEntryEntity
+import com.example.data.local.RawMaterialEntity
+import com.example.data.local.RawMaterialPurchaseEntity
+import com.example.data.local.ReturnLogEntity
 import com.example.data.local.SaleTransactionEntity
+import com.example.data.local.StockTransferEntity
+import com.example.data.local.StoreEntity
 import com.example.util.SarimFormat
 import kotlin.math.abs
 import kotlin.math.round
+import kotlin.math.roundToLong
 
 /**
  * Pure deterministic transaction-link graph ported from mkmehmood/sarim web
- * (modules/link-graph.js, modules/rep-return-link.js, modules/finance.js, modules/utilities-payments.js).
+ * (modules/link-graph.js, modules/rep-return-link.js, modules/ledger-link.js,
+ *  modules/link-repair.js, modules/finance.js, modules/utilities-payments.js, modules/data-ops.js).
  */
 object SarimLinkEngine {
 
@@ -263,25 +276,80 @@ object SarimLinkEngine {
     }.sortedBy { it.dateEpoch }
   }
 
-  /** Exact port of `modules/rep-return-link.js::pickReturnsCovered`. */
+  private fun findExactCoverSubset(
+    items: List<SaleTransactionEntity>,
+    targetR: Long,
+    targetE: Long,
+  ): List<SaleTransactionEntity>? {
+    val n = items.size
+    if (n == 0 || n > 24) return null
+    val rVals = LongArray(n) { (items[it].returnedQtyKg.coerceAtLeast(0.0) * 100.0).roundToLong() }
+    val eVals = LongArray(n) { (items[it].expiredQtyKg.coerceAtLeast(0.0) * 100.0).roundToLong() }
+    val sufR = LongArray(n + 1)
+    val sufE = LongArray(n + 1)
+    for (i in n - 1 downTo 0) {
+      sufR[i] = sufR[i + 1] + rVals[i]
+      sufE[i] = sufE[i + 1] + eVals[i]
+    }
+    if (sufR[0] < targetR || sufE[0] < targetE) return null
+
+    var steps = 0
+    val chosen = ArrayList<SaleTransactionEntity>(n)
+    fun dfs(idx: Int, curR: Long, curE: Long): Boolean {
+      if (++steps > 200_000) return false
+      if (curR == targetR && curE == targetE) return true
+      if (idx >= n) return false
+      if (curR + sufR[idx] < targetR || curE + sufE[idx] < targetE) return false
+
+      val nextR = curR + rVals[idx]
+      val nextE = curE + eVals[idx]
+      if (nextR <= targetR && nextE <= targetE) {
+        chosen.add(items[idx])
+        if (dfs(idx + 1, nextR, nextE)) return true
+        chosen.removeAt(chosen.lastIndex)
+      }
+      return dfs(idx + 1, curR, curE)
+    }
+    return if (dfs(0, 0L, 0L)) chosen.toList() else null
+  }
+
+  /**
+   * Exact port of web `modules/rep-return-link.js::pickReturnsCovered`:
+   * 1. Exact chronological subset-sum match up to 24 pending returns (200k step cap).
+   * 2. Greedy chronological fit within remaining returned/expired targets.
+   * 3. Bounded chronological remainder pass if needed.
+   */
   fun pickReturnsCovered(
     pending: List<SaleTransactionEntity>,
     retTarget: Double,
     expTarget: Double,
   ): List<SaleTransactionEntity> {
-    var remR = retTarget.coerceAtLeast(0.0)
-    var remE = expTarget.coerceAtLeast(0.0)
-    if (remR <= 0.0 && remE <= 0.0) return emptyList()
-    val sorted = pending.sortedWith(
+    val cleanR = retTarget.coerceAtLeast(0.0)
+    val cleanE = expTarget.coerceAtLeast(0.0)
+    if (cleanR <= 1e-6 && cleanE <= 1e-6) return emptyList()
+
+    val sorted = pending.filter {
+      it.returnedQtyKg.coerceAtLeast(0.0) > 0.0 || it.expiredQtyKg.coerceAtLeast(0.0) > 0.0
+    }.sortedWith(
       compareBy<SaleTransactionEntity> { it.dateStr.ifBlank { SarimFormat.dateInput(it.dateEpoch) } }
         .thenBy { it.dateEpoch }
     )
+    if (sorted.isEmpty()) return emptyList()
+
+    val exact = findExactCoverSubset(
+      sorted,
+      (cleanR * 100.0).roundToLong(),
+      (cleanE * 100.0).roundToLong(),
+    )
+    if (exact != null) return exact
+
+    var remR = cleanR
+    var remE = cleanE
     val chosen = mutableListOf<SaleTransactionEntity>()
     val chosenIds = hashSetOf<String>()
     for (p in sorted) {
       val r = p.returnedQtyKg.coerceAtLeast(0.0)
       val e = p.expiredQtyKg.coerceAtLeast(0.0)
-      if (r <= 0.0 && e <= 0.0) continue
       if (r <= remR + 1e-6 && e <= remE + 1e-6) {
         chosen += p
         chosenIds += p.id
@@ -397,5 +465,585 @@ object SarimLinkEngine {
       }
     }
     return consumed
+  }
+
+  // =====================================================================
+  // Daily Ledger <-> Sales / Payments / Calculator Bidirectional Links
+  // =====================================================================
+
+  fun isTabOwnedLedgerRow(entry: DailyLedgerEntity): Boolean {
+    val src = entry.sourceType.trim().uppercase()
+    if (src in setOf("SALE", "PAYMENT", "CALCULATOR")) return true
+    val link = JsonCodecs.decodeLedgerLink(entry.linkJson) ?: return false
+    val kind = link["kind"]?.toString()?.trim()?.lowercase().orEmpty()
+    // Tab-owned mirror links have sourceType SALE/PAYMENT/CALCULATOR; manual ledger->tab links have kind "entity"/"customer"/"expense".
+    return kind.isEmpty() && (link.containsKey("saleId") || link.containsKey("calcId") || link.containsKey("txId"))
+  }
+
+  fun tabEntryNotice(entry: DailyLedgerEntity): String {
+    val tabName = when (entry.sourceType.trim().uppercase()) {
+      "SALE" -> "Sales"
+      "PAYMENT" -> "Payments"
+      "CALCULATOR" -> "Calculator"
+      else -> {
+        val link = JsonCodecs.decodeLedgerLink(entry.linkJson).orEmpty()
+        when {
+          link.containsKey("calcId") -> "Calculator"
+          link.containsKey("txId") -> "Payments"
+          else -> "Sales"
+        }
+      }
+    }
+    return "This entry comes from the $tabName tab. Edit or delete it there and the Daily Ledger updates automatically."
+  }
+
+  sealed interface LedgerLinkTarget {
+    data object None : LedgerLinkTarget
+    data class EntityTarget(val entity: PaymentEntityRecord) : LedgerLinkTarget
+    data class CustomerTarget(val name: String, val customer: CustomerEntity?) : LedgerLinkTarget
+    data class ExpenseTarget(val name: String, val expenseEntity: PaymentEntityRecord?) : LedgerLinkTarget
+    data class AmbiguousTarget(
+      val entity: PaymentEntityRecord,
+      val customerName: String,
+      val customer: CustomerEntity?,
+    ) : LedgerLinkTarget
+  }
+
+  fun resolveLedgerTarget(
+    type: String,
+    scope: String,
+    party: String,
+    category: String,
+    entities: List<PaymentEntityRecord>,
+    customers: List<CustomerEntity>,
+    sales: List<SaleTransactionEntity>,
+    overrideChoice: String? = null, // null | "NONE" | "ENTITY" | "CUSTOMER" | "EXPENSE"
+  ): LedgerLinkTarget {
+    if (type.equals("TRANSFER", ignoreCase = true)) return LedgerLinkTarget.None
+    if (overrideChoice.equals("NONE", ignoreCase = true)) return LedgerLinkTarget.None
+
+    val cleanParty = party.trim()
+    val cleanCat = category.trim()
+    val cleanScope = scope.trim()
+    if (type.equals("OUT", ignoreCase = true) &&
+      (cleanScope.equals("Home", ignoreCase = true) || cleanScope.equals("Personal", ignoreCase = true))
+    ) {
+      return LedgerLinkTarget.None
+    }
+
+    val matchedEntity = if (cleanParty.isNotBlank()) {
+      entities.firstOrNull { !it.isDeleted && it.name.equals(cleanParty, ignoreCase = true) }
+    } else null
+
+    val matchedCustomer = if (cleanParty.isNotBlank()) {
+      customers.firstOrNull { !it.isDeleted && !it.isRepCustomer && it.name.equals(cleanParty, ignoreCase = true) }
+    } else null
+
+    val partyInDirectSales = cleanParty.isNotBlank() && sales.any {
+      !it.isDeleted && !it.isRepSale && it.customerName.equals(cleanParty, ignoreCase = true)
+    }
+    val hasCustomerMatch = matchedCustomer != null || partyInDirectSales
+    val effectiveCustName = matchedCustomer?.name ?: cleanParty
+
+    when (overrideChoice?.uppercase()) {
+      "ENTITY" -> {
+        if (matchedEntity != null) return LedgerLinkTarget.EntityTarget(matchedEntity)
+      }
+      "CUSTOMER" -> {
+        if (cleanParty.isNotBlank()) return LedgerLinkTarget.CustomerTarget(effectiveCustName, matchedCustomer)
+      }
+      "EXPENSE" -> {
+        val expName = cleanParty.ifBlank { cleanCat.ifBlank { "General Expense" } }
+        val expEnt = matchedEntity?.takeIf { it.isExpenseEntity }
+        return LedgerLinkTarget.ExpenseTarget(expName, expEnt)
+      }
+    }
+
+    if (matchedEntity != null && matchedEntity.isExpenseEntity && type.equals("OUT", ignoreCase = true)) {
+      return LedgerLinkTarget.ExpenseTarget(matchedEntity.name, matchedEntity)
+    }
+    if (matchedEntity != null && hasCustomerMatch) {
+      return LedgerLinkTarget.AmbiguousTarget(matchedEntity, effectiveCustName, matchedCustomer)
+    }
+    if (matchedEntity != null) {
+      return LedgerLinkTarget.EntityTarget(matchedEntity)
+    }
+    if (hasCustomerMatch) {
+      return LedgerLinkTarget.CustomerTarget(effectiveCustName, matchedCustomer)
+    }
+
+    if (type.equals("OUT", ignoreCase = true)) {
+      val nonExpenseCats = setOf("Transfer", "Supplier Payment", "Home / Personal")
+      if (cleanCat.isNotBlank() && nonExpenseCats.none { it.equals(cleanCat, ignoreCase = true) } &&
+        (cleanScope.equals("Business", ignoreCase = true) || cleanScope.isBlank()) &&
+        (cleanParty.isNotBlank() || !cleanCat.equals("General Expense", ignoreCase = true))
+      ) {
+        return LedgerLinkTarget.ExpenseTarget(cleanParty.ifBlank { cleanCat }, null)
+      }
+    }
+    return LedgerLinkTarget.None
+  }
+
+  // =====================================================================
+  // Reference / Delete / Edit Guards (Store, Formula, Batch, Lot, Sale)
+  // =====================================================================
+
+  data class StoreUsage(
+    val prodCount: Int = 0,
+    val batchCount: Int = 0,
+    val saleCount: Int = 0,
+    val returnCount: Int = 0,
+    val transferCount: Int = 0,
+  ) {
+    val totalCount: Int get() = prodCount + batchCount + saleCount + returnCount + transferCount
+    fun blockMessage(storeName: String): String? {
+      if (totalCount == 0) return null
+      val parts = buildList {
+        if (prodCount > 0) add("$prodCount production entry(s)")
+        if (batchCount > 0) add("$batchCount factory batch(es)")
+        if (saleCount > 0) add("$saleCount sale(s)")
+        if (returnCount > 0) add("$returnCount return log(s)")
+        if (transferCount > 0) add("$transferCount stock transfer(s)")
+      }
+      return "Cannot delete store $storeName: referenced by ${parts.joinToString(", ")}."
+    }
+  }
+
+  fun storeUsage(
+    storeKey: String,
+    production: List<ProductionEntryEntity>,
+    factoryBatches: List<FactoryBatchEntity>,
+    sales: List<SaleTransactionEntity>,
+    returns: List<ReturnLogEntity>,
+    stockTransfers: List<StockTransferEntity>,
+  ): StoreUsage {
+    val clean = storeKey.trim()
+    if (clean.isBlank()) return StoreUsage()
+    return StoreUsage(
+      prodCount = production.count { !it.isDeleted && it.storeKey.equals(clean, ignoreCase = true) },
+      batchCount = factoryBatches.count { !it.isDeleted && it.store.equals(clean, ignoreCase = true) },
+      saleCount = sales.count { !it.isDeleted && it.storeKey.equals(clean, ignoreCase = true) },
+      returnCount = returns.count { !it.isDeleted && it.store.equals(clean, ignoreCase = true) },
+      transferCount = stockTransfers.count {
+        !it.isDeleted && (it.fromStoreKey.equals(clean, ignoreCase = true) || it.toStoreKey.equals(clean, ignoreCase = true))
+      },
+    )
+  }
+
+  fun formulaUsers(
+    formulaId: String,
+    stores: List<StoreEntity>,
+    formulas: List<FormulaEntity>,
+  ): Pair<List<String>, List<String>> {
+    val usedByStores = stores
+      .filter { !it.isDeleted && it.formulaId == formulaId }
+      .map { it.name.ifBlank { it.storeKey } }
+    val usedByFormulas = formulas
+      .filter { f ->
+        !f.isDeleted && f.id != formulaId &&
+          JsonCodecs.decodeIngredients(f.ingredientsJson).any {
+            it.refType.equals("FORMULA", ignoreCase = true) && it.refId == formulaId
+          }
+      }
+      .map { it.name }
+    return usedByStores to usedByFormulas
+  }
+
+  fun getFormulaDeleteBlockReason(
+    formula: FormulaEntity,
+    stores: List<StoreEntity>,
+    formulas: List<FormulaEntity>,
+  ): String? {
+    val (usedByStores, usedByFormulas) = formulaUsers(formula.id, stores, formulas)
+    if (usedByStores.isNotEmpty()) {
+      return "Cannot delete formula ${formula.name}: used by store(s) ${usedByStores.joinToString(", ")}."
+    }
+    if (usedByFormulas.isNotEmpty()) {
+      return "Cannot delete formula ${formula.name}: referenced by formula(s) ${usedByFormulas.joinToString(", ")}."
+    }
+    if (formula.unitsAvailable > 0.0005) {
+      return "Cannot delete formula ${formula.name}: ${round2(formula.unitsAvailable)} produced units remain available."
+    }
+    return null
+  }
+
+  /**
+   * Matches web `link-graph.js::usedUnitsByBatch`: FIFO consumption of produced batch units by Production entries.
+   */
+  fun usedUnitsByBatch(
+    factoryBatches: List<FactoryBatchEntity>,
+    production: List<ProductionEntryEntity>,
+  ): Map<String, Double> {
+    val remainingUsedByFormula = linkedMapOf<String, Double>()
+    production.filter { !it.isDeleted && !it.isReturn && it.formulaId.isNotBlank() && it.formulaUnitsUsed > 0.0 }
+      .forEach { p ->
+        remainingUsedByFormula[p.formulaId] = (remainingUsedByFormula[p.formulaId] ?: 0.0) + p.formulaUnitsUsed
+      }
+    val map = linkedMapOf<String, Double>()
+    factoryBatches.filter { !it.isDeleted }
+      .sortedWith(compareBy<FactoryBatchEntity> { it.dateEpoch }.thenBy { it.createdAt })
+      .forEach { batch ->
+        val poolLeft = remainingUsedByFormula[batch.formulaId] ?: 0.0
+        val taken = minOf(batch.unitsProduced.coerceAtLeast(0.0), poolLeft.coerceAtLeast(0.0))
+        map[batch.id] = round2(taken)
+        remainingUsedByFormula[batch.formulaId] = (poolLeft - taken).coerceAtLeast(0.0)
+      }
+    return map
+  }
+
+  fun getFactoryBatchDeleteBlockReason(
+    batch: FactoryBatchEntity,
+    formula: FormulaEntity?,
+    factoryBatches: List<FactoryBatchEntity>,
+    production: List<ProductionEntryEntity>,
+  ): String? {
+    if (formula != null && formula.unitsAvailable + 0.0005 < batch.unitsProduced) {
+      return "Cannot delete batch: only ${round2(formula.unitsAvailable)} of ${round2(batch.unitsProduced)} produced units remain unused."
+    }
+    val usedOnBatch = usedUnitsByBatch(factoryBatches, production)[batch.id] ?: 0.0
+    if (formula != null) {
+      // Only block via FIFO map if total remaining pool cannot absorb removing this batch's units
+      val totalProduced = factoryBatches.filter { !it.isDeleted && it.formulaId == batch.formulaId }.sumOf { it.unitsProduced }
+      val totalProdUsed = production.filter { !it.isDeleted && !it.isReturn && it.formulaId == batch.formulaId }.sumOf { it.formulaUnitsUsed }
+      if (totalProdUsed > 0.0005 && (totalProduced - batch.unitsProduced) + 0.0005 < totalProdUsed && usedOnBatch > 0.0005) {
+        return "Cannot delete batch: $usedOnBatch unit(s) have already been consumed by production."
+      }
+    }
+    return null
+  }
+
+  fun getPurchaseLotDeleteBlockReason(
+    lot: RawMaterialPurchaseEntity,
+    material: RawMaterialEntity?,
+  ): String? {
+    if (material != null && !material.isDeleted && material.stockKg + 1e-6 < lot.totalKg) {
+      val usedKg = round2((lot.totalKg - material.stockKg).coerceAtLeast(0.0))
+      return "Cannot delete purchase lot: $usedKg kg from ${material.name} has already been consumed."
+    }
+    return null
+  }
+
+  fun getSaleBlockReason(
+    sale: SaleTransactionEntity,
+    settlements: List<CalculatorSettlementEntity>,
+  ): String? {
+    if (!sale.usedInCalcId.isNullOrBlank()) {
+      return "This transaction is reconciled in a Calculator settlement (${sale.usedInCalcId}). Delete or update that settlement first."
+    }
+    if (!sale.isRepSale && sale.id in reconciledAdminSalesIds(settlements)) {
+      return "This sale is reconciled in the Calculator. Delete the Calculator settlement first."
+    }
+    if (sale.isRepSale && sale.id in reconciledRepSalesIds(settlements)) {
+      return "This Rep sale is reconciled in the Calculator. Delete the Calculator settlement first."
+    }
+    if (sale.isRepReturn && sale.id in reconciledRepReturnIds(settlements)) {
+      return "This return is already reconciled in the Calculator. Delete the Calculator settlement first."
+    }
+    val transferHolder = settlements.firstOrNull { !it.isDeleted && it.transferSaleId == sale.id }
+    if (transferHolder != null) {
+      return "This rep transfer belongs to a Calculator settlement for ${transferHolder.repName}. Delete that settlement first."
+    }
+    val isCreditOrOldDebt = sale.mode == "OLD_DEBT" || sale.transactionType == "OLD_DEBT" ||
+      (sale.mode == "SALE" && sale.paymentType == "CREDIT")
+    if (isCreditOrOldDebt &&
+      (JsonCodecs.decodeCollectionAllocs(sale.collectionAllocsJson).isNotEmpty() || sale.partialPaymentReceived > 0.01)
+    ) {
+      return "This credit sale already has collection payments applied. Delete the linked collection entries first."
+    }
+    return null
+  }
+
+  fun getCollectionDeleteBlockReason(
+    sale: SaleTransactionEntity,
+    rawMaterials: List<RawMaterialEntity>,
+  ): String? {
+    if ((sale.mode == "COLLECTION" || sale.isCollection) && sale.expiredQtyKg > 0.0001 && !sale.isRepReturn) {
+      val chora = rawMaterials.firstOrNull { !it.isDeleted && it.name.equals("CHORA", ignoreCase = true) }
+      val choraStock = chora?.stockKg ?: 0.0
+      if (choraStock + 1e-6 < sale.expiredQtyKg) {
+        return "Cannot delete collection: ${round2(sale.expiredQtyKg)} kg expired Chora exceeds remaining CHORA stock (${round2(choraStock)} kg)."
+      }
+    }
+    return null
+  }
+
+  fun getSaleEditLinkIssue(
+    existing: SaleTransactionEntity,
+    newMode: String,
+    newPaymentType: String,
+    newCustomerName: String,
+    newTotalValue: Double,
+    settlements: List<CalculatorSettlementEntity>,
+  ): String? {
+    if (!existing.usedInCalcId.isNullOrBlank() ||
+      existing.id in reconciledAdminSalesIds(settlements) ||
+      existing.id in reconciledRepSalesIds(settlements) ||
+      existing.id in reconciledRepReturnIds(settlements) ||
+      settlements.any { !it.isDeleted && it.transferSaleId == existing.id }
+    ) {
+      return "Reconciled Calculator transactions cannot be edited directly. Delete the Calculator settlement first."
+    }
+    val hasPartialOrAllocs = existing.partialPaymentReceived > 0.01 ||
+      JsonCodecs.decodeCollectionAllocs(existing.collectionAllocsJson).isNotEmpty()
+    val isCreditOrOldDebt = existing.mode == "OLD_DEBT" || existing.transactionType == "OLD_DEBT" ||
+      (existing.mode == "SALE" && existing.paymentType == "CREDIT")
+    if (isCreditOrOldDebt && hasPartialOrAllocs) {
+      if (!existing.customerName.equals(newCustomerName.trim(), ignoreCase = true)) {
+        return "Cannot change customer on a credit sale that already has collections applied."
+      }
+      if (newMode == "SALE" && newPaymentType.equals("CASH", ignoreCase = true)) {
+        return "Cannot convert a credit sale with collections applied to Cash."
+      }
+      if (newTotalValue + 0.01 < existing.partialPaymentReceived) {
+        return "Total sale value cannot be less than already collected amount (${round2(existing.partialPaymentReceived)})."
+      }
+    }
+    return null
+  }
+
+  // =====================================================================
+  // Cash-in-Hand Breakdown (Matches Payments Cash-in-Hand Tracker & Guard)
+  // =====================================================================
+
+  data class CashInHandBreakdown(
+    val salesCash: Double,
+    val collectionsCash: Double,
+    val moneyOutCash: Double,
+    val calcCash: Double,
+    val paymentInCash: Double,
+    val paymentOutCash: Double,
+    val expensesCash: Double,
+    val factoryAdditionalCost: Double,
+    val netCash: Double,
+  )
+
+  fun computeCashInHandBreakdown(
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    payments: List<PaymentTransactionEntity>,
+    factoryBatches: List<FactoryBatchEntity> = emptyList(),
+    cutoffEpoch: Long = 0L,
+  ): CashInHandBreakdown {
+    val activeSales = sales.filter { !it.isDeleted && !it.isRepSale && it.dateEpoch >= cutoffEpoch }
+    val salesCash = round2(activeSales.filter { it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue })
+    val collectionsCash = round2(
+      activeSales.filter { it.mode == "COLLECTION" || it.isCollection }.sumOf { s ->
+        s.collectedAmount.takeIf { it > 0.0 } ?: s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue
+      }
+    )
+    val moneyOutCash = round2(
+      activeSales.filter { it.mode == "MONEY_OUT" || it.isMoneyOut }.sumOf { s ->
+        s.collectedAmount.takeIf { it > 0.0 } ?: s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue
+      }
+    )
+    val calcCash = round2(settlements.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }.sumOf { it.receivedCash })
+    val activePay = payments.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }
+    val paymentInCash = round2(activePay.filter { it.type == "PAYMENT_IN" && !it.isPayable }.sumOf { it.amount })
+    val paymentOutCash = round2(activePay.filter { it.type == "PAYMENT_OUT" }.sumOf { it.amount })
+    val expensesCash = round2(activePay.filter { it.type == "EXPENSE" }.sumOf { it.amount })
+    val factoryAddCost = round2(factoryBatches.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }.sumOf { it.additionalCost })
+    val net = round2(salesCash + collectionsCash - moneyOutCash + calcCash + paymentInCash - paymentOutCash - expensesCash - factoryAddCost)
+    return CashInHandBreakdown(
+      salesCash = salesCash,
+      collectionsCash = collectionsCash,
+      moneyOutCash = moneyOutCash,
+      calcCash = calcCash,
+      paymentInCash = paymentInCash,
+      paymentOutCash = paymentOutCash,
+      expensesCash = expensesCash,
+      factoryAdditionalCost = factoryAddCost,
+      netCash = net,
+    )
+  }
+
+  // =====================================================================
+  // Link Audit & Repair (Matches modules/link-repair.js & audit.js)
+  // =====================================================================
+
+  data class LinkIssue(
+    val id: String,
+    val kind: String, // col_unapplied, link_orphan
+    val recordId: String,
+    val title: String,
+    val detail: String,
+    val dateEpoch: Long,
+    val severity: String, // WARNING, ERROR
+  )
+
+  fun auditLinks(
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity> = emptyList(),
+  ): List<LinkIssue> {
+    val activeSales = sales.filter { !it.isDeleted }
+    val byId = activeSales.associateBy { it.id }
+    val issues = mutableListOf<LinkIssue>()
+
+    // 1. Check COLLECTION sales for broken or missing parent allocations
+    activeSales.filter { it.mode == "COLLECTION" || it.isCollection }.forEach { col ->
+      val allocs = JsonCodecs.decodeAllocations(col.allocationsJson)
+      if (allocs.isNotEmpty()) {
+        val broken = allocs.any { alloc ->
+          val parent = byId[alloc.saleId]
+          if (parent == null) true
+          else {
+            val parentAllocs = JsonCodecs.decodeCollectionAllocs(parent.collectionAllocsJson)
+            parentAllocs.none { it.cid == col.id && abs(it.amount - alloc.amount) <= 0.05 }
+          }
+        }
+        if (broken) {
+          issues += LinkIssue(
+            id = "col_unapplied_${col.id}",
+            kind = "col_unapplied",
+            recordId = col.id,
+            title = "Collection link mismatch · ${col.customerName}",
+            detail = "One or more allocated credit sales are missing or out of sync with this collection.",
+            dateEpoch = col.dateEpoch,
+            severity = "WARNING",
+          )
+        }
+      }
+    }
+
+    // 2. Check CREDIT / OLD_DEBT sales for orphan collectionAllocs or mismatched partialPaymentReceived
+    val liveCollectionsByParent = linkedMapOf<String, Double>()
+    activeSales.filter { it.mode == "COLLECTION" || it.isCollection }.forEach { col ->
+      JsonCodecs.decodeAllocations(col.allocationsJson).forEach { alloc ->
+        if (alloc.saleId in byId) {
+          liveCollectionsByParent[alloc.saleId] = round2((liveCollectionsByParent[alloc.saleId] ?: 0.0) + alloc.amount)
+        }
+      }
+    }
+
+    activeSales.filter {
+      it.mode == "OLD_DEBT" || it.transactionType == "OLD_DEBT" || (it.mode == "SALE" && it.paymentType == "CREDIT")
+    }.forEach { sale ->
+      val colAllocs = JsonCodecs.decodeCollectionAllocs(sale.collectionAllocsJson)
+      val hasOrphan = colAllocs.any { ca ->
+        val c = byId[ca.cid]
+        c == null || !(c.mode == "COLLECTION" || c.isCollection)
+      }
+      val expectedPartial = if (liveCollectionsByParent.containsKey(sale.id) || colAllocs.isNotEmpty()) {
+        liveCollectionsByParent[sale.id] ?: 0.0
+      } else {
+        sale.partialPaymentReceived
+      }
+      val partialMismatch = colAllocs.isNotEmpty() && abs(expectedPartial - sale.partialPaymentReceived) > 0.05
+      if (hasOrphan || partialMismatch) {
+        issues += LinkIssue(
+          id = "link_orphan_${sale.id}",
+          kind = "link_orphan",
+          recordId = sale.id,
+          title = "Orphan payment link · ${sale.customerName}",
+          detail = "Credit sale references deleted collection(s) or out-of-sync partial payment total.",
+          dateEpoch = sale.dateEpoch,
+          severity = "ERROR",
+        )
+      }
+    }
+
+    // Ignore unused parameter warning while keeping extension point clean
+    settlements.size
+    return issues
+  }
+
+  data class LinkRepairResult(
+    val updatedSales: List<SaleTransactionEntity>,
+    val collectionsFixed: Int,
+    val parentsFixed: Int,
+  )
+
+  fun planLinkRepairs(sales: List<SaleTransactionEntity>, now: Long = System.currentTimeMillis()): LinkRepairResult {
+    val active = sales.filter { !it.isDeleted }
+    val byId = active.associateBy { it.id }.toMutableMap()
+    val updatedIds = linkedSetOf<String>()
+    var collectionsFixed = 0
+    var parentsFixed = 0
+
+    val parentChildMap = linkedMapOf<String, MutableList<JsonCodecs.CollectionAllocItem>>()
+
+    // First pass: clean COLLECTION.allocations pointing to deleted/non-existent parent sales
+    active.filter { it.mode == "COLLECTION" || it.isCollection }.forEach { col ->
+      val origAllocs = JsonCodecs.decodeAllocations(col.allocationsJson)
+      if (origAllocs.isNotEmpty()) {
+        val validAllocs = origAllocs.filter { a ->
+          val p = byId[a.saleId]
+          p != null && (p.mode == "OLD_DEBT" || p.transactionType == "OLD_DEBT" || (p.mode == "SALE" && p.paymentType == "CREDIT"))
+        }
+        validAllocs.forEach { a ->
+          parentChildMap.getOrPut(a.saleId) { mutableListOf() } +=
+            JsonCodecs.CollectionAllocItem(cid = col.id, amount = a.amount, full = a.full)
+        }
+        if (validAllocs.size != origAllocs.size) {
+          val cashCollected = col.collectedAmount.takeIf { it > 0.0 } ?: col.amountReceived
+          val totalAlloc = validAllocs.sumOf { it.amount }
+          val cashPaid = minOf(cashCollected, totalAlloc)
+          val cashLeft = round2((cashCollected - cashPaid).coerceAtLeast(0.0))
+          val expAllocated = round2((totalAlloc - cashPaid).coerceAtLeast(0.0))
+          val nextCol = col.copy(
+            allocationsJson = JsonCodecs.encodeAllocations(validAllocs),
+            totalValue = if (validAllocs.isNotEmpty()) cashLeft else cashCollected,
+            expiredAllocated = expAllocated,
+            syncPending = true,
+            updatedAt = now,
+          )
+          byId[col.id] = nextCol
+          updatedIds += col.id
+          collectionsFixed++
+        }
+      }
+    }
+
+    // Second pass: rebuild collectionAllocs, partialPaymentReceived, and creditReceived on Credit / OLD_DEBT sales
+    active.filter {
+      it.mode == "OLD_DEBT" || it.transactionType == "OLD_DEBT" || (it.mode == "SALE" && it.paymentType == "CREDIT")
+    }.forEach { sale ->
+      val origAllocs = JsonCodecs.decodeCollectionAllocs(sale.collectionAllocsJson)
+      val rebuiltAllocs = parentChildMap[sale.id].orEmpty()
+      val newPartial = if (rebuiltAllocs.isNotEmpty()) {
+        round2(rebuiltAllocs.sumOf { it.amount }).coerceAtMost(sale.totalValue)
+      } else if (origAllocs.isNotEmpty()) {
+        // Had allocations before, all pointed to deleted collections -> reset partial to 0
+        0.0
+      } else {
+        sale.partialPaymentReceived
+      }
+      val newCreditReceived = when {
+        !sale.usedInCalcId.isNullOrBlank() -> true
+        origAllocs.isNotEmpty() || rebuiltAllocs.isNotEmpty() -> newPartial >= sale.totalValue - 0.01
+        else -> sale.creditReceived
+      }
+      val needsUpdate = origAllocs != rebuiltAllocs ||
+        abs(sale.partialPaymentReceived - newPartial) > 0.01 ||
+        sale.creditReceived != newCreditReceived
+
+      if (needsUpdate) {
+        val nextSale = sale.copy(
+          collectionAllocsJson = JsonCodecs.encodeCollectionAllocs(rebuiltAllocs),
+          partialPaymentReceived = newPartial,
+          creditReceived = newCreditReceived,
+          syncPending = true,
+          updatedAt = now,
+        )
+        byId[sale.id] = nextSale
+        updatedIds += sale.id
+        parentsFixed++
+      }
+    }
+
+    return LinkRepairResult(
+      updatedSales = updatedIds.mapNotNull { byId[it] },
+      collectionsFixed = collectionsFixed,
+      parentsFixed = parentsFixed,
+    )
+  }
+
+  /** Dependency rank for Recycle Bin recovery (parents before dependents). */
+  fun restoreSortOrder(entityType: String, isCollectionSale: Boolean = false): Int = when (entityType) {
+    "STORE", "CUSTOMER", "ENTITY", "MATERIAL", "FORMULA" -> 0
+    "PURCHASE_LOT", "BATCH", "PRODUCTION", "RETURN", "EXPENSE" -> 1
+    "SALE" -> if (isCollectionSale) 3 else 2
+    "PAYMENT", "LEDGER", "STOCK_TRANSFER", "PAYMENT_TRANSFER" -> 2
+    "SETTLEMENT" -> 4
+    else -> 5
   }
 }

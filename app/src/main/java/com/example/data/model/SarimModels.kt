@@ -111,7 +111,7 @@ data class EditHistoryEntry(
 data class AuditFinding(
   val id: String,
   val severity: String, // ERROR or WARNING
-  val recordType: String, // SALE, PRODUCTION, MATERIAL, LEDGER
+  val recordType: String, // SALE, PRODUCTION, MATERIAL, LEDGER, PAYMENT, EXPENSE, LINK_REPAIR
   val recordId: String,
   val dateEpoch: Long,
   val title: String,

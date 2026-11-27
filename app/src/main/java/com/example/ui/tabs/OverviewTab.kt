@@ -555,6 +555,14 @@ fun OverviewTab(
               Text("Profit and data check", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
               SarimChip(chipText, chipColor)
             }
+            if (snap.auditFindings.any { it.recordType == "LINK_REPAIR" }) {
+              SarimSecondaryButton(
+                text = "Repair All Sale / Collection Links",
+                onClick = { viewModel.repairSaleLinks() },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "ov_repair_links_btn",
+              )
+            }
             if (snap.auditFindings.isEmpty()) {
               SarimCallout("No negative-margin sales, zero-weight batches, or stock anomalies detected.", palette.green)
             } else {
@@ -661,18 +669,24 @@ fun OverviewTab(
           Text("${finding.recordType} · ${SarimFormat.formatDate(finding.dateEpoch)}", color = palette.textMuted, fontSize = 11.5.sp)
           finding.reasons.forEach { Text("• $it", color = palette.amber, fontSize = 12.5.sp) }
           Text(finding.note, color = palette.textMuted, fontSize = 12.sp)
-          SarimTextField(
-            value = inputVal,
-            onValueChange = { inputVal = it },
-            label = "Update · ${finding.suggestedFieldLabel}",
-            keyboardType = KeyboardType.Decimal,
-          )
+          if (finding.recordType != "LINK_REPAIR") {
+            SarimTextField(
+              value = inputVal,
+              onValueChange = { inputVal = it },
+              label = "Update · ${finding.suggestedFieldLabel}",
+              keyboardType = KeyboardType.Decimal,
+            )
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SarimSecondaryButton("Cancel", onClick = { fixingFinding = null }, modifier = Modifier.weight(1f))
-            SarimPrimaryButton("Save Fix", onClick = {
-              viewModel.applyAuditFix(finding, inputVal)
-              fixingFinding = null
-            }, modifier = Modifier.weight(1f))
+            SarimPrimaryButton(
+              text = if (finding.recordType == "LINK_REPAIR") "Repair Link" else "Save Fix",
+              onClick = {
+                viewModel.applyAuditFix(finding, inputVal)
+                fixingFinding = null
+              },
+              modifier = Modifier.weight(1f),
+            )
           }
         }
       }

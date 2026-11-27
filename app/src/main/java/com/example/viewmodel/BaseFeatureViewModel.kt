@@ -204,6 +204,7 @@ open class BaseLedgerViewModel(
     note: String,
     category: String? = null,
     scope: String = "",
+    linkedTargetChoice: String? = null,
     onSaved: () -> Unit = {},
   ) {
     if (SarimFormat.isFutureDate(dateEpoch)) {
@@ -223,6 +224,7 @@ open class BaseLedgerViewModel(
         note = note,
         category = category,
         scope = scope,
+        linkedTargetChoice = linkedTargetChoice,
       )
       updateState { it.copy(statusMessage = "Ledger entry saved") }
       onSaved()

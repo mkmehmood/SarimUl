@@ -451,6 +451,98 @@ object SarimMetricsEngine {
         currentFieldValue = s.pricePerKg.toString(),
       )
     }
+    sales.filter { !it.isDeleted && it.mode == "SALE" && !it.isRepReturn }.forEach { s ->
+      if (s.quantityKg <= 0.0) {
+        findings += AuditFinding(
+          id = "sale_bad_qty_${s.id}",
+          severity = "ERROR",
+          recordType = "SALE",
+          recordId = s.id,
+          dateEpoch = s.dateEpoch,
+          title = "Invalid quantity · ${s.customerName}",
+          reasons = listOf("Sale has quantity ${s.quantityKg} kg"),
+          note = "Enter a positive quantity or update unit price.",
+          suggestedFieldLabel = "Price per kg (Rs)",
+          currentFieldValue = s.pricePerKg.toString(),
+        )
+      } else if (s.totalValue < 0.0) {
+        findings += AuditFinding(
+          id = "sale_negative_val_${s.id}",
+          severity = "ERROR",
+          recordType = "SALE",
+          recordId = s.id,
+          dateEpoch = s.dateEpoch,
+          title = "Negative sale value · ${s.customerName}",
+          reasons = listOf("Total value is ${SarimFormat.formatRs(s.totalValue)}"),
+          note = "Reset price per kg to recalculate sale value.",
+          suggestedFieldLabel = "Price per kg (Rs)",
+          currentFieldValue = s.pricePerKg.coerceAtLeast(0.0).toString(),
+        )
+      } else {
+        val expectedVal = com.example.data.repository.SarimLinkEngine.round2(s.quantityKg * s.pricePerKg)
+        val expectedProfit = com.example.data.repository.SarimLinkEngine.round2(s.totalValue - s.totalCost)
+        if (s.pricePerKg > 0.0 && abs(s.totalValue - expectedVal) > 1.0) {
+          findings += AuditFinding(
+            id = "sale_total_mismatch_${s.id}",
+            severity = "WARNING",
+            recordType = "SALE",
+            recordId = s.id,
+            dateEpoch = s.dateEpoch,
+            title = "Sale total mismatch · ${s.customerName}",
+            reasons = listOf(
+              "Recorded ${SarimFormat.formatRs(s.totalValue)}, expected ${SarimFormat.formatRs(expectedVal)}",
+            ),
+            note = "Confirm or update unit price to resync total and profit.",
+            suggestedFieldLabel = "Price per kg (Rs)",
+            currentFieldValue = s.pricePerKg.toString(),
+          )
+        } else if (abs(s.profit - expectedProfit) > 1.0) {
+          findings += AuditFinding(
+            id = "sale_profit_mismatch_${s.id}",
+            severity = "WARNING",
+            recordType = "SALE",
+            recordId = s.id,
+            dateEpoch = s.dateEpoch,
+            title = "Profit mismatch · ${s.customerName}",
+            reasons = listOf(
+              "Recorded profit ${SarimFormat.formatRs(s.profit)}, expected ${SarimFormat.formatRs(expectedProfit)}",
+            ),
+            note = "Save unit price to recalculate sale profit.",
+            suggestedFieldLabel = "Price per kg (Rs)",
+            currentFieldValue = s.pricePerKg.toString(),
+          )
+        }
+      }
+    }
+    com.example.data.repository.SarimLinkEngine.auditLinks(sales, settlements).forEach { linkIssue ->
+      findings += AuditFinding(
+        id = linkIssue.id,
+        severity = linkIssue.severity,
+        recordType = "LINK_REPAIR",
+        recordId = linkIssue.recordId,
+        dateEpoch = linkIssue.dateEpoch,
+        title = linkIssue.title,
+        reasons = listOf(linkIssue.detail),
+        note = "One-tap repair removes broken references and recalculates collection balances.",
+        suggestedFieldLabel = "Repair Link",
+        currentFieldValue = "1",
+      )
+    }
+    val activeEntityIds = entities.filter { !it.isDeleted }.map { it.id }.toSet()
+    payments.filter { !it.isDeleted && it.type != "EXPENSE" && !it.entityId.isNullOrBlank() && it.entityId !in activeEntityIds }.forEach { tx ->
+      findings += AuditFinding(
+        id = "txn_missing_entity_${tx.id}",
+        severity = "WARNING",
+        recordType = "PAYMENT",
+        recordId = tx.id,
+        dateEpoch = tx.dateEpoch,
+        title = "Orphan payment entity · ${tx.entityOrExpenseName}",
+        reasons = listOf("Linked entity (${tx.entityId}) was deleted or is missing"),
+        note = "Restore the entity from Recycle Bin or verify payment amount.",
+        suggestedFieldLabel = "Amount (Rs)",
+        currentFieldValue = tx.amount.toString(),
+      )
+    }
     production.filter { !it.isReturn && it.netWeightKg <= 0.0 }.forEach { p ->
       findings += AuditFinding(
         id = "zero_prod_${p.id}",

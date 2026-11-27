@@ -33,6 +33,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.DailyLedgerEntity
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -40,6 +41,7 @@ import com.example.util.*
 import com.example.viewmodel.BaseLedgerViewModel
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun DailyLedgerScreen(
@@ -87,6 +89,8 @@ fun DailyLedgerScreen(
   var selectedCategory by remember { mutableStateOf("") }
   var selectedScope by remember { mutableStateOf("Business") }
   var sheetEntry by remember { mutableStateOf<DailyLedgerEntity?>(null) }
+  var ambiguousLinkState by remember { mutableStateOf<SarimLinkEngine.LedgerLinkTarget.AmbiguousTarget?>(null) }
+  val scope = rememberCoroutineScope()
 
   fun resetForm() {
     editingId = null
@@ -509,10 +513,26 @@ fun DailyLedgerScreen(
             },
             modifier = Modifier.fillMaxWidth(),
           )
+          val isTabOwned = SarimLinkEngine.isTabOwnedLedgerRow(entry)
+          if (isTabOwned) {
+            SarimCallout(SarimLinkEngine.tabEntryNotice(entry), palette.cyan)
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimSecondaryButton(
               text = "Edit",
               onClick = {
+                if (isTabOwned) {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Tab-Linked Entry",
+                      body = SarimLinkEngine.tabEntryNotice(entry),
+                      tone = DialogTone.WARNING,
+                      confirmLabel = "OK",
+                      cancelLabel = null,
+                    )
+                  )
+                  return@SarimSecondaryButton
+                }
                 editingId = entry.id
                 entryType = entry.type
                 dateEpoch = entry.dateEpoch
@@ -530,6 +550,18 @@ fun DailyLedgerScreen(
             SarimDangerButton(
               text = "Delete",
               onClick = {
+                if (isTabOwned) {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Tab-Linked Entry",
+                      body = SarimLinkEngine.tabEntryNotice(entry),
+                      tone = DialogTone.WARNING,
+                      confirmLabel = "OK",
+                      cancelLabel = null,
+                    )
+                  )
+                  return@SarimDangerButton
+                }
                 viewModel.showDialog(
                   AppDialogRequest(
                     title = "Delete Ledger Entry",
@@ -618,28 +650,100 @@ fun DailyLedgerScreen(
               text = "Save Entry",
               onClick = {
                 val chosenCat = selectedCategory.trim().ifBlank { if (entryType == "IN") "General Income" else "General Expense" }
-                ledgerViewModel.saveEntry(
-                  editingId = editingId,
-                  dateEpoch = dateEpoch,
-                  type = entryType,
-                  amount = pendingAmount,
-                  mode = modeText.trim().take(40),
-                  toMode = toModeText.trim().take(40),
-                  party = partyText.trim().take(80),
-                  refNo = refText.trim().take(40),
-                  note = noteText.trim().take(120),
-                  category = chosenCat,
-                  scope = if (entryType == "OUT") selectedScope else "",
-                  onSaved = {
-                    showCategoryDialog = false
-                    resetForm()
-                  },
-                )
+                val chosenScope = if (entryType == "OUT") selectedScope else ""
+                val cleanParty = partyText.trim().take(80)
+                scope.launch {
+                  when (val target = viewModel.resolveLedgerTarget(entryType, chosenScope, cleanParty, chosenCat)) {
+                    is SarimLinkEngine.LedgerLinkTarget.AmbiguousTarget -> {
+                      ambiguousLinkState = target
+                    }
+                    else -> {
+                      ledgerViewModel.saveEntry(
+                        editingId = editingId,
+                        dateEpoch = dateEpoch,
+                        type = entryType,
+                        amount = pendingAmount,
+                        mode = modeText.trim().take(40),
+                        toMode = toModeText.trim().take(40),
+                        party = cleanParty,
+                        refNo = refText.trim().take(40),
+                        note = noteText.trim().take(120),
+                        category = chosenCat,
+                        scope = chosenScope,
+                        linkedTargetChoice = null,
+                        onSaved = {
+                          showCategoryDialog = false
+                          resetForm()
+                        },
+                      )
+                    }
+                  }
+                }
               },
               modifier = Modifier.weight(1f),
               testTag = "dl_cat_save",
             )
           }
+        }
+      }
+    }
+  }
+
+  ambiguousLinkState?.let { ambig ->
+    val chosenCat = selectedCategory.trim().ifBlank { if (entryType == "IN") "General Income" else "General Expense" }
+    val chosenScope = if (entryType == "OUT") selectedScope else ""
+    fun commitWithChoice(choice: String) {
+      ambiguousLinkState = null
+      ledgerViewModel.saveEntry(
+        editingId = editingId,
+        dateEpoch = dateEpoch,
+        type = entryType,
+        amount = pendingAmount,
+        mode = modeText.trim().take(40),
+        toMode = toModeText.trim().take(40),
+        party = partyText.trim().take(80),
+        refNo = refText.trim().take(40),
+        note = noteText.trim().take(120),
+        category = chosenCat,
+        scope = chosenScope,
+        linkedTargetChoice = choice,
+        onSaved = {
+          showCategoryDialog = false
+          resetForm()
+        },
+      )
+    }
+    Dialog(onDismissRequest = { ambiguousLinkState = null }) {
+      Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = palette.surface,
+        border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.5f)),
+      ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text("Link Target Match", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+          Text(
+            "\"${ambig.customerName}\" exists as both a Payment Entity and a Direct Customer. Choose where to post this entry:",
+            color = palette.textMuted,
+            fontSize = 12.5.sp,
+          )
+          SarimPrimaryButton(
+            text = "Post to Entity (${ambig.entity.name})",
+            onClick = { commitWithChoice("ENTITY") },
+            modifier = Modifier.fillMaxWidth(),
+            testTag = "dl_ambig_entity",
+          )
+          SarimSecondaryButton(
+            text = "Post to Customer (${ambig.customerName})",
+            onClick = { commitWithChoice("CUSTOMER") },
+            modifier = Modifier.fillMaxWidth(),
+            testTag = "dl_ambig_customer",
+          )
+          SarimSecondaryButton(
+            text = "Cashbook Only (No Link)",
+            onClick = { commitWithChoice("NONE") },
+            modifier = Modifier.fillMaxWidth(),
+            testTag = "dl_ambig_none",
+          )
         }
       }
     }
@@ -651,6 +755,7 @@ fun DailyLedgerScreen(
       "OUT" -> palette.red
       else -> palette.cyan
     }
+    val isSheetTabOwned = SarimLinkEngine.isTabOwnedLedgerRow(entry)
     SarimRecordBottomSheet(
       title = if (entry.type == "TRANSFER") "${entry.mode} → ${entry.toMode}" else entry.party.ifBlank { entry.category },
       subtitle = "${SarimFormat.formatDate(entry.dateEpoch)} · ${entry.type}",
@@ -668,6 +773,9 @@ fun DailyLedgerScreen(
         if (entry.note.isNotBlank()) add("Note" to entry.note)
       },
       onDismiss = { sheetEntry = null },
+      extraContent = if (isSheetTabOwned) {
+        { SarimCallout(SarimLinkEngine.tabEntryNotice(entry), palette.cyan) }
+      } else null,
       extraActionLabel = "Copy Voucher",
       extraActionIcon = Icons.Rounded.ContentCopy,
       onExtraAction = {
@@ -686,31 +794,35 @@ fun DailyLedgerScreen(
         clipboardManager.setText(AnnotatedString(voucher))
         viewModel.postStatus("Voucher copied")
       },
-      onEdit = {
-        editingId = entry.id
-        entryType = entry.type
-        dateEpoch = entry.dateEpoch
-        amountText = entry.amount.toString()
-        modeText = entry.mode
-        toModeText = entry.toMode
-        partyText = entry.party
-        refText = entry.refNo
-        noteText = entry.note
-        selectedCategory = entry.category
-        selectedScope = entry.scope.ifBlank { "Business" }
+      onEdit = if (isSheetTabOwned) null else {
+        {
+          editingId = entry.id
+          entryType = entry.type
+          dateEpoch = entry.dateEpoch
+          amountText = entry.amount.toString()
+          modeText = entry.mode
+          toModeText = entry.toMode
+          partyText = entry.party
+          refText = entry.refNo
+          noteText = entry.note
+          selectedCategory = entry.category
+          selectedScope = entry.scope.ifBlank { "Business" }
+        }
       },
-      onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = "Delete Ledger Entry",
-            body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
-            tone = DialogTone.PERMANENT,
-            confirmLabel = "Delete",
-            onConfirm = {
-              ledgerViewModel.deleteEntry(entry.id)
-            },
+      onDelete = if (isSheetTabOwned) null else {
+        {
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Delete Ledger Entry",
+              body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
+              tone = DialogTone.PERMANENT,
+              confirmLabel = "Delete",
+              onConfirm = {
+                ledgerViewModel.deleteEntry(entry.id)
+              },
+            )
           )
-        )
+        }
       },
     )
   }

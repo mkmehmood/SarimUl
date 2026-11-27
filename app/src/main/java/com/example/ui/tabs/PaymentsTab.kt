@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.PaymentTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -227,22 +228,30 @@ fun PaymentsTab(
       // 3. CASH IN HAND TRACKER
       item {
         val cutoff = SarimMetricsEngine.periodStart(trackerPeriod)
-        val salesCash = state.sales.filter { it.dateEpoch >= cutoff && !it.isRepSale && it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue }
-        val calcCash = state.settlements.filter { it.dateEpoch >= cutoff }.sumOf { it.receivedCash }
-        val payIn = state.paymentTransactions.filter { it.dateEpoch >= cutoff && it.type == "PAYMENT_IN" }.sumOf { it.amount }
-        val payOut = state.paymentTransactions.filter { it.dateEpoch >= cutoff && it.type == "PAYMENT_OUT" }.sumOf { it.amount }
-        val exps = state.paymentTransactions.filter { it.dateEpoch >= cutoff && it.type == "EXPENSE" }.sumOf { it.amount }
-        val netCash = salesCash + calcCash + payIn - payOut - exps
+        val breakdown = SarimLinkEngine.computeCashInHandBreakdown(
+          sales = state.sales,
+          settlements = state.settlements,
+          payments = state.paymentTransactions,
+          factoryBatches = state.factoryBatches,
+          cutoffEpoch = cutoff,
+        )
 
         SarimCard {
           Text("CASH IN HAND TRACKER", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.8.sp)
           SarimToggleGroup(TimePeriod.entries, trackerPeriod, { it.label }, { trackerPeriod = it })
-          HealthLine("Sales Tab Cash", SarimFormat.formatRs(salesCash), palette.green)
-          HealthLine("Calculator Cash", SarimFormat.formatRs(calcCash), palette.green)
-          HealthLine("Payments In", SarimFormat.formatRs(payIn), palette.green)
-          HealthLine("Payments Out", SarimFormat.formatRs(payOut), palette.red)
-          HealthLine("Expenses", SarimFormat.formatRs(exps), palette.red)
-          HealthLine("NET CASH", SarimFormat.formatRs(netCash), if (netCash >= 0) palette.green else palette.red, bold = true)
+          HealthLine("Sales Tab Cash", SarimFormat.formatRs(breakdown.salesCash), palette.green)
+          HealthLine("Collections Cash", SarimFormat.formatRs(breakdown.collectionsCash), palette.green)
+          HealthLine("Calculator Cash", SarimFormat.formatRs(breakdown.calcCash), palette.green)
+          HealthLine("Payments In", SarimFormat.formatRs(breakdown.paymentInCash), palette.green)
+          if (breakdown.moneyOutCash > 0.01) {
+            HealthLine("Customer Money Out", SarimFormat.formatRs(breakdown.moneyOutCash), palette.red)
+          }
+          HealthLine("Payments Out", SarimFormat.formatRs(breakdown.paymentOutCash), palette.red)
+          HealthLine("Expenses", SarimFormat.formatRs(breakdown.expensesCash), palette.red)
+          if (breakdown.factoryAdditionalCost > 0.01) {
+            HealthLine("Factory Extra Cost", SarimFormat.formatRs(breakdown.factoryAdditionalCost), palette.red)
+          }
+          HealthLine("NET CASH", SarimFormat.formatRs(breakdown.netCash), if (breakdown.netCash >= 0) palette.green else palette.red, bold = true)
         }
       }
 

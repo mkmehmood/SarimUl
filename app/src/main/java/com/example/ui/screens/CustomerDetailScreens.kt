@@ -36,6 +36,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.data.local.JsonCodecs
@@ -84,6 +86,7 @@ fun CustomerDetailsScreen(
   var selectedTxForSheet by remember { mutableStateOf<SaleTransactionEntity?>(null) }
   var expandedTxIds by remember { mutableStateOf(setOf<String>()) }
   var menuExpanded by remember { mutableStateOf(false) }
+  var showMoneyOutDialog by remember { mutableStateOf(false) }
 
   val filtered = remember(custSales, searchQuery, filterChip) {
     val q = searchQuery.trim().lowercase()
@@ -219,9 +222,8 @@ fun CustomerDetailsScreen(
       if (!isRep) {
         SarimSecondaryButton(
           text = "Money Out −",
-          onClick = {
-            viewModel.openStandalone(StandaloneScreen.DailyLedger)
-          },
+          onClick = { showMoneyOutDialog = true },
+          testTag = "cust_money_out_btn",
         )
       }
     }
@@ -439,6 +441,88 @@ fun CustomerDetailsScreen(
           },
         )
         Spacer(Modifier.height(16.dp))
+      }
+    }
+  }
+
+  if (showMoneyOutDialog) {
+    var moDateEpoch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var moAmountText by remember { mutableStateOf("") }
+    var moNote by remember { mutableStateOf("") }
+    var moAddToLedger by remember { mutableStateOf(true) }
+    Dialog(
+      onDismissRequest = { showMoneyOutDialog = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+      Surface(
+        modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 460.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = palette.surface,
+        border = BorderStroke(1.dp, palette.red.copy(alpha = 0.45f)),
+      ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text("Money Out — ${customer.name}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+          Text(
+            "Cash payout/refund to customer increases their owed balance and optionally logs to Daily Ledger.",
+            color = palette.textMuted,
+            fontSize = 12.sp,
+          )
+          SarimDatePickerField(
+            label = "Date",
+            dateEpoch = moDateEpoch,
+            onDateSelected = { moDateEpoch = it },
+            testTag = "mo_date",
+          )
+          SarimTextField(
+            value = moAmountText,
+            onValueChange = { moAmountText = it },
+            label = "Amount",
+            placeholder = "0.00",
+            prefixText = "Rs",
+            keyboardType = KeyboardType.Decimal,
+            testTag = "mo_amount",
+          )
+          SarimTextField(
+            value = moNote,
+            onValueChange = { moNote = it },
+            label = "Note / Remarks",
+            placeholder = "Optional payout note...",
+            maxLength = 120,
+            testTag = "mo_note",
+          )
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Add to Daily Ledger", color = palette.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Switch(checked = moAddToLedger, onCheckedChange = { moAddToLedger = it })
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SarimSecondaryButton("Cancel", onClick = { showMoneyOutDialog = false }, modifier = Modifier.weight(1f))
+            SarimPrimaryButton(
+              text = "Record Payout",
+              onClick = {
+                val amt = SarimFormat.parseSafeDouble(moAmountText)
+                if (amt == null || amt <= 0.0) {
+                  viewModel.postStatus("Enter a valid positive amount")
+                  return@SarimPrimaryButton
+                }
+                viewModel.recordCustomerMoneyOut(
+                  customer = customer,
+                  dateEpoch = moDateEpoch,
+                  amount = amt,
+                  note = moNote.trim(),
+                  addToLedger = moAddToLedger,
+                ) {
+                  showMoneyOutDialog = false
+                }
+              },
+              modifier = Modifier.weight(1f),
+              testTag = "mo_save_btn",
+            )
+          }
+        }
       }
     }
   }
