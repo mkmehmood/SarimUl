@@ -135,8 +135,10 @@ fun RepSalesTab(
           SarimFieldLabel("Payment Type")
           SarimToggleGroup(RepPayType.entries, payType, { it.label }, { payType = it }, colorOf = { if (it == RepPayType.CASH) palette.green else palette.amber })
         } else {
-          SarimTextField(amountReceivedText, { amountReceivedText = it }, "Amount Received (₨)", placeholder = "Cash received from customer", prefixText = "Rs", keyboardType = KeyboardType.Decimal)
-          SarimTextField(expiredQtyText, { expiredQtyText = it }, "Expired / Damage Qty (kg)", placeholder = "0", suffixText = "kg", keyboardType = KeyboardType.Decimal)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            SarimTextField(amountReceivedText, { amountReceivedText = it }, "Amount Received (₨)", modifier = Modifier.weight(1f), placeholder = "0.00", prefixText = "Rs", keyboardType = KeyboardType.Decimal)
+            SarimTextField(expiredQtyText, { expiredQtyText = it }, "Expired / Damage Qty (kg)", modifier = Modifier.weight(1f), placeholder = "0", suffixText = "kg", keyboardType = KeyboardType.Decimal)
+          }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
           Text(if (mode == RepTxMode.SALE) "Transaction Value:" else "Amount Collected:", color = palette.textMuted, fontSize = 13.sp)

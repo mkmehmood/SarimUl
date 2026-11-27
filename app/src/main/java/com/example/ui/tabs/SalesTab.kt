@@ -33,6 +33,8 @@ import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
 import com.example.data.repository.SarimLinkEngine
+import com.example.data.repository.SarimStockCheck
+import com.example.data.repository.StockTone
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -120,7 +122,15 @@ fun SalesTab(
 
   val store = state.stores.firstOrNull { it.storeKey == selectedStoreKey } ?: state.stores.firstOrNull()
   val storeStock = store?.let { snap?.storeMetrics?.get(it.storeKey) }
-  val inStockKg = storeStock?.remainingKg ?: 0.0
+  // Per-store, per-day stock exactly like the web app: what this store produced / got back on the
+  // selected date, minus what it already sold that date (the sale being edited is excluded).
+  val dateKey = SarimFormat.dateInput(dateEpoch)
+  val daySnap = remember(store?.storeKey, dateKey, state.productionEntries, state.sales, state.settlements, state.stockTransfers, editingSaleId) {
+    store?.let {
+      SarimStockCheck.snapshot(it.storeKey, dateKey, state.productionEntries, state.sales, state.settlements, state.stockTransfers, editingSaleId)
+    }
+  }
+  val inStockKg = daySnap?.availableKg ?: 0.0
   val unitCostKg = storeStock?.avgCostPerKg ?: 0.0
   val unitPriceKg = matchedCustomer?.customSalePrice ?: repPriceContact?.customSalePrice ?: (store?.salePricePerKg ?: 400.0)
 
@@ -128,7 +138,7 @@ fun SalesTab(
   val totalValue = qtyNum * unitPriceKg
   val totalCost = qtyNum * unitCostKg
   val profit = totalValue - totalCost
-  val overStock = mode == SalesMode.SALE && qtyNum > inStockKg && qtyNum > 0.0
+  val overStock = mode == SalesMode.SALE && qtyNum > 0.0 && qtyNum - inStockKg > 1e-6
 
   val repOptions = remember(snap?.repsList) { listOf("Direct") + (snap?.repsList ?: emptyList()) }
   val reconciledReturns = remember(state.settlements) { SarimLinkEngine.reconciledRepReturnIds(state.settlements) }
@@ -333,7 +343,12 @@ fun SalesTab(
               SarimStatTile("Profit", SarimFormat.formatRs(profit, false, hideMoney), Modifier.weight(1f), palette.emerald)
             }
 
-            val stockTone = if (overStock || inStockKg <= 0.0) palette.red else palette.green
+            val tileTone = SarimStockCheck.tone(inStockKg, qtyNum)
+            val stockTone = when (tileTone) {
+              StockTone.SHORT -> palette.red
+              StockTone.LOW -> palette.amber
+              StockTone.OK -> palette.green
+            }
             Surface(
               shape = RoundedCornerShape(16.dp),
               color = stockTone.copy(alpha = 0.1f),
@@ -342,18 +357,18 @@ fun SalesTab(
             ) {
               Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                  Text("In Stock: ${SarimFormat.formatKg(inStockKg)}", color = stockTone, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                  SarimChip(if (overStock) "Exceeds stock" else if (inStockKg > 0) "Ready to sell" else "Out of stock", stockTone)
+                  Text("In Stock: ${SarimFormat.formatKg(inStockKg.coerceAtLeast(0.0))}", color = stockTone, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                  SarimChip(SarimStockCheck.note(inStockKg, qtyNum), stockTone)
                 }
                 LinearProgressIndicator(
-                  progress = { if (inStockKg <= 0.0) 0f else ((inStockKg - qtyNum) / inStockKg).toFloat().coerceIn(0f, 1f) },
+                  progress = { SarimStockCheck.usedFraction(inStockKg, qtyNum) },
                   modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
                   color = stockTone,
                   trackColor = palette.surfaceElevated,
                 )
-                if (showStockDetails && storeStock != null) {
+                if (showStockDetails && daySnap != null) {
                   Text(
-                    "Produced: ${SarimFormat.formatKg(storeStock.producedKg)} · Sold: ${SarimFormat.formatKg(storeStock.soldKg)}",
+                    "Produced: ${SarimFormat.formatKg(daySnap.producedKg)} · Returned: ${SarimFormat.formatKg(daySnap.returnsKg + daySnap.transferInKg)} · Sold: ${SarimFormat.formatKg(daySnap.soldKg + daySnap.transferOutKg)}",
                     color = palette.textMuted,
                     fontSize = 11.5.sp,
                   )
@@ -376,24 +391,28 @@ fun SalesTab(
             val expPlan = SarimLinkEngine.planGoodsCredit(expQty, expUnitPrice, (currentDebt - amtRec).coerceAtLeast(0.0))
             val afterDebt = currentDebt - amtRec - expPlan.value
 
-            SarimTextField(
-              value = amountReceivedText,
-              onValueChange = { amountReceivedText = it },
-              label = "Amount Received (₨)",
-              placeholder = "Cash received from customer",
-              prefixText = "Rs",
-              keyboardType = KeyboardType.Decimal,
-              testTag = "cust_amount_collected",
-            )
-            SarimTextField(
-              value = expiredQtyText,
-              onValueChange = { expiredQtyText = it },
-              label = "Expired / Damage Qty (kg)",
-              placeholder = "0",
-              suffixText = "kg",
-              keyboardType = KeyboardType.Decimal,
-              testTag = "cust_expired_qty",
-            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+              SarimTextField(
+                value = amountReceivedText,
+                onValueChange = { amountReceivedText = it },
+                label = "Amount Received (₨)",
+                placeholder = "0.00",
+                prefixText = "Rs",
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f),
+                testTag = "cust_amount_collected",
+              )
+              SarimTextField(
+                value = expiredQtyText,
+                onValueChange = { expiredQtyText = it },
+                label = "Expired / Damage Qty (kg)",
+                placeholder = "0",
+                suffixText = "kg",
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f),
+                testTag = "cust_expired_qty",
+              )
+            }
             if (expQty > 0.0) {
               SarimCallout(
                 "Expired goods credit: ${SarimFormat.formatRs(expPlan.value, true, hideMoney)} (@ ${SarimFormat.formatRs(expUnitPrice)}/kg) → moves to CHORA",
@@ -480,6 +499,13 @@ fun SalesTab(
                 }
                 if (qtyNum !in 0.001..1_000_000.0) {
                   viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimPrimaryButton
+                }
+                val stockIssue = daySnap?.let {
+                  SarimStockCheck.blockingIssue(store.name, SarimFormat.formatDate(dateEpoch), it, qtyNum)
+                }
+                if (stockIssue != null) {
+                  viewModel.showDialog(AppDialogRequest(stockIssue.first, stockIssue.second, tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
                 val effPayment = if (isRepSelected) PaymentChoice.CREDIT else paymentChoice

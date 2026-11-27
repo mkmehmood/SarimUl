@@ -263,22 +263,25 @@ fun DailyLedgerScreen(
         testTagPrefix = "dl_type",
       )
 
-      SarimDatePickerField(
-        label = "Date",
-        dateEpoch = dateEpoch,
-        onDateSelected = { dateEpoch = it },
-        testTag = "dl_date",
-      )
-
-      SarimTextField(
-        value = amountText,
-        onValueChange = { amountText = it },
-        label = "Amount",
-        placeholder = "0.00",
-        prefixText = "Rs",
-        keyboardType = KeyboardType.Decimal,
-        testTag = "dl_amount",
-      )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        SarimDatePickerField(
+          label = "Date",
+          dateEpoch = dateEpoch,
+          onDateSelected = { dateEpoch = it },
+          modifier = Modifier.weight(1f),
+          testTag = "dl_date",
+        )
+        SarimTextField(
+          value = amountText,
+          onValueChange = { amountText = it },
+          label = "Amount",
+          placeholder = "0.00",
+          prefixText = "Rs",
+          keyboardType = KeyboardType.Decimal,
+          modifier = Modifier.weight(1f),
+          testTag = "dl_amount",
+        )
+      }
 
       SarimSearchFieldWithDropdown(
         value = modeText,

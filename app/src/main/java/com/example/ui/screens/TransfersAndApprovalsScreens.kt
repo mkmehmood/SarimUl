@@ -71,21 +71,25 @@ fun StockTransferScreen(
         onSelect = { idx, _ -> toIndex = idx },
         testTag = "stockTransferToBtn",
       )
-      SarimDatePickerField(
-        label = "Date",
-        dateEpoch = dateEpoch,
-        onDateSelected = { dateEpoch = it },
-        testTag = "stock_transfer_date",
-      )
-      SarimTextField(
-        value = qtyText,
-        onValueChange = { qtyText = it },
-        label = "Quantity (kg)",
-        placeholder = "0.00",
-        suffixText = "kg",
-        keyboardType = KeyboardType.Decimal,
-        testTag = "stock_transfer_qty",
-      )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        SarimDatePickerField(
+          label = "Date",
+          dateEpoch = dateEpoch,
+          onDateSelected = { dateEpoch = it },
+          modifier = Modifier.weight(1f),
+          testTag = "stock_transfer_date",
+        )
+        SarimTextField(
+          value = qtyText,
+          onValueChange = { qtyText = it },
+          label = "Quantity (kg)",
+          placeholder = "0.00",
+          suffixText = "kg",
+          keyboardType = KeyboardType.Decimal,
+          modifier = Modifier.weight(1f),
+          testTag = "stock_transfer_qty",
+        )
+      }
       SarimTextField(
         value = noteText,
         onValueChange = { noteText = it },
@@ -276,22 +280,25 @@ fun PaymentTransferScreen(
         testTag = "payment_transfer_to_search",
       )
 
-      SarimDatePickerField(
-        label = "Date",
-        dateEpoch = dateEpoch,
-        onDateSelected = { dateEpoch = it },
-        testTag = "payment_transfer_date",
-      )
-
-      SarimTextField(
-        value = amountText,
-        onValueChange = { amountText = it },
-        label = "Amount",
-        placeholder = "0.00",
-        prefixText = "Rs",
-        keyboardType = KeyboardType.Decimal,
-        testTag = "payment_transfer_amount",
-      )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        SarimDatePickerField(
+          label = "Date",
+          dateEpoch = dateEpoch,
+          onDateSelected = { dateEpoch = it },
+          modifier = Modifier.weight(1f),
+          testTag = "payment_transfer_date",
+        )
+        SarimTextField(
+          value = amountText,
+          onValueChange = { amountText = it },
+          label = "Amount",
+          placeholder = "0.00",
+          prefixText = "Rs",
+          keyboardType = KeyboardType.Decimal,
+          modifier = Modifier.weight(1f),
+          testTag = "payment_transfer_amount",
+        )
+      }
 
       SarimTextField(
         value = noteText,

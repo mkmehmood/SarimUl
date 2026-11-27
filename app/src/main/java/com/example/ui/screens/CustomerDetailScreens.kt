@@ -493,21 +493,25 @@ fun CustomerDetailsScreen(
             color = palette.textMuted,
             fontSize = 12.sp,
           )
-          SarimDatePickerField(
-            label = "Date",
-            dateEpoch = moDateEpoch,
-            onDateSelected = { moDateEpoch = it },
-            testTag = "mo_date",
-          )
-          SarimTextField(
-            value = moAmountText,
-            onValueChange = { moAmountText = it },
-            label = "Amount",
-            placeholder = "0.00",
-            prefixText = "Rs",
-            keyboardType = KeyboardType.Decimal,
-            testTag = "mo_amount",
-          )
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            SarimDatePickerField(
+              label = "Date",
+              dateEpoch = moDateEpoch,
+              onDateSelected = { moDateEpoch = it },
+              modifier = Modifier.weight(1f),
+              testTag = "mo_date",
+            )
+            SarimTextField(
+              value = moAmountText,
+              onValueChange = { moAmountText = it },
+              label = "Amount",
+              placeholder = "0.00",
+              prefixText = "Rs",
+              keyboardType = KeyboardType.Decimal,
+              modifier = Modifier.weight(1f),
+              testTag = "mo_amount",
+            )
+          }
           SarimTextField(
             value = moNote,
             onValueChange = { moNote = it },

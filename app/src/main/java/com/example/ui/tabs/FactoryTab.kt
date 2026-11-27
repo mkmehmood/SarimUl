@@ -141,18 +141,25 @@ fun FactoryTab(
         SarimFieldLabel("Formula")
         FormulaChoice(entryFormulas, selectedFormula) { selectedFormulaId = it.id }
 
-        SarimTextField(
-          value = unitsText,
-          onValueChange = { unitsText = it.filter { ch -> ch.isDigit() } },
-          label = "Units to Produce",
-          keyboardType = KeyboardType.Number,
-          testTag = "factory_production_units",
-        )
-
-        SarimCallout(
-          text = "Total Cost: ${SarimFormat.formatRs(batchTotalCost, true, hideMoney)}",
-          toneColor = palette.red,
-        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+          SarimTextField(
+            value = unitsText,
+            onValueChange = { unitsText = it.filter { ch -> ch.isDigit() } },
+            label = "Units to Produce",
+            keyboardType = KeyboardType.Number,
+            modifier = Modifier.weight(1f),
+            testTag = "factory_production_units",
+          )
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SarimFieldLabel("Total Cost")
+            SarimCallout(
+              text = SarimFormat.formatRs(batchTotalCost, true, hideMoney),
+              toneColor = palette.red,
+              icon = null,
+              modifier = Modifier.defaultMinSize(minHeight = 56.dp),
+            )
+          }
+        }
 
         // Formula preview (flattened through sub-formulas, live cost + stock check, like the web tab)
         Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
