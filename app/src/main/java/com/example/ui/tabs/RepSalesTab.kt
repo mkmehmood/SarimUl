@@ -306,36 +306,26 @@ fun RepSalesTab(
           }
         }
         SarimTextField(value = custFilter, onValueChange = { custFilter = it }, label = "", placeholder = "Search customers...", leadingIcon = Icons.Rounded.Search)
-        if (filtered.isEmpty()) {
-          SarimEmptyState("No customers yet", "Save a rep transaction or tap + to add a rep customer.")
-        } else {
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            filtered.forEach { c ->
-              Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.surfaceElevated,
-                border = BorderStroke(1.dp, palette.border),
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
-                  viewModel.openStandalone(StandaloneScreen.RepCustomerDetails(c.id))
-                },
-              ) {
-                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                  InitialsAvatar(c.name, avatarColorForName(c.name), badgeText = c.ledgerPage)
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(c.name.uppercase(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    Text(c.phone.ifBlank { "No phone" }, color = palette.textMuted, fontSize = 11.5.sp)
-                  }
-                  Text(SarimFormat.formatRs(c.currentCredit), color = if (c.currentCredit > 0) palette.amber else palette.green, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
-                }
-              }
-            }
-          }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimStatTile("Outstanding credit", SarimFormat.formatRs(repCustomers.sumOf { it.currentCredit }, false), Modifier.weight(1f), palette.amber)
-          SarimStatTile("Credit sales", SarimFormat.formatRs(repCustomers.sumOf { it.totalSaleValue }, false), Modifier.weight(1f), palette.cyan)
-          SarimStatTile("Collections", SarimFormat.formatRs(repCustomers.sumOf { it.totalReceived }, false), Modifier.weight(1f), palette.green)
-        }
+        SarimRecordTable(
+          rows = filtered.map { c ->
+            RecordRow(
+              key = c.id,
+              name = c.name.uppercase(),
+              avatarBadge = c.ledgerPage,
+              details = listOf(RecordDetail(c.phone.ifBlank { "No phone" })),
+              amount = SarimFormat.formatRs(c.currentCredit),
+              amountColor = if (c.currentCredit > 1.0) palette.amber else palette.emerald,
+              onClick = { viewModel.openStandalone(StandaloneScreen.RepCustomerDetails(c.id)) },
+            )
+          },
+          stats = listOf(
+            RecordStat("Outstanding credit", SarimFormat.formatRs(repCustomers.sumOf { it.currentCredit }, false), palette.red),
+            RecordStat("Credit sales", SarimFormat.formatRs(repCustomers.sumOf { it.totalSaleValue }, false)),
+            RecordStat("Collections", SarimFormat.formatRs(repCustomers.sumOf { it.totalReceived }, false), palette.emerald),
+          ),
+          emptyTitle = if (custFilter.isBlank()) "No customers yet" else "No customers match your search",
+          emptyHint = if (custFilter.isBlank()) "Save a rep transaction or tap + to add a rep customer." else "Try a different name.",
+        )
       }
     }
 

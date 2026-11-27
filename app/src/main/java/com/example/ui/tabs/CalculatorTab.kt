@@ -286,21 +286,26 @@ fun CalculatorTab(
       val commPerUnit = SarimFormat.parseSafeDouble(commissionPerUnitText) ?: 0.0
       val grossCommission = SarimLinkEngine.round2(netSoldKg * commPerUnit)
       val commPaidTotal = SarimLinkEngine.round2(commissionItems.sumOf { it.amount })
-      val commPayable = SarimLinkEngine.round2(grossCommission - commPaidTotal)
+      // Web parity: payable never goes below zero.
+      val commPayable = SarimLinkEngine.round2((grossCommission - commPaidTotal).coerceAtLeast(0.0))
       val recoveredNum = SarimFormat.parseSafeDouble(recoveredCreditText) ?: 0.0
       val fieldExpTotal = SarimLinkEngine.round2(expenseItems.sumOf { it.amount })
-      val expectedCash = SarimLinkEngine.round2(grossRevenue - creditValue + recoveredNum - fieldExpTotal - commPaidTotal)
+      // Web parity (calculateSales): cash quantity is never negative.
+      val cashQtyKg = (netSoldKg - creditQtyNum).coerceAtLeast(0.0)
+      val expectedCash = SarimLinkEngine.round2(cashQtyKg * avgUnitPrice + recoveredNum - fieldExpTotal - commPaidTotal)
       val receivedNum = SarimFormat.parseSafeDouble(receivedCashText) ?: 0.0
       val cashDiff = SarimLinkEngine.round2(receivedNum - expectedCash)
+      // Web parity: 0.01 tolerance; "over" is shown in the same tone as a perfect match.
       val statusLabel = when {
-        abs(cashDiff) <= 1.0 -> "OK"
+        abs(cashDiff) < 0.01 -> "OK"
         cashDiff < 0 -> "Short"
         else -> "Over"
       }
-      val statusColor = when (statusLabel) {
-        "OK" -> palette.green
-        "Short" -> palette.red
-        else -> palette.amber
+      val statusColor = if (statusLabel == "Short") palette.red else palette.green
+      val statusText = when (statusLabel) {
+        "OK" -> "PERFECT MATCH"
+        "Short" -> "SHORT: ${SarimFormat.formatRs(abs(cashDiff), false, hideMoney)}"
+        else -> "OVER: ${SarimFormat.formatRs(abs(cashDiff), false, hideMoney)}"
       }
 
       item {
@@ -415,18 +420,14 @@ fun CalculatorTab(
           }
           SarimTextField(receivedCashText, { receivedCashText = it }, "Physical Cash Received from Rep", prefixText = "Rs", keyboardType = KeyboardType.Decimal, testTag = "calc_received_cash")
 
-          // Result Card
+          // Result box (web: #calc-result-card) — one labelled line per value.
           Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Expected Cash: ${SarimFormat.formatRs(expectedCash, true, hideMoney)}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                SarimChip("$statusLabel ${if (statusLabel != "OK") SarimFormat.formatRs(abs(cashDiff), false, hideMoney) else ""}".trim(), statusColor)
-              }
-              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SarimStatTile("Gross Comm", SarimFormat.formatRs(grossCommission, false, hideMoney), Modifier.weight(1f), palette.cyan)
-                SarimStatTile("Paid", SarimFormat.formatRs(commPaidTotal, false, hideMoney), Modifier.weight(1f), palette.amber)
-                SarimStatTile("Payable", SarimFormat.formatRs(commPayable, false, hideMoney), Modifier.weight(1f), palette.green)
-              }
+            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              CalcResultLine("Expected Cash:", SarimFormat.formatRs(expectedCash, true, hideMoney), palette.cyan)
+              CalcResultLine("Status:", statusText, statusColor)
+              CalcResultLine("Gross Commission Earned:", SarimFormat.formatRs(grossCommission, false, hideMoney), palette.cyan)
+              CalcResultLine("Commission Paid:", SarimFormat.formatRs(commPaidTotal, false, hideMoney), palette.red)
+              CalcResultLine("Commission Payable:", SarimFormat.formatRs(commPayable, false, hideMoney), if (commPayable <= 0.01) palette.green else palette.red)
             }
           }
 
@@ -470,6 +471,10 @@ fun CalculatorTab(
               }
               if (creditQtyNum < 0.0 || recoveredNum < 0.0 || receivedNum < 0.0 || fieldExpTotal < 0.0 || commPerUnit < 0.0 || commPaidTotal < 0.0) {
                 viewModel.showDialog(AppDialogRequest("Invalid Amount", "Credit, cash, expense, and commission fields cannot be negative.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (recoveredNum > 10_000_000_000.0 || receivedNum > 10_000_000_000.0 || fieldExpTotal > 10_000_000_000.0 || commPaidTotal > 10_000_000_000.0) {
+                viewModel.showDialog(AppDialogRequest("Amount Too Large", "An amount is too large. Please check the cash, expense and commission fields.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
               if (commPerUnit > 100_000.0) {
@@ -972,5 +977,14 @@ private fun LineItemsPopupDialog(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun CalcResultLine(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color) {
+  val palette = LocalSarimPalette.current
+  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+    Text(label, color = palette.textMuted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+    Text(value, color = valueColor, style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.ExtraBold))
   }
 }

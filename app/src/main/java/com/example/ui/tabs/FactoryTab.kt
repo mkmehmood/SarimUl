@@ -212,34 +212,32 @@ fun FactoryTab(
               if (s == invSort) invAsc = !invAsc else { invSort = s; invAsc = true }
             },
           )
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            sortedMats.forEach { mat ->
+          SarimRecordTable(
+            rows = sortedMats.map { mat ->
               val totalVal = mat.stockKg * mat.avgCostPerKg
               val unitsCount = if (mat.conversionFactorKg > 0.001) mat.stockKg / mat.conversionFactorKg else mat.stockKg
-              Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.surfaceElevated,
-                border = BorderStroke(1.dp, palette.border),
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .clip(RoundedCornerShape(16.dp))
-                  .clickable { viewModel.openStandalone(StandaloneScreen.AddRawMaterial(mat.id)) },
-              ) {
-                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(mat.name.uppercase(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text("${SarimFormat.formatQty(unitsCount, 2)} ${mat.unitName} (${SarimFormat.formatKg(mat.stockKg)})", color = palette.cyan, fontSize = 11.5.sp)
-                    Text("Collected ${SarimFormat.formatKg(mat.collectedKg)}", color = palette.textMuted, fontSize = 11.sp)
-                  }
-                  Text(SarimFormat.formatRs(totalVal, true, hideMoney), color = palette.green, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
-                }
-              }
-            }
-          }
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Total collected weight", SarimFormat.formatKg(state.rawMaterials.sumOf { it.collectedKg }), Modifier.weight(1f), palette.cyan)
-            SarimStatTile("Total inventory value", SarimFormat.formatRs(state.rawMaterials.sumOf { it.stockKg * it.avgCostPerKg }, true, hideMoney), Modifier.weight(1f), palette.green)
-          }
+              val out = mat.stockKg <= 0.0
+              RecordRow(
+                key = mat.id,
+                name = mat.name,
+                showAvatar = false,
+                flag = if (out) "Out of stock" else null,
+                details = listOf(
+                  RecordDetail("${SarimFormat.formatQty(unitsCount, 2)} ${mat.unitName} (${SarimFormat.formatKg(mat.stockKg)})", color = palette.textPrimary, bold = true),
+                  RecordDetail("Collected ${SarimFormat.formatKg(mat.collectedKg)}"),
+                ),
+                amount = SarimFormat.formatRs(totalVal, true, hideMoney),
+                amountColor = if (out) palette.red else palette.textPrimary,
+                onClick = { viewModel.openStandalone(StandaloneScreen.AddRawMaterial(mat.id)) },
+              )
+            },
+            stats = listOf(
+              RecordStat("Total collected weight", SarimFormat.formatKg(state.rawMaterials.sumOf { it.collectedKg })),
+              RecordStat("Total inventory value", SarimFormat.formatRs(state.rawMaterials.sumOf { it.stockKg * it.avgCostPerKg }, true, hideMoney)),
+            ),
+            emptyTitle = "No raw materials yet",
+            emptyHint = "Add a material from the menu to start tracking stock.",
+          )
         }
       }
 

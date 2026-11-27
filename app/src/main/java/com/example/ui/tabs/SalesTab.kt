@@ -625,70 +625,46 @@ fun SalesTab(
           leadingIcon = Icons.Rounded.Search,
           testTag = "customer_filter",
         )
-        if (filteredCusts.isEmpty()) {
-          SarimEmptyState("No customers yet", "Add a customer or save a sale to create one.")
-        } else {
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            filteredCusts.forEach { c ->
-              val avColor = avatarColorForName(c.name)
-              Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.surfaceElevated,
-                border = BorderStroke(1.dp, palette.border),
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .clip(RoundedCornerShape(16.dp))
-                  .clickable { viewModel.openStandalone(StandaloneScreen.CustomerDetails(c.id)) },
-              ) {
-                Row(
-                  modifier = Modifier.padding(10.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                  InitialsAvatar(c.name, avColor, sizeDp = 40.dp, badgeText = c.ledgerPage)
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(c.name.uppercase(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    if (c.phone.isNotBlank()) {
-                      Text(
-                        text = c.phone,
-                        color = palette.green,
-                        fontSize = 12.sp,
-                        textDecoration = TextDecoration.Underline,
-                        modifier = Modifier.combinedClickable(
-                          onClick = {
-                            runCatching {
-                              val dial = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${c.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                              context.startActivity(dial)
-                            }.onFailure {
-                              viewModel.postStatus("No dialer app available")
-                            }
-                          },
-                          onLongClick = {
-                            runCatching {
-                              val wa = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${c.phone.filter { it.isDigit() || it == '+' }}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                              context.startActivity(wa)
-                            }.onFailure {
-                              viewModel.postStatus("WhatsApp or browser unavailable")
-                            }
-                          },
-                        ),
-                      )
-                    }
-                  }
-                  Text(
-                    SarimFormat.formatRs(c.currentCredit, true, hideMoney),
-                    color = if (c.currentCredit > 0.01) palette.amber else palette.green,
-                    style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold),
-                  )
-                }
-              }
-            }
-          }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimStatTile("Outstanding credit", SarimFormat.formatRs(directCustomers.sumOf { it.currentCredit }, true, hideMoney), Modifier.weight(1f), palette.amber)
-          SarimStatTile("Quantity sold", SarimFormat.formatKg(directCustomers.sumOf { it.totalQuantityKg }), Modifier.weight(1f), palette.cyan)
-        }
+        SarimRecordTable(
+          rows = filteredCusts.map { c ->
+            val owes = c.currentCredit > 0.01
+            RecordRow(
+              key = c.id,
+              name = c.name.uppercase(),
+              avatarBadge = c.ledgerPage,
+              details = if (c.phone.isNotBlank()) {
+                listOf(
+                  RecordDetail(
+                    text = c.phone,
+                    color = palette.green,
+                    underline = true,
+                    onClick = {
+                      runCatching {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${c.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                      }.onFailure { viewModel.postStatus("No dialer app available") }
+                    },
+                    onLongClick = {
+                      runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${c.phone.filter { it.isDigit() || it == '+' }}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                      }.onFailure { viewModel.postStatus("WhatsApp or browser unavailable") }
+                    },
+                  ),
+                )
+              } else {
+                listOf(RecordDetail("No phone"))
+              },
+              amount = SarimFormat.formatRs(c.currentCredit, true, hideMoney),
+              amountColor = if (owes) palette.red else palette.emerald,
+              onClick = { viewModel.openStandalone(StandaloneScreen.CustomerDetails(c.id)) },
+            )
+          },
+          stats = listOf(
+            RecordStat("Outstanding credit", SarimFormat.formatRs(directCustomers.sumOf { it.currentCredit }, true, hideMoney), palette.red),
+            RecordStat("Quantity sold", SarimFormat.formatKg(directCustomers.sumOf { it.totalQuantityKg })),
+          ),
+          emptyTitle = if (custSearchFilter.isBlank()) "No customers yet" else "No customers match your search",
+          emptyHint = if (custSearchFilter.isBlank()) "Add a customer or save a sale to create one." else "Try a different name.",
+        )
       }
     }
 
