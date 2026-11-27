@@ -116,6 +116,7 @@ object SarimMetricsEngine {
     accounts: List<AppAccountEntity>,
     overviewMonths: Int = 6,
     factoryBatches: List<FactoryBatchEntity> = emptyList(),
+    storedReps: List<String> = emptyList(),
   ): BusinessSnapshot {
     val now = System.currentTimeMillis()
     val cal = Calendar.getInstance().apply {
@@ -163,10 +164,15 @@ object SarimMetricsEngine {
     }
 
     val reps = (
-      accounts.filter { it.rolesCsv.contains("REP", ignoreCase = true) }.map { it.name } +
+      storedReps +
+        accounts.filter { it.approved && it.rolesCsv.contains("REP", ignoreCase = true) }.map { it.name } +
         settlements.map { it.repName } +
-        sales.map { it.repName }.filter { it.isNotBlank() && !it.equals("Direct", ignoreCase = true) }
-      ).distinct().sorted()
+        sales.map { it.repName }
+      )
+      .map { it.trim() }
+      .filter { it.isNotBlank() && !it.equals("Direct", ignoreCase = true) }
+      .distinctBy { it.uppercase() }
+      .sorted()
 
     val rangeSales = sales.filter { it.dateEpoch >= rangeStart && it.mode == "SALE" }
     val rangeProd = production.filter { it.dateEpoch >= rangeStart && !it.isReturn }

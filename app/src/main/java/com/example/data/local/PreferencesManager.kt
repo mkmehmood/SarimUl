@@ -7,12 +7,14 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.data.model.AccountSessionInfo
 import com.example.data.model.AppThemeMode
 import com.example.data.model.HapticIntensity
 import com.example.data.model.OverviewPanel
 import com.example.data.model.SoundIntensity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
@@ -28,6 +30,9 @@ data class UserPrefs(
   val lastSyncMillis: Long = 0L,
   val offlineModeActive: Boolean = false,
   val snippets: List<String> = emptyList(),
+  val cachedSessionJson: String = "",
+  val sessionStartMillis: Long = 0L,
+  val lastHandledYearCloseSignal: Long = 0L,
 )
 
 class PreferencesManager(private val context: Context) {
@@ -41,6 +46,9 @@ class PreferencesManager(private val context: Context) {
     val LAST_SYNC = longPreferencesKey("last_sync_millis")
     val OFFLINE_MODE = booleanPreferencesKey("offline_mode_active")
     val SNIPPETS = stringPreferencesKey("snippets_json")
+    val ACCOUNT_SESSION_JSON = stringPreferencesKey("account_session_json")
+    val SESSION_START_MILLIS = longPreferencesKey("session_start_millis")
+    val LAST_YEAR_CLOSE_SIGNAL = longPreferencesKey("last_year_close_signal")
   }
 
   val prefsFlow: Flow<UserPrefs> = context.dataStore.data
@@ -62,6 +70,9 @@ class PreferencesManager(private val context: Context) {
         lastSyncMillis = prefs[Keys.LAST_SYNC] ?: 0L,
         offlineModeActive = prefs[Keys.OFFLINE_MODE] ?: false,
         snippets = JsonCodecs.decodeStrings(prefs[Keys.SNIPPETS] ?: "[]"),
+        cachedSessionJson = prefs[Keys.ACCOUNT_SESSION_JSON] ?: "",
+        sessionStartMillis = prefs[Keys.SESSION_START_MILLIS] ?: 0L,
+        lastHandledYearCloseSignal = prefs[Keys.LAST_YEAR_CLOSE_SIGNAL] ?: 0L,
       )
     }
 
@@ -106,4 +117,36 @@ class PreferencesManager(private val context: Context) {
     val bounded = list.take(30).map { it.take(500) }
     context.dataStore.edit { it[Keys.SNIPPETS] = JsonCodecs.encodeStrings(bounded) }
   }
+
+  suspend fun saveAccountSession(info: AccountSessionInfo) {
+    context.dataStore.edit { prefs ->
+      prefs[Keys.ACCOUNT_SESSION_JSON] = info.toJson()
+      if (info.email.isNotBlank()) prefs[Keys.SAVED_EMAIL] = info.email
+    }
+  }
+
+  suspend fun readCachedAccountSession(): AccountSessionInfo? {
+    val json = prefsFlow.first().cachedSessionJson
+    return AccountSessionInfo.fromJson(json)
+  }
+
+  suspend fun clearAccountSession() {
+    context.dataStore.edit { prefs ->
+      prefs.remove(Keys.ACCOUNT_SESSION_JSON)
+      prefs.remove(Keys.SESSION_START_MILLIS)
+      prefs[Keys.OFFLINE_MODE] = false
+    }
+  }
+
+  suspend fun setSessionStartMillis(millis: Long) {
+    context.dataStore.edit { it[Keys.SESSION_START_MILLIS] = millis }
+  }
+
+  suspend fun getSessionStartMillis(): Long = prefsFlow.first().sessionStartMillis
+
+  suspend fun setLastHandledYearCloseSignal(ts: Long) {
+    context.dataStore.edit { it[Keys.LAST_YEAR_CLOSE_SIGNAL] = ts }
+  }
+
+  suspend fun getLastHandledYearCloseSignal(): Long = prefsFlow.first().lastHandledYearCloseSignal
 }

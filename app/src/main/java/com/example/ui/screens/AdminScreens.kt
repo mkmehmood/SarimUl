@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.RolesHelper
 import com.example.data.model.UserRole
 import com.example.data.repository.SarimSeedHelper
 import com.example.ui.components.*
@@ -50,6 +52,14 @@ fun AppAccountsScreen(
   var fullName by remember { mutableStateOf("") }
   var selectedRoles by remember { mutableStateOf(setOf(UserRole.REP)) }
 
+  LaunchedEffect(state.currentUid, state.isOnline) {
+    viewModel.refreshAccounts()
+  }
+
+  val wsRootUid = remember(state.workspaceOwnerUid, state.currentUid) {
+    state.workspaceOwnerUid?.takeIf { it.isNotBlank() } ?: state.currentUid
+  }
+
   Column(
     modifier = Modifier
       .fillMaxSize()
@@ -75,7 +85,10 @@ fun AppAccountsScreen(
         isPassword = true,
         passwordVisible = showPassword,
         trailingContent = {
-          IconButton(onClick = { showPassword = !showPassword }) {
+          IconButton(
+            onClick = { showPassword = !showPassword },
+            modifier = Modifier.minimumInteractiveComponentSize().testTag("acct_toggle_pwd_btn"),
+          ) {
             Icon(if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, contentDescription = "Toggle password", tint = palette.textMuted)
           }
         },
@@ -104,13 +117,16 @@ fun AppAccountsScreen(
               selectedRoles = if (active && selectedRoles.size > 1) selectedRoles - role else selectedRoles + role
             },
             label = { Text(role.label) },
-            modifier = Modifier.testTag("acct_role_${role.name.lowercase()}"),
+            modifier = Modifier
+              .minimumInteractiveComponentSize()
+              .testTag("acct_role_${role.name.lowercase()}"),
           )
         }
       }
 
       SarimPrimaryButton(
-        text = "Add Account",
+        text = if (state.isAccountActionBusy) "Working..." else "Add Account",
+        enabled = !state.isAccountActionBusy,
         testTag = "acct_add_btn",
         onClick = {
           val eClean = email.trim()
@@ -126,21 +142,17 @@ fun AppAccountsScreen(
             viewModel.showDialog(AppDialogRequest("Name Required", "Enter the person's full name.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
-            errorTitle = "Add Account Failed",
-            successMessage = "Added account ($eClean)",
-            onSuccess = {
+          viewModel.submitNewAccount(
+            email = eClean,
+            password = password,
+            name = fullName.trim(),
+            roles = selectedRoles,
+            onClearForm = {
               email = ""
               password = ""
               fullName = ""
             },
-          ) {
-            viewModel.repository.addAppAccount(
-              email = eClean,
-              name = fullName.trim(),
-              rolesCsv = selectedRoles.joinToString(",") { it.name },
-            )
-          }
+          )
         },
       )
     }
@@ -148,40 +160,93 @@ fun AppAccountsScreen(
     SarimCard {
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text("Registered Accounts (${state.accounts.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        SarimSecondaryButton(text = "↻ Refresh", icon = Icons.Rounded.Refresh, onClick = { viewModel.refreshDiagnostics() })
+        SarimSecondaryButton(
+          text = "Refresh",
+          icon = Icons.Rounded.Refresh,
+          testTag = "acct_refresh_btn",
+          onClick = { viewModel.refreshAccounts() },
+        )
       }
 
       if (state.accounts.isEmpty()) {
         SarimEmptyState("No accounts configured", "Add an account above to assign role permissions.")
       } else {
         state.accounts.forEach { acct ->
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+          val targetUid = acct.uid.ifBlank { acct.id }
+          val isOwner = targetUid == wsRootUid
+          val isSelf = targetUid == state.currentUid
+          val acctRoles = RolesHelper.parseRolesCsv(acct.rolesCsv)
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            Column(modifier = Modifier.weight(1f)) {
-              Text(acct.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-              Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
-              Text(acct.rolesCsv.replace(",", " · "), color = palette.cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-            }
-            IconButton(
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Remove Account",
-                    body = "Remove ${acct.name} (${acct.email})?",
-                    tone = DialogTone.PERMANENT,
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(errorTitle = "Delete Account Failed") {
-                        viewModel.repository.deleteAppAccount(acct.id)
-                      }
-                    },
-                  )
-                )
-              },
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-              Icon(Icons.Rounded.Delete, contentDescription = "Delete account", tint = palette.red)
+              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  Text(acct.name.ifBlank { acct.email }, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                  if (isOwner) SarimChip("Owner", palette.green)
+                  if (isSelf) SarimChip("You", palette.cyan)
+                  if (!acct.approved) SarimChip("Suspended", palette.red)
+                }
+                Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
+                Text(
+                  text = "Roles: ${RolesHelper.roleNames(acctRoles)}",
+                  color = palette.cyan,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.Medium,
+                )
+              }
+              if (!isOwner && !isSelf) {
+                IconButton(
+                  enabled = !state.isAccountActionBusy,
+                  onClick = { viewModel.toggleAccountSuspension(acct) },
+                  modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("acct_suspend_$targetUid"),
+                ) {
+                  Icon(
+                    imageVector = if (acct.approved) Icons.Rounded.Block else Icons.Rounded.CheckCircle,
+                    contentDescription = if (acct.approved) "Suspend account" else "Reinstate account",
+                    tint = if (acct.approved) palette.amber else palette.green,
+                  )
+                }
+                IconButton(
+                  enabled = !state.isAccountActionBusy,
+                  onClick = { viewModel.removeAccount(acct) },
+                  modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("acct_remove_$targetUid"),
+                ) {
+                  Icon(Icons.Rounded.Delete, contentDescription = "Remove account", tint = palette.red)
+                }
+              }
+            }
+
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              RolesHelper.ROLE_KEYS.forEach { roleKey ->
+                val active = roleKey in acctRoles
+                FilterChip(
+                  selected = active,
+                  enabled = !state.isAccountActionBusy,
+                  onClick = { viewModel.toggleAccountRole(acct, roleKey) },
+                  label = { Text(RolesHelper.ROLE_LABELS[roleKey] ?: roleKey, fontSize = 11.5.sp) },
+                  modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("acct_chip_${targetUid}_$roleKey"),
+                )
+              }
             }
           }
           HorizontalDivider(color = palette.border)
@@ -438,8 +503,7 @@ fun CloseFinancialYearScreen(
                   stageText = "Initializing…"; progress = 0.2f; delay(300)
                   stageText = "Exporting year-end snapshot…"; progress = 0.5f; delay(300)
                   stageText = "Compacting opening balances…"; progress = 0.8f
-                  compactedCount = viewModel.repository.closeFinancialYear()
-                  viewModel.refreshDiagnostics()
+                  compactedCount = viewModel.closeFinancialYearAndBroadcast()
                   progress = 1f
                   isProcessing = false
                   isComplete = true

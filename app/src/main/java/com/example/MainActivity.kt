@@ -33,6 +33,12 @@ class MainActivity : ComponentActivity() {
         initialValue = Firebase.auth.currentUser,
       )
 
+      LaunchedEffect(credentialManager) {
+        viewModel.registerSignOutHandler {
+          viewModel.syncManager.signOut(credentialManager, scope)
+        }
+      }
+
       LaunchedEffect(firebaseUser?.uid) {
         viewModel.onFirebaseAuthChanged(firebaseUser)
       }
@@ -46,6 +52,8 @@ class MainActivity : ComponentActivity() {
             AuthScreen(
               savedEmail = state.prefs.savedEmail,
               syncManager = viewModel.syncManager,
+              authErrorMessage = state.authErrorMessage,
+              onClearAuthError = { viewModel.clearAuthError() },
               onGoogleAuthSuccess = { viewModel.onFirebaseAuthChanged(Firebase.auth.currentUser) },
             )
           }

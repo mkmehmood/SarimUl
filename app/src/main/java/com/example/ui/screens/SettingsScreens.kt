@@ -27,10 +27,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.data.model.HapticIntensity
 import com.example.data.model.SoundIntensity
 import com.example.data.model.StandaloneScreen
+import com.example.data.remote.DbQuotaStats
 import com.example.ui.components.*
+import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
@@ -379,6 +383,7 @@ fun RecycleBinScreen(
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DatabaseStructureScreen(
   state: SarimUiState,
@@ -387,7 +392,11 @@ fun DatabaseStructureScreen(
   val palette = LocalSarimPalette.current
   val sections = listOf("Collections", "Config Docs", "Listeners", "Summary")
   var selectedSection by remember { mutableStateOf("Collections") }
-  LaunchedEffect(Unit) { viewModel.refreshDiagnostics() }
+  LaunchedEffect(Unit) { viewModel.refreshDiagnostics(includeCloudDiagnostics = true) }
+
+  val snap = state.dbStructureSnapshot
+  val collections = snap?.collections ?: state.dbStructure
+  val quota = snap?.dbStats ?: DbQuotaStats()
 
   Column(
     modifier = Modifier
@@ -396,13 +405,31 @@ fun DatabaseStructureScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-      Column {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Database Structure", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Text("${state.dbStructure.size} synced collections", color = palette.textMuted, fontSize = 12.sp)
+        FlowRow(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Text("${collections.size} synced collections", color = palette.textMuted, fontSize = 12.sp)
+          if (snap != null) {
+            SarimChip("Shard: ${snap.myDeviceShard}", palette.purple)
+            SarimChip("↑ ${snap.totalUploaded} / ↓ ${snap.totalDownloaded}", palette.cyan)
+          }
+        }
       }
-      IconButton(onClick = { viewModel.refreshDiagnostics() }) {
-        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh structure", tint = palette.cyan)
+      IconButton(
+        onClick = { viewModel.refreshDiagnostics(includeCloudDiagnostics = true) },
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("db_struct_refresh_btn"),
+      ) {
+        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh structure and cloud diagnostics", tint = palette.cyan)
       }
     }
 
@@ -416,67 +443,394 @@ fun DatabaseStructureScreen(
 
     when (selectedSection) {
       "Collections" -> {
-        if (state.dbStructure.isEmpty()) {
+        val readRatio = (quota.reads.toFloat() / 50_000f).coerceIn(0f, 1f)
+        val writeRatio = (quota.writes.toFloat() / 20_000f).coerceIn(0f, 1f)
+        val readTone = when {
+          quota.reads >= 48_000 -> palette.red
+          quota.reads >= 40_000 -> palette.amber
+          else -> palette.green
+        }
+        val writeTone = when {
+          quota.writes >= 19_000 -> palette.red
+          quota.writes >= 16_000 -> palette.amber
+          else -> palette.cyan
+        }
+
+        SarimCard(contentPadding = 12.dp, modifier = Modifier.testTag("db_quota_card")) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("24h Firestore Quota", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(
+              text = if (quota.lastReset > 0L) "Since ${SarimFormat.formatTime(quota.lastReset)}" else "Today",
+              color = palette.textMuted,
+              fontSize = 11.5.sp,
+              fontFamily = JetBrainsMonoFontFamily,
+            )
+          }
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text("Reads", color = palette.textMuted, fontSize = 12.sp)
+              Text(
+                "${quota.reads} / 50,000",
+                color = readTone,
+                style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+              )
+            }
+            LinearProgressIndicator(
+              progress = { readRatio },
+              modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+              color = readTone,
+              trackColor = palette.surfaceElevated,
+            )
+          }
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text("Writes", color = palette.textMuted, fontSize = 12.sp)
+              Text(
+                "${quota.writes} / 20,000",
+                color = writeTone,
+                style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+              )
+            }
+            LinearProgressIndicator(
+              progress = { writeRatio },
+              modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+              color = writeTone,
+              trackColor = palette.surfaceElevated,
+            )
+          }
+          if (snap != null && snap.deviceId.isNotBlank()) {
+            Text(
+              text = "Device ID: ${snap.deviceId} · Shard: ${snap.myDeviceShard}",
+              color = palette.textMuted,
+              fontSize = 11.sp,
+              fontFamily = JetBrainsMonoFontFamily,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+
+        if (collections.isEmpty()) {
           SarimEmptyState("Loading database structure…", "Inspecting Room tables and Firestore sync state.")
         } else {
-          state.dbStructure.forEach { col ->
-            SarimCard(contentPadding = 12.dp) {
-              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+          collections.forEach { col ->
+            val hasMismatch = col.fsCount != null && col.fsCount != col.activeCount
+            SarimCard(
+              contentPadding = 12.dp,
+              borderColor = if (hasMismatch) palette.amber.copy(alpha = 0.7f) else null,
+              modifier = Modifier.testTag("db_col_${col.name}"),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Row(
+                  modifier = Modifier.weight(1f),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
                   Text(col.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                  Text("Active: ${col.activeCount} · Deleted: ${col.deletedCount}", color = palette.textMuted, fontSize = 12.sp)
+                  SarimChip(
+                    text = if (col.hasLiveListener) "LIVE" else "SNAPSHOT",
+                    color = if (col.hasLiveListener) palette.cyan else palette.textMuted,
+                  )
+                  if (col.lockOnClose) {
+                    SarimChip("LOCKED ON CLOSE", palette.amber)
+                  }
                 }
                 SarimChip(
                   text = "${col.pendingSyncCount} pending",
                   color = if (col.pendingSyncCount > 0) palette.amber else palette.green,
                 )
               }
+
+              FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  "Active: ${col.activeCount} · Deleted: ${col.deletedCount}",
+                  color = palette.textMuted,
+                  fontSize = 12.sp,
+                )
+                if (col.fsCount != null) {
+                  SarimChip(
+                    text = if (hasMismatch) "FS: ${col.fsCount} vs Local: ${col.activeCount} (MISMATCH)" else "FS: ${col.fsCount} = Local",
+                    color = if (hasMismatch) palette.amber else palette.green,
+                  )
+                }
+              }
+
+              Text(
+                text = "↑ ${col.uploadedCount} / ↓ ${col.downloadedCount} · Dirty: ${col.dirtyUuidCount} · Syncs: ${col.syncCount} · Last: ${if (col.lastSyncMs > 0L) SarimFormat.formatTime(col.lastSyncMs) else "Never"}",
+                color = palette.textMuted,
+                fontSize = 11.5.sp,
+                style = TabularNumberStyle.copy(fontSize = 11.5.sp),
+              )
+
+              Text(
+                text = "${col.sqliteKey} → ${col.jsVar}",
+                color = palette.cyan,
+                fontSize = 11.sp,
+                fontFamily = JetBrainsMonoFontFamily,
+              )
+              if (col.description.isNotBlank()) {
+                Text(col.description, color = palette.textMuted, fontSize = 11.5.sp)
+              }
             }
           }
         }
       }
+
       "Config Docs" -> {
-        val docs = listOf(
-          Triple("settings/app_config", "Theme & App Config", "Theme: ${state.prefs.themeMode.label} · Roles: ${state.activeRoles.joinToString { it.label }}"),
-          Triple("settings/stores", "Stores Registry", "${state.stores.size} configured stores"),
-          Triple("settings/formulas", "Formulas Catalog", "${state.formulas.size} active formulas"),
-        )
-        docs.forEach { (docPath, title, desc) ->
-          SarimCard(contentPadding = 12.dp) {
-            Text(docPath, color = palette.cyan, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text(title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            Text(desc, color = palette.textMuted, fontSize = 12.sp)
+        SarimCard(contentPadding = 12.dp) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            SarimChip(
+              text = if (snap?.isCloudLive == true) "Live Cloud Data" else "Local Schema Only",
+              color = if (snap?.isCloudLive == true) palette.green else palette.amber,
+            )
+            Text(
+              text = snap?.lastCloudCheckAt?.let { "Checked ${SarimFormat.formatTime(it)}" } ?: "Tap refresh to probe cloud",
+              color = palette.textMuted,
+              fontSize = 11.5.sp,
+            )
+          }
+        }
+
+        val configDocs = snap?.configDocs.orEmpty()
+        if (configDocs.isEmpty()) {
+          SarimEmptyState("Loading config docs…", "Inspecting singleton configuration documents.")
+        } else {
+          configDocs.forEach { doc ->
+            val statusLabel = when (doc.existsInCloud) {
+              true -> "EXISTS"
+              false -> "MISSING"
+              null -> "LOCAL ONLY"
+            }
+            val statusColor = when (doc.existsInCloud) {
+              true -> palette.green
+              false -> palette.red
+              null -> palette.textMuted
+            }
+            SarimCard(
+              contentPadding = 12.dp,
+              modifier = Modifier.testTag("db_cfg_${doc.path.replace('/', '_')}"),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = doc.path,
+                  color = palette.cyan,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 13.5.sp,
+                  fontFamily = JetBrainsMonoFontFamily,
+                )
+                SarimChip(statusLabel, statusColor)
+              }
+              Text(doc.description, color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+              if (doc.listenerName.isNotBlank()) {
+                Text(
+                  text = "Listener: ${doc.listenerName}",
+                  color = palette.textMuted,
+                  fontSize = 11.sp,
+                  fontFamily = JetBrainsMonoFontFamily,
+                )
+              }
+              if (doc.mappings.isNotEmpty()) {
+                FlowRow(
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  doc.mappings.forEach { (sqliteK, fsK) ->
+                    SarimChip("$sqliteK → $fsK", palette.purple)
+                  }
+                }
+              }
+              if (doc.expectedFields.isNotEmpty()) {
+                FlowRow(
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  doc.expectedFields.forEach { field ->
+                    val present = field in doc.presentFields
+                    val preview = doc.fieldPreviews[field]?.takeIf { it.isNotBlank() }
+                    val chipText = if (preview != null) "$field ($preview)" else field
+                    val chipColor = when {
+                      doc.existsInCloud == null -> palette.textMuted
+                      present -> palette.green
+                      else -> palette.amber
+                    }
+                    SarimChip(chipText, chipColor)
+                  }
+                }
+              }
+            }
           }
         }
       }
+
       "Listeners" -> {
-        val totalPending = state.dbStructure.sumOf { it.pendingSyncCount }
+        val totalPending = collections.sumOf { it.pendingSyncCount }
+        val listeners = snap?.listeners.orEmpty()
         SarimCard(contentPadding = 12.dp) {
-          Text("Firestore & Outbox Sync", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("${listeners.size} Active Realtime Listeners", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+            SarimChip(
+              text = if (state.isOfflineSession) "Offline Cache" else "Live Sync",
+              color = if (state.isOfflineSession) palette.amber else palette.green,
+            )
+          }
           Text(
-            if (state.isOfflineSession) "Mode: Offline Local Cache" else "Mode: Live Sync Enabled",
-            color = if (state.isOfflineSession) palette.amber else palette.green,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
+            text = "Last Updated: ${SarimFormat.formatTime(state.lastUpdatedMillis)} · Pending Queue: $totalPending",
+            color = palette.textMuted,
+            fontSize = 12.sp,
           )
-          Text("Last Updated: ${SarimFormat.formatTime(state.lastUpdatedMillis)}", color = palette.textMuted, fontSize = 12.sp)
-          Text("Pending Sync Queue: $totalPending record(s)", color = if (totalPending > 0) palette.amber else palette.green, fontSize = 12.sp)
+        }
+
+        listeners.forEachIndexed { idx, listener ->
+          SarimCard(
+            contentPadding = 12.dp,
+            modifier = Modifier.testTag("db_listener_$idx"),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                SarimChip(
+                  text = listener.kind,
+                  color = if (listener.kind == "DOC") palette.cyan else palette.purple,
+                )
+                Text(
+                  text = listener.name,
+                  color = palette.textPrimary,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 13.5.sp,
+                  fontFamily = JetBrainsMonoFontFamily,
+                )
+              }
+              SarimChip(
+                text = if (listener.isLive && !state.isOfflineSession) "ACTIVE" else "PAUSED",
+                color = if (listener.isLive && !state.isOfflineSession) palette.green else palette.amber,
+              )
+            }
+            Text(listener.purpose, color = palette.textPrimary, fontSize = 12.5.sp)
+            Text(
+              text = "Handler: ${listener.handler}",
+              color = palette.cyan,
+              fontSize = 11.sp,
+              fontFamily = JetBrainsMonoFontFamily,
+            )
+            Text("Fires when: ${listener.triggerRule}", color = palette.textMuted, fontSize = 11.5.sp)
+          }
         }
       }
+
       else -> {
-        val activeSum = state.dbStructure.sumOf { it.activeCount }
-        val deletedSum = state.dbStructure.sumOf { it.deletedCount }
-        val pendingSum = state.dbStructure.sumOf { it.pendingSyncCount }
+        val activeSum = collections.sumOf { it.activeCount }
+        val deletedSum = collections.sumOf { it.deletedCount }
+        val pendingSum = collections.sumOf { it.pendingSyncCount }
+        val totalUp = snap?.totalUploaded ?: collections.sumOf { it.uploadedCount }
+        val totalDown = snap?.totalDownloaded ?: collections.sumOf { it.downloadedCount }
+
         SarimCard(contentPadding = 12.dp) {
-          Text("Database Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Text("Database Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Collections", state.dbStructure.size.toString(), Modifier.weight(1f), palette.cyan)
+            SarimStatTile("Collections", collections.size.toString(), Modifier.weight(1f), palette.cyan)
             SarimStatTile("Active Docs", activeSum.toString(), Modifier.weight(1f), palette.green)
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Deleted", deletedSum.toString(), Modifier.weight(1f), palette.red)
             SarimStatTile("Pending Sync", pendingSum.toString(), Modifier.weight(1f), palette.amber)
           }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Total Uploaded", totalUp.toString(), Modifier.weight(1f), palette.purple)
+            SarimStatTile("Total Downloaded", totalDown.toString(), Modifier.weight(1f), palette.cyan)
+          }
+        }
+
+        SarimCard(contentPadding = 12.dp) {
+          Text("Collection Mapping Table", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Row(modifier = Modifier.fillMaxWidth()) {
+            Text("Firestore", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
+            Text("SQLite", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
+            Text("JS Var", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.9f))
+            Text("FS / Loc", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
+          }
+          HorizontalDivider(color = palette.border)
+          collections.forEach { col ->
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+              Text(col.name, color = palette.cyan, fontSize = 10.5.sp, fontFamily = JetBrainsMonoFontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.1f))
+              Text(col.sqliteKey, color = palette.textPrimary, fontSize = 10.5.sp, fontFamily = JetBrainsMonoFontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.1f))
+              Text(col.jsVar, color = palette.textMuted, fontSize = 10.5.sp, fontFamily = JetBrainsMonoFontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(0.9f))
+              Text(
+                text = "${col.fsCount?.toString() ?: "—"} / ${col.activeCount}",
+                color = if (col.fsCount != null && col.fsCount != col.activeCount) palette.amber else palette.green,
+                style = TabularNumberStyle.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.weight(0.8f),
+              )
+            }
+          }
+        }
+
+        SarimCard(contentPadding = 12.dp) {
+          Text("Firestore Schema Tree", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          val schemaTree = remember {
+            """
+users/{uid} (root workspace doc: roles, approved, ownerUid, lastWrite)
+├── settings/
+│   ├── config (settings, fyCloseCount, reps init)
+│   ├── team (reps directory)
+│   └── yearCloseSignal (close / restore broadcast)
+├── stores/list (stores + formulas + pricing)
+├── formulas/config (formulas + savedMixCalcs)
+├── categories/list (operating/field/commission categories)
+├── daily_ledger/entries (cashbook singleton)
+├── account/info (profile metadata)
+├── subcollections: production, sales, rep, customers, clients,
+│   transactions, entities, expenses, inventory, factory,
+│   returns, calculator, pending, deletions, photos
+└── app_accounts/ (top-level role & workspace ownership registry)
+            """.trimIndent()
+          }
+          Text(
+            text = schemaTree,
+            color = palette.cyan,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            fontFamily = JetBrainsMonoFontFamily,
+          )
+        }
+
+        SarimCard(contentPadding = 12.dp) {
+          Text("Financial Year Status", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("FY Close Count", (snap?.fyCloseCount ?: 0).toString(), Modifier.weight(1f), palette.purple)
+            SarimStatTile("Last Closed", snap?.lastYearClosedDate ?: "Never", Modifier.weight(1.4f), palette.amber)
+          }
+          Text(
+            text = "Year-Close Broadcast Signal: settings/yearCloseSignal",
+            color = palette.cyan,
+            fontSize = 11.5.sp,
+            fontFamily = JetBrainsMonoFontFamily,
+          )
         }
       }
     }

@@ -232,7 +232,7 @@ fun BatchingScreen(
             ) {
               viewModel.repository.saveMixCalc(
                 SavedMixCalcEntity(
-                  id = editingCalcId ?: UUID.randomUUID().toString(),
+                  id = editingCalcId ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_MIX),
                   kind = "BATCHING",
                   name = title,
                   formulaId = selectedFormula.id,
@@ -527,7 +527,7 @@ fun BatchCorrectionScreen(
             ) {
               viewModel.repository.saveMixCalc(
                 SavedMixCalcEntity(
-                  id = editingCalcId ?: UUID.randomUUID().toString(),
+                  id = editingCalcId ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_MIX),
                   kind = "CORRECTION",
                   name = title,
                   formulaId = selectedFormula.id,

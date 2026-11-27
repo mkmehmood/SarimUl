@@ -46,6 +46,167 @@ object SarimWebSchema {
     COL_INVENTORY, COL_FACTORY, COL_RETURNS, COL_EXPENSES,
   )
 
+  val GATED_COLLECTIONS = setOf(
+    COL_PRODUCTION, COL_SALES, COL_REP, COL_CLIENTS, COL_CUSTOMERS, COL_CALCULATOR,
+    COL_INVENTORY, COL_FACTORY, COL_ENTITIES, COL_TRANSACTIONS, COL_EXPENSES, COL_RETURNS,
+  )
+
+  fun isGatedCollection(col: String): Boolean = col in GATED_COLLECTIONS
+
+  fun pendingId(collection: String, docId: String): String =
+    "${collection}__${docId.replace("/", "_")}"
+
+  private val PENDING_LABELS = mapOf(
+    COL_REP to "Sale",
+    COL_SALES to "Sale",
+    COL_TRANSACTIONS to "Payment",
+    COL_EXPENSES to "Expense",
+    COL_PRODUCTION to "Production entry",
+    COL_FACTORY to "Factory entry",
+    COL_CLIENTS to "Customer",
+    COL_CUSTOMERS to "Customer",
+    COL_INVENTORY to "Raw material",
+    COL_ENTITIES to "Entity",
+    COL_RETURNS to "Return",
+    COL_CALCULATOR to "Calculation",
+  )
+
+  fun labelForPending(collection: String): String = PENDING_LABELS[collection] ?: "Record"
+
+  fun categoryForPending(collection: String): String = when (collection.lowercase()) {
+    COL_SALES, COL_REP, COL_CALCULATOR -> "Sales"
+    COL_TRANSACTIONS, COL_ENTITIES -> "Payments"
+    COL_EXPENSES -> "Expenses"
+    COL_PRODUCTION -> "Production"
+    COL_FACTORY -> "Factory"
+    COL_INVENTORY -> "Stock"
+    COL_CUSTOMERS, COL_CLIENTS -> "Customers"
+    else -> "Other"
+  }
+
+  private fun pendingAmountText(d: Map<String, Any?>): String {
+    val amtRaw = d["totalValue"] ?: d["amount"]
+    if (amtRaw != null) {
+      val v = amtRaw.toString().toDoubleOrNull()
+      if (v != null && v.isFinite()) return SarimFormat.formatRs(v)
+    }
+    val netRaw = d["net"]
+    if (netRaw != null) {
+      val v = netRaw.toString().toDoubleOrNull()
+      if (v != null && v.isFinite()) return "${kotlin.math.abs(v)} kg"
+    }
+    val unitsRaw = d["units"]
+    if (unitsRaw != null) {
+      val v = unitsRaw.toString().toDoubleOrNull()
+      if (v != null && v != 0.0 && v.isFinite()) return "$v units"
+    }
+    return ""
+  }
+
+  fun summarizePending(
+    collection: String,
+    docId: String,
+    action: String,
+    isEdit: Boolean,
+    data: Map<String, Any?>?,
+  ): Map<String, String> {
+    val label = labelForPending(collection)
+    if (action == "delete") {
+      return linkedMapOf(
+        "title" to "Delete ${label.lowercase()}",
+        "body" to "Remove ${label.lowercase()} ${docId.take(8)}",
+      )
+    }
+    val d = data.orEmpty()
+    val who = listOf("customerName", "entityName", "name", "description", "formulaName", "seller", "store")
+      .firstNotNullOfOrNull { k -> d[k]?.toString()?.trim()?.takeIf { it.isNotEmpty() } }
+      .orEmpty()
+    val amtText = pendingAmountText(d)
+    val parts = listOf(who, amtText).filter { it.isNotBlank() }
+    return linkedMapOf(
+      "title" to "${if (isEdit) "Change" else "New"} ${label.lowercase()}",
+      "body" to (parts.joinToString(" — ").ifBlank { label }),
+    )
+  }
+
+  fun buildPendingDocMap(
+    collection: String,
+    docId: String,
+    action: String,
+    data: Map<String, Any?>?,
+    whoUid: String,
+    whoName: String,
+    whoEmail: String,
+    nowMs: Long = System.currentTimeMillis(),
+    isEdit: Boolean = false,
+  ): Map<String, Any?> {
+    val cleanAction = if (action == "delete") "delete" else "set"
+    val cleanData = if (cleanAction == "delete") null else data?.filterValues { it != null }
+    val pid = pendingId(collection, docId)
+    val summary = summarizePending(collection, docId, cleanAction, isEdit, cleanData)
+    val doc = linkedMapOf<String, Any?>(
+      "id" to pid,
+      "collection" to collection,
+      "docId" to docId,
+      "action" to cleanAction,
+      "data" to cleanData,
+      "isEdit" to isEdit,
+      "status" to "pending",
+      "submittedBy" to linkedMapOf(
+        "uid" to whoUid,
+        "name" to whoName,
+        "email" to whoEmail,
+      ),
+      "submittedAt" to nowMs,
+      "summary" to summary,
+    )
+    return doc
+  }
+
+  fun settingsConfigDocPayload(
+    fyCloseCount: Int,
+    lastYearClosedAt: Long?,
+    lastYearClosedDate: String?,
+    settingsTs: Long,
+    reps: List<String>,
+    repsTs: Long,
+    repProfile: String? = null,
+    now: Long = System.currentTimeMillis(),
+  ): Map<String, Any?> {
+    val settingsObj = linkedMapOf<String, Any?>(
+      "fyCloseCount" to fyCloseCount,
+      "lastYearClosedAt" to lastYearClosedAt,
+      "lastYearClosedDate" to lastYearClosedDate,
+    ).filterValues { it != null }
+    return linkedMapOf(
+      "settings" to settingsObj,
+      "settings_timestamp" to settingsTs,
+      "reps" to reps,
+      "reps_timestamp" to repsTs,
+      "repProfile" to (repProfile ?: reps.firstOrNull() ?: ""),
+      "repProfile_timestamp" to now,
+      "synced" to isoUtc(now),
+    )
+  }
+
+  fun teamDocPayload(reps: List<String>, now: Long = System.currentTimeMillis()): Map<String, Any?> = linkedMapOf(
+    "reps" to reps,
+    "updated" to now,
+    "synced" to isoUtc(now),
+  )
+
+  fun yearCloseSignalPayload(
+    type: String,
+    triggeredAt: Long,
+    triggeredBy: String,
+    fyCloseCount: Int,
+  ): Map<String, Any?> = linkedMapOf(
+    "type" to type,
+    "triggeredAt" to triggeredAt,
+    "triggeredBy" to triggeredBy,
+    "fyCloseCount" to fyCloseCount,
+  )
+
   const val TOMBSTONE_EXPIRY_MS = 90L * 24L * 60L * 60L * 1000L
 
   fun isoUtc(ms: Long = System.currentTimeMillis()): String {

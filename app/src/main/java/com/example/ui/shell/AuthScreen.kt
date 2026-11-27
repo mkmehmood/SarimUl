@@ -53,6 +53,8 @@ import kotlinx.coroutines.launch
 fun AuthScreen(
   savedEmail: String,
   syncManager: FirebaseSyncManager,
+  authErrorMessage: String? = null,
+  onClearAuthError: () -> Unit = {},
   onGoogleAuthSuccess: () -> Unit,
 ) {
   val context = LocalContext.current
@@ -64,17 +66,25 @@ fun AuthScreen(
   var password by remember { mutableStateOf("") }
   var passwordVisible by remember { mutableStateOf(false) }
   var isLoading by remember { mutableStateOf(false) }
-  var errorMessage by remember { mutableStateOf("") }
+  var errorMessage by remember { mutableStateOf(authErrorMessage.orEmpty()) }
   var infoMessage by remember { mutableStateOf("") }
 
+  LaunchedEffect(authErrorMessage) {
+    if (!authErrorMessage.isNullOrBlank()) {
+      errorMessage = authErrorMessage
+    }
+  }
+
   LaunchedEffect(Unit) {
-    syncManager.attemptAutoSignIn(
-      context = context,
-      credentialManager = credentialManager,
-      scope = scope,
-      onAuthSuccess = onGoogleAuthSuccess,
-      onUnauthenticated = {},
-    )
+    if (authErrorMessage.isNullOrBlank()) {
+      syncManager.attemptAutoSignIn(
+        context = context,
+        credentialManager = credentialManager,
+        scope = scope,
+        onAuthSuccess = onGoogleAuthSuccess,
+        onUnauthenticated = {},
+      )
+    }
   }
 
   val infinite = rememberInfiniteTransition(label = "orbs")
@@ -201,7 +211,7 @@ fun AuthScreen(
 
           SarimTextField(
             value = email,
-            onValueChange = { email = it },
+            onValueChange = { email = it; onClearAuthError() },
             label = "Email address",
             placeholder = "name@example.com",
             leadingIcon = Icons.Rounded.Email,
@@ -211,7 +221,7 @@ fun AuthScreen(
 
           SarimTextField(
             value = password,
-            onValueChange = { password = it },
+            onValueChange = { password = it; onClearAuthError() },
             label = "Password",
             placeholder = "Enter your password",
             leadingIcon = Icons.Rounded.Lock,
@@ -240,6 +250,7 @@ fun AuthScreen(
             onClick = {
               errorMessage = ""
               infoMessage = ""
+              onClearAuthError()
               if (!validateEmailAndPassword()) return@SarimPrimaryButton
               isLoading = true
               scope.launch {
@@ -279,6 +290,7 @@ fun AuthScreen(
               isLoading = true
               errorMessage = ""
               infoMessage = ""
+              onClearAuthError()
               syncManager.onGoogleSignInClicked(
                 context = context,
                 credentialManager = credentialManager,

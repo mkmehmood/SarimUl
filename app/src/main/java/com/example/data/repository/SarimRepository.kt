@@ -3,16 +3,18 @@ package com.example.data.repository
 import com.example.data.local.*
 import com.example.data.model.EditHistoryEntry
 import com.example.data.model.FormulaIngredient
+import com.example.data.model.SarimUuid
 import com.example.data.remote.SarimWebSchema
+import com.example.data.remote.UuidSyncRegistry
 import com.example.util.SarimFormat
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
 
 class SarimRepository(
   private val dao: SarimDao,
   private val safeReader: SafeSqliteCacheReader = SafeSqliteCacheReader(dao),
+  private val uuidRegistry: UuidSyncRegistry? = null,
 ) {
   val stores: Flow<List<StoreEntity>> = dao.observeStores()
   val rawMaterials: Flow<List<RawMaterialEntity>> = dao.observeRawMaterials()
@@ -33,6 +35,7 @@ class SarimRepository(
   val mixCalcs: Flow<List<SavedMixCalcEntity>> = dao.observeMixCalcs()
   val approvals: Flow<List<ApprovalRequestEntity>> = dao.observeApprovals()
   val accounts: Flow<List<AppAccountEntity>> = dao.observeAccounts()
+  val allKvKeys: Flow<List<String>> = dao.observeAllKvKeys()
 
   suspend fun initDefaults() {
     SarimSeedHelper.ensureStructuralDefaults(dao)
@@ -65,7 +68,7 @@ class SarimRepository(
     dao.removeOutboxForDoc(collection, docId)
     dao.insertOutbox(
       NdappOutboxEntity(
-        id = "ob_${UUID.randomUUID()}",
+        id = SarimUuid.generateUUID(SarimUuid.PREFIX_OB, tsMs = now),
         action = "set",
         collection = collection,
         docId = docId,
@@ -73,6 +76,7 @@ class SarimRepository(
         createdAt = now,
       )
     )
+    uuidRegistry?.markLocalModified(collection, docId, now)
     touchTimestampKey("${collection}_timestamp", collection, now)
   }
 
@@ -101,7 +105,7 @@ class SarimRepository(
     dao.removeOutboxForDoc(collection, docId)
     dao.insertOutbox(
       NdappOutboxEntity(
-        id = "ob_${UUID.randomUUID()}",
+        id = SarimUuid.generateUUID(SarimUuid.PREFIX_OB, tsMs = now),
         action = "delete",
         collection = collection,
         docId = docId,
@@ -127,6 +131,7 @@ class SarimRepository(
         groupId = groupId,
       )
     )
+    uuidRegistry?.markLocalModified(collection, docId, now)
     touchTimestampKey("${collection}_timestamp", collection, now)
   }
 
@@ -174,6 +179,9 @@ class SarimRepository(
         createdAt = now,
       )
     )
+    if (collection.isNotBlank()) {
+      uuidRegistry?.markLocalModified(collection, null, now)
+    }
   }
 
   private suspend fun upsertPhotoKey(photoKey: String, data: String, now: Long = System.currentTimeMillis()) {
@@ -453,7 +461,9 @@ class SarimRepository(
     if (item != null && !item.isReturn) {
       assertStoreRemainingNonNegative(item.storeKey, item.id, 0.0)
     }
-    val groupId = if (item?.isReturn == true && !item.returnLogId.isNullOrBlank()) "grp_prod_${UUID.randomUUID()}" else null
+    val groupId = if (item?.isReturn == true && !item.returnLogId.isNullOrBlank()) {
+      SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_prod", tsMs = now)
+    } else null
 
     if (item != null) {
       if (!item.isReturn && item.formulaUnitsUsed > 0.0 && item.formulaId.isNotBlank()) {
@@ -639,7 +649,7 @@ class SarimRepository(
     val now = System.currentTimeMillis()
     val mat = dao.getAllRawMaterials().firstOrNull { it.id == id }
     val lots = dao.getAllPurchases().filter { !it.isDeleted && it.materialId == id }
-    val groupId = if (lots.isNotEmpty()) "grp_mat_${UUID.randomUUID()}" else null
+    val groupId = if (lots.isNotEmpty()) SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_mat", tsMs = now) else null
 
     lots.forEach { lot ->
       if (!lot.supplierId.isNullOrBlank() && lot.totalPayable > 0.0) {
@@ -812,7 +822,7 @@ class SarimRepository(
     touchTimestampKey("formulas_timestamp", SarimWebSchema.COL_FORMULAS, now)
 
     val batch = FactoryBatchEntity(
-      id = existing?.id ?: UUID.randomUUID().toString(),
+      id = existing?.id ?: SarimUuid.generateUUID(SarimUuid.PREFIX_FPROD, tsMs = now),
       dateEpoch = dateEpoch,
       formulaId = targetFormula.id,
       formulaName = targetFormula.name,
@@ -892,7 +902,7 @@ class SarimRepository(
     if (cust.oldDebit > 0.001) {
       val partial = existingOld?.partialPaymentReceived ?: 0.0
       val tx = SaleTransactionEntity(
-        id = existingOld?.id ?: "old_debt_${cust.id}",
+        id = existingOld?.id ?: SarimUuid.generateUUID(SarimUuid.PREFIX_OLD_DEBT, tsMs = now),
         dateEpoch = existingOld?.dateEpoch ?: cust.createdAt,
         mode = "OLD_DEBT",
         customerId = cust.id,
@@ -959,7 +969,10 @@ class SarimRepository(
       history.add(0, EditHistoryEntry(now, "Updated details for $cleanName"))
     }
     val deltaOldDebit = oldDebit - (existing?.oldDebit ?: 0.0)
-    val entity = (existing ?: CustomerEntity(name = cleanName)).copy(
+    val entity = (existing ?: CustomerEntity(
+      id = SarimUuid.generateUUID(if (isRepCustomer) SarimUuid.PREFIX_REP_CUST else SarimUuid.PREFIX_CUST, tsMs = now),
+      name = cleanName,
+    )).copy(
       name = cleanName,
       phone = phone.trim(),
       address = address.trim(),
@@ -1016,7 +1029,7 @@ class SarimRepository(
     val now = System.currentTimeMillis()
     val c = dao.getAllCustomers().firstOrNull { it.id == id }
     val targetCol = if (c?.isRepCustomer == true) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
-    val groupId = "grp_cust_${UUID.randomUUID()}"
+    val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_cust", tsMs = now)
 
     if (c != null) {
       val saleCol = if (c.isRepCustomer) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
@@ -1219,7 +1232,7 @@ class SarimRepository(
       }
     }
 
-    val txId = editingId ?: UUID.randomUUID().toString()
+    val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
     val saleCol = if (isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
 
     // FIFO Collection Allocation against unpaid CREDIT / OLD_DEBT sales
@@ -1259,7 +1272,7 @@ class SarimRepository(
     }
 
     val ledgerId = if (addToLedger && ((mode == "SALE" && paymentType == "CASH") || mode == "COLLECTION" || mode == "MONEY_OUT")) {
-      existing?.ledgerId ?: UUID.randomUUID().toString()
+      existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)
     } else null
 
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
@@ -1416,7 +1429,7 @@ class SarimRepository(
   suspend fun deletePaymentEntity(id: String) {
     val now = System.currentTimeMillis()
     val e = dao.getAllPaymentEntities().firstOrNull { it.id == id }
-    val groupId = "grp_ent_${UUID.randomUUID()}"
+    val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_ent", tsMs = now)
 
     // Unlink supplier from raw materials & purchase lots
     dao.getAllRawMaterials().filter { !it.isDeleted && it.supplierId == id }.forEach { mat ->
@@ -1577,9 +1590,9 @@ class SarimRepository(
       supplierCreditAmt = amount
     }
 
-    val txId = editingId ?: UUID.randomUUID().toString()
-    val ledgerId = if (addToLedger && amount > 0.0) (existing?.ledgerId ?: UUID.randomUUID().toString()) else null
-    val expId = existing?.expenseId ?: if (type == "EXPENSE") txId else "exp_$txId"
+    val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
+    val ledgerId = if (addToLedger && amount > 0.0) (existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)) else null
+    val expId = existing?.expenseId ?: if (type == "EXPENSE") txId else SarimUuid.generateUUID(SarimUuid.PREFIX_EXP, tsMs = now)
 
     val expenseRec = ExpenseRecordEntity(
       id = expId,
@@ -1667,7 +1680,7 @@ class SarimRepository(
   suspend fun deletePaymentTransaction(id: String) {
     val now = System.currentTimeMillis()
     val tx = dao.getAllPaymentTransactions().firstOrNull { it.id == id }
-    val groupId = if (tx?.expenseId != null) "grp_pay_${UUID.randomUUID()}" else null
+    val groupId = if (tx?.expenseId != null) SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_pay", tsMs = now) else null
 
     if (tx != null) {
       if (!tx.entityId.isNullOrBlank()) {
@@ -1753,7 +1766,7 @@ class SarimRepository(
       ?: if (type == "TRANSFER") "Account Transfer" else if (party.isNotBlank()) party.trim() else (existing?.category ?: "General")
     dao.upsertLedgerEntry(
       DailyLedgerEntity(
-        id = editingId ?: UUID.randomUUID().toString(),
+        id = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now),
         dateEpoch = dateEpoch,
         type = type,
         amount = amount,
@@ -1847,7 +1860,7 @@ class SarimRepository(
     var returnEntryId: String? = if (existing == null) settlement.returnEntryId else null
     if (settlement.returnedKg > 0.0 && settlement.returnStoreKey.isNotBlank()) {
       val log = ReturnLogEntity(
-        id = returnLogId ?: UUID.randomUUID().toString(),
+        id = returnLogId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_RETLOG, tsMs = now),
         date = dateStr,
         time = SarimFormat.formatTime(now),
         store = settlement.returnStoreKey,
@@ -1862,7 +1875,7 @@ class SarimRepository(
 
       val retStore = dao.getAllStores().firstOrNull { it.storeKey == settlement.returnStoreKey }
       val prodReturn = ProductionEntryEntity(
-        id = returnEntryId ?: "ret_${settlement.id}",
+        id = returnEntryId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_RET, tsMs = now),
         dateEpoch = settlement.dateEpoch,
         storeKey = settlement.returnStoreKey,
         storeName = retStore?.name ?: settlement.returnStoreKey.uppercase(),
@@ -2016,7 +2029,7 @@ class SarimRepository(
   suspend fun deleteSettlement(id: String) {
     val now = System.currentTimeMillis()
     val s = dao.getAllSettlements().firstOrNull { it.id == id } ?: return
-    val groupId = "grp_calc_${UUID.randomUUID()}"
+    val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_calc", tsMs = now)
 
     // Unlink usedInCalcId across sales & rep
     dao.getAllSales().filter { !it.isDeleted && it.usedInCalcId == s.id }.forEach { sale ->
@@ -2110,7 +2123,7 @@ class SarimRepository(
   suspend fun deleteStockTransfer(id: String) {
     val now = System.currentTimeMillis()
     val tr = dao.getAllStockTransfers().firstOrNull { it.id == id } ?: return
-    val groupId = "grp_st_${UUID.randomUUID()}"
+    val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_st", tsMs = now)
     val (outPair, inPair) = SarimWebSchema.stockTransferToOutInMaps(tr)
     dao.softDeleteStockTransfer(id, now)
     enqueueOutboxDelete(
@@ -2170,7 +2183,7 @@ class SarimRepository(
   suspend fun deletePaymentTransfer(id: String, groupIdOverride: String? = null) {
     val now = System.currentTimeMillis()
     val tr = dao.getAllPaymentTransfers().firstOrNull { it.id == id } ?: return
-    val groupId = groupIdOverride ?: "grp_pt_${UUID.randomUUID()}"
+    val groupId = groupIdOverride ?: SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_pt", tsMs = now)
 
     dao.getAllPaymentEntities().firstOrNull { it.id == tr.fromEntityId && !it.isDeleted }?.let { fromEnt ->
       val restored = fromEnt.copy(currentBalance = fromEnt.currentBalance + tr.amount, syncPending = true, updatedAt = now)
@@ -2260,6 +2273,69 @@ class SarimRepository(
     )
   }
 
+  suspend fun getSalesReps(): List<String> {
+    val raw = safeReader.getKvByUserKeyOnce("reps")?.value ?: "[]"
+    return JsonCodecs.decodeStrings(raw)
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinctBy { it.uppercase() }
+  }
+
+  suspend fun saveSalesReps(reps: List<String>) {
+    val now = System.currentTimeMillis()
+    val clean = reps.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.uppercase() }
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = "reps",
+        userKey = "reps",
+        collection = SarimWebSchema.COL_SETTINGS,
+        rowType = "settings",
+        value = JsonCodecs.encodeStrings(clean),
+        ts = now,
+        createdAt = now,
+      )
+    )
+    touchTimestampKey("reps_timestamp", SarimWebSchema.COL_SETTINGS, now)
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = "reps_dirty",
+        userKey = "reps_dirty",
+        collection = SarimWebSchema.COL_SETTINGS,
+        rowType = "meta",
+        value = "1",
+        ts = now,
+        createdAt = now,
+      )
+    )
+  }
+
+  suspend fun ensureRepInList(name: String) {
+    val clean = name.trim()
+    if (clean.isBlank()) return
+    val current = getSalesReps()
+    if (current.none { it.equals(clean, ignoreCase = true) }) {
+      saveSalesReps(current + clean)
+    }
+  }
+
+  suspend fun dropRepFromList(name: String) {
+    val clean = name.trim()
+    if (clean.isBlank()) return
+    val current = getSalesReps()
+    val next = current.filter { !it.equals(clean, ignoreCase = true) }
+    if (next.size != current.size) {
+      saveSalesReps(next)
+    }
+  }
+
+  suspend fun upsertLocalAppAccount(acct: AppAccountEntity) {
+    dao.upsertAccount(acct)
+  }
+
+  suspend fun deleteLocalAppAccount(id: String) {
+    dao.deleteAccount(id)
+  }
+
   suspend fun addAppAccount(email: String, name: String, rolesCsv: String) {
     val acct = AppAccountEntity(email = email.trim(), name = name.trim(), rolesCsv = rolesCsv)
     dao.upsertAccount(acct)
@@ -2269,6 +2345,15 @@ class SarimRepository(
   suspend fun deleteAppAccount(id: String) {
     dao.deleteAccount(id)
     touchTimestampKey("team_timestamp", "settings")
+  }
+
+  suspend fun readYearCloseMeta(): Triple<Int, Long?, String?> {
+    val raw = safeReader.getKvByUserKeyOnce("settings")?.value ?: "{}"
+    val obj = runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+    val count = obj.optInt("fyCloseCount", 0)
+    val lastAt = if (obj.has("lastYearClosedAt") && !obj.isNull("lastYearClosedAt")) obj.optLong("lastYearClosedAt") else null
+    val lastDate = obj.optString("lastYearClosedDate", "").takeIf { it.isNotBlank() }
+    return Triple(count, lastAt, lastDate)
   }
 
   suspend fun closeFinancialYear(): Int {
@@ -2302,6 +2387,38 @@ class SarimRepository(
     dao.clearFactoryBatches()
     dao.clearPurchases()
     touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+
+    val (prevCount, _, _) = readYearCloseMeta()
+    val nextCount = prevCount + 1
+    val closedDateStr = SarimFormat.dateInput(now)
+    val settingsObj = JSONObject().apply {
+      put("fyCloseCount", nextCount)
+      put("lastYearClosedAt", now)
+      put("lastYearClosedDate", closedDateStr)
+    }
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = "settings",
+        userKey = "settings",
+        collection = SarimWebSchema.COL_SETTINGS,
+        rowType = "settings",
+        value = settingsObj.toString(),
+        ts = now,
+        createdAt = now,
+      )
+    )
+    touchTimestampKey("settings_timestamp", SarimWebSchema.COL_SETTINGS, now)
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = "settings_dirty",
+        userKey = "settings_dirty",
+        collection = SarimWebSchema.COL_SETTINGS,
+        rowType = "meta",
+        value = "1",
+        ts = now,
+        createdAt = now,
+      )
+    )
     return compacted
   }
 

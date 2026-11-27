@@ -4,8 +4,8 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.data.model.SarimUuid
 import com.example.util.SarimFormat
-import java.util.UUID
 
 // =====================================================================
 // SQLite Meta & Infrastructure Tables (mirrors modules/business.js)
@@ -46,7 +46,7 @@ data class KvStoreEntity(
   ],
 )
 data class NdappOutboxEntity(
-  @PrimaryKey val id: String = "ob_${UUID.randomUUID()}",
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_OB),
   val uid: String = "",
   val action: String, // "set", "set-doc", "delete"
   val collection: String = "",
@@ -77,7 +77,7 @@ data class StoreEntity(
 /** Firestore: users/{uid}/inventory/{id} (isPurchaseLot = false) */
 @Entity(tableName = "inventory")
 data class RawMaterialEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_MAT),
   val name: String,
   @ColumnInfo(name = "purchaseUnitName") val unitName: String = "bag",
   @ColumnInfo(name = "conversionFactor") val conversionFactorKg: Double = 1.0,
@@ -100,7 +100,7 @@ data class RawMaterialEntity(
 /** Firestore: users/{uid}/inventory/{id} (isPurchaseLot = true, materialRefId -> material.id) */
 @Entity(tableName = "raw_material_purchases")
 data class RawMaterialPurchaseEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_LOT),
   @ColumnInfo(name = "materialRefId") val materialId: String,
   val materialName: String,
   val dateEpoch: Long,
@@ -126,7 +126,7 @@ data class RawMaterialPurchaseEntity(
 /** Firestore: users/{uid}/formulas/config -> formulas[] ({ id, name, additionalCost, factor, ingredients, savedCalcs }) */
 @Entity(tableName = "formulas")
 data class FormulaEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_FORMULA),
   val name: String,
   @ColumnInfo(name = "additionalCost") val additionalCostPerUnit: Double = 0.0,
   @ColumnInfo(name = "factor") val costAdjustmentFactor: Double = 1.0,
@@ -143,7 +143,7 @@ data class FormulaEntity(
 /** Firestore: users/{uid}/factory/{id} ({ id, date, time, store, formulaId, formulaName, units, rawMaterialsUsed, materialsCost, additionalCost, totalCost, materialsUsed }) */
 @Entity(tableName = "factory")
 data class FactoryBatchEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_FPROD),
   val dateEpoch: Long,
   val formulaId: String,
   val formulaName: String,
@@ -168,7 +168,7 @@ data class FactoryBatchEntity(
 /** Firestore: users/{uid}/production/{id} ({ id, date, time, store, grossWt, contWt, net, formulaUnits, formulaCost, cp, sp, totalSale, profit, photoKeys, isTransfer, isReturn }) */
 @Entity(tableName = "production")
 data class ProductionEntryEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_PROD),
   val dateEpoch: Long,
   @ColumnInfo(name = "store") val storeKey: String,
   val storeName: String,
@@ -206,7 +206,7 @@ data class ProductionEntryEntity(
 /** Firestore: users/{uid}/customers/{id} (isRepCustomer = false) OR users/{uid}/clients/{id} (isRepCustomer = true) */
 @Entity(tableName = "customers")
 data class CustomerEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_CUST),
   val name: String,
   val phone: String = "",
   val address: String = "",
@@ -231,7 +231,7 @@ data class CustomerEntity(
 /** Firestore: users/{uid}/sales/{id} (isRepSale = false) OR users/{uid}/rep/{id} (isRepSale = true) */
 @Entity(tableName = "sales")
 data class SaleTransactionEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_SALE),
   val dateEpoch: Long,
   val mode: String, // SALE, COLLECTION, MONEY_OUT
   val customerId: String,
@@ -286,7 +286,7 @@ data class SaleTransactionEntity(
 /** Firestore: users/{uid}/entities/{id} ({ id, name, type ("payee"|"payor"), phone, wallet, ledgerPage, openingBalance, isSupplier, isExpenseEntity, editHistory }) */
 @Entity(tableName = "entities")
 data class PaymentEntityRecord(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_ENT),
   val name: String,
   val phone: String = "",
   val wallet: String = "",
@@ -312,7 +312,7 @@ data class PaymentEntityRecord(
 /** Firestore: users/{uid}/transactions/{id} ({ id, date, time, type, entityId, entityName, amount, description, isExpense, expenseId, isPayable, isTransfer, transferPairId, ledgerId }) */
 @Entity(tableName = "transactions")
 data class PaymentTransactionEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY),
   val dateEpoch: Long,
   val type: String, // EXPENSE, PAYMENT_IN, PAYMENT_OUT
   @ColumnInfo(name = "entityName") val entityOrExpenseName: String,
@@ -344,7 +344,7 @@ data class PaymentTransactionEntity(
 /** Firestore: users/{uid}/expenses/{id} ({ id, name, amount, date, description, category, ledgerId, createdAt, updatedAt, timestamp }) */
 @Entity(tableName = "expenses")
 data class ExpenseRecordEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_EXP),
   val name: String,
   val amount: Double,
   val date: String,
@@ -362,7 +362,7 @@ data class ExpenseRecordEntity(
 /** Firestore: users/{uid}/returns/{id} ({ id, date, time, store, quantity, seller, createdAt, updatedAt, timestamp }) */
 @Entity(tableName = "returns")
 data class ReturnLogEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_RETLOG),
   val date: String,
   val time: String = "",
   val store: String,
@@ -379,7 +379,7 @@ data class ReturnLogEntity(
 /** Firestore: users/{uid}/daily_ledger/entries -> daily_ledger[] */
 @Entity(tableName = "daily_ledger")
 data class DailyLedgerEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER),
   val dateEpoch: Long,
   val type: String, // IN, OUT, TRANSFER
   val amount: Double,
@@ -404,7 +404,7 @@ data class DailyLedgerEntity(
 /** Firestore: users/{uid}/calculator/{id} ({ id, seller, date, totalSold, returned, expired, shared, returnStore, creditQty, commissionPerUnit, commissionPaid, commissionPaidItems, prevColl, fieldExpenses, fieldExpenseItems, received, totalExpected, statusText, statusClass, grossCommission, commissionPayable, totalCost, revenue, profit, creditValue, linkedSalesIds, linkedRepSalesIds, linkedRepReturnIds }) */
 @Entity(tableName = "calculator")
 data class CalculatorSettlementEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_CALC),
   @ColumnInfo(name = "seller") val repName: String,
   val fromDateEpoch: Long,
   val toDateEpoch: Long,
@@ -455,7 +455,7 @@ data class CalculatorSettlementEntity(
 /** Local view of paired stock transfers; synced to Firestore `production` as paired out/in docs with `isTransfer = true` & `transferPairId`. */
 @Entity(tableName = "stock_transfers")
 data class StockTransferEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_TRFPAIR),
   val dateEpoch: Long,
   val fromStoreKey: String,
   val fromStoreName: String,
@@ -464,8 +464,8 @@ data class StockTransferEntity(
   val quantityKg: Double,
   val note: String = "",
   val dateStr: String = SarimFormat.dateInput(dateEpoch),
-  val outDocId: String = "${id}_out",
-  val inDocId: String = "${id}_in",
+  val outDocId: String = SarimUuid.generateUUID(SarimUuid.PREFIX_TRF),
+  val inDocId: String = SarimUuid.generateUUID(SarimUuid.PREFIX_TRF),
   val isDeleted: Boolean = false,
   val deletedAt: Long? = null,
   val syncPending: Boolean = true,
@@ -476,7 +476,7 @@ data class StockTransferEntity(
 /** Local view of paired payment transfers; synced to Firestore `transactions` as paired OUT/IN docs with `isTransfer = true` & `transferPairId`. */
 @Entity(tableName = "payment_transfers")
 data class PaymentTransferEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_TRFPAIR),
   val dateEpoch: Long,
   val fromEntityId: String,
   val fromEntityName: String,
@@ -486,8 +486,8 @@ data class PaymentTransferEntity(
   val note: String = "",
   val photoUri: String = "",
   val dateStr: String = SarimFormat.dateInput(dateEpoch),
-  val outDocId: String = "${id}_out",
-  val inDocId: String = "${id}_in",
+  val outDocId: String = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY),
+  val inDocId: String = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY),
   val isDeleted: Boolean = false,
   val deletedAt: Long? = null,
   val syncPending: Boolean = true,
@@ -498,7 +498,7 @@ data class PaymentTransferEntity(
 /** Embedded inside Firestore `formulas/config -> formulas[i].savedCalcs[]` */
 @Entity(tableName = "saved_mix_calcs")
 data class SavedMixCalcEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_MIX),
   val kind: String, // BATCHING, CORRECTION
   val name: String,
   val formulaId: String,
@@ -518,7 +518,7 @@ data class SavedMixCalcEntity(
 /** Firestore: users/{uid}/pending/{id} ({ id, collection, docId, action, data, isEdit, status, submittedBy, submittedAt, summary }) */
 @Entity(tableName = "pending")
 data class ApprovalRequestEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(),
   val submittedBy: String,
   val submittedRole: String,
   val category: String, // Sales, Payments, Expenses, Production, Factory, Stock, Customers, Other
@@ -533,17 +533,24 @@ data class ApprovalRequestEntity(
   val isEdit: Boolean = false,
   val syncPending: Boolean = true,
   val createdAt: Long = System.currentTimeMillis(),
+  val submittedByUid: String = "",
+  val submittedByEmail: String = "",
+  val updatedAt: Long = System.currentTimeMillis(),
 )
 
-/** Firestore: users/{uid}/settings/team & users/{uid}/settings/accounts */
+/** Firestore: users/{uid}/settings/accounts & users/{uid} */
 @Entity(tableName = "app_accounts")
 data class AppAccountEntity(
-  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  @PrimaryKey val id: String = SarimUuid.generateUUID(SarimUuid.PREFIX_ACCT),
   val email: String,
   val name: String,
   val rolesCsv: String,
   val syncPending: Boolean = true,
   val createdAt: Long = System.currentTimeMillis(),
+  val uid: String = id,
+  val approved: Boolean = true,
+  val ownerUid: String = "",
+  val createdBy: String = "",
 )
 
 /** Firestore: users/{uid}/deletions/{id} (tombstone + recycle bin snapshot, 90-day expiry) */

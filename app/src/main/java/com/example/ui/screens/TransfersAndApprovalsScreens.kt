@@ -533,7 +533,7 @@ fun ApprovalsScreen(
                 errorTitle = "Approve All Failed",
                 successMessage = "Approved ${batch.size} request(s)",
               ) {
-                batch.forEach { viewModel.repository.resolveApproval(it, approved = true) }
+                viewModel.resolveApprovals(batch, approved = true)
               }
             },
           )
@@ -547,7 +547,7 @@ fun ApprovalsScreen(
                 errorTitle = "Discard All Failed",
                 successMessage = "Discarded ${batch.size} request(s)",
               ) {
-                batch.forEach { viewModel.repository.resolveApproval(it, approved = false) }
+                viewModel.resolveApprovals(batch, approved = false)
               }
             },
           )
@@ -585,7 +585,7 @@ fun ApprovalsScreen(
                   errorTitle = "Approval Failed",
                   successMessage = "Approved",
                 ) {
-                  viewModel.repository.resolveApproval(req, approved = true)
+                  viewModel.resolveApproval(req, approved = true)
                 }
               },
             )
@@ -598,7 +598,7 @@ fun ApprovalsScreen(
                   errorTitle = "Discard Failed",
                   successMessage = "Discarded by admin",
                 ) {
-                  viewModel.repository.resolveApproval(req, approved = false)
+                  viewModel.resolveApproval(req, approved = false)
                 }
               },
             )

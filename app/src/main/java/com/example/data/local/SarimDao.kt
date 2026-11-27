@@ -627,6 +627,12 @@ interface SarimDao {
   @Query("DELETE FROM app_accounts WHERE id = :id")
   suspend fun deleteAccount(id: String)
 
+  @Query("DELETE FROM app_accounts")
+  suspend fun clearAppAccounts()
+
+  @Query("DELETE FROM pending")
+  suspend fun clearApprovals()
+
   // =====================================================================
   // Deletions (deletions) & Photos (photos)
   // =====================================================================
@@ -655,6 +661,9 @@ interface SarimDao {
   @Query("DELETE FROM deletions WHERE expiresAt < :now")
   suspend fun purgeExpiredDeletions(now: Long = System.currentTimeMillis())
 
+  @Query("DELETE FROM deletions")
+  suspend fun clearAllDeletions()
+
   @Query("SELECT * FROM photos WHERE deleted = 0 AND (data IS NULL OR LENGTH(CAST(data AS BLOB)) <= 750000)")
   suspend fun getAllActivePhotos(): List<PhotoRecordEntity>
 
@@ -676,8 +685,11 @@ interface SarimDao {
   @Query("DELETE FROM photos WHERE `key` = :key")
   suspend fun hardDeletePhoto(key: String)
 
+  @Query("DELETE FROM photos")
+  suspend fun clearPhotos()
+
   // =====================================================================
-  // Clear all transactional tables (for Restore or Close Financial Year)
+  // Clear all transactional tables (for Restore, Sign-Out, or Close Financial Year)
   // =====================================================================
 
   @Query("DELETE FROM production")
@@ -712,4 +724,25 @@ interface SarimDao {
 
   @Query("DELETE FROM raw_material_purchases")
   suspend fun clearPurchases()
+
+  @Query("DELETE FROM customers")
+  suspend fun clearCustomers()
+
+  @Query("DELETE FROM entities")
+  suspend fun clearPaymentEntities()
+
+  @Query("DELETE FROM inventory")
+  suspend fun clearRawMaterials()
+
+  @Query("DELETE FROM formulas")
+  suspend fun clearFormulas()
+
+  @Query("DELETE FROM stores")
+  suspend fun clearStores()
+
+  @Query("DELETE FROM saved_mix_calcs")
+  suspend fun clearMixCalcs()
+
+  @Query("DELETE FROM kv_store")
+  suspend fun clearKvStore()
 }

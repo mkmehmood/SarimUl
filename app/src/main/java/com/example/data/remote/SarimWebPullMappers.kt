@@ -266,25 +266,85 @@ object SarimWebPullMappers {
       statusRaw.contains("DISCARD") || statusRaw.contains("REJECT") -> "DISCARDED"
       else -> "PENDING"
     }
-    val dataObj = (m["data"] as? Map<*, *>)?.let {
-      JSONObject(it.entries.associate { (k, v) -> k.toString() to (v ?: JSONObject.NULL) }).toString()
-    } ?: str(m["data"], "{}")
+    val subRaw = m["submittedBy"]
+    val subMap = subRaw as? Map<*, *>
+    val submittedByUid = subMap?.get("uid")?.toString()?.trim().orEmpty()
+    val submittedByEmail = subMap?.get("email")?.toString()?.trim().orEmpty()
+    val submittedByName = subMap?.let {
+      str(it["name"]).ifBlank { str(it["email"]) }
+    }?.ifBlank { "Team Member" }
+      ?: str(subRaw).takeIf { it.isNotBlank() && !it.startsWith("{") }
+      ?: "Team Member"
+
+    val col = str(m["collection"])
+    val docId = str(m["docId"])
+    val action = str(m["action"], "set")
+    val isEdit = bool(m["isEdit"])
+
+    @Suppress("UNCHECKED_CAST")
+    val rawDataMap = m["data"] as? Map<String, Any?>
+    val dataObj = rawDataMap?.let { encodeJsonMap(it) } ?: str(m["data"], "{}").ifBlank { "{}" }
+
+    val summaryText = when (val s = m["summary"]) {
+      is Map<*, *> -> {
+        val t = str(s["title"])
+        val b = str(s["body"])
+        listOf(t, b).filter { it.isNotBlank() }.joinToString(" — ").ifBlank { id }
+      }
+      is String -> s.ifBlank {
+        val computed = SarimWebSchema.summarizePending(col, docId, action, isEdit, rawDataMap)
+        listOf(computed["title"].orEmpty(), computed["body"].orEmpty()).filter { it.isNotBlank() }.joinToString(" — ")
+      }
+      else -> {
+        val computed = SarimWebSchema.summarizePending(col, docId, action, isEdit, rawDataMap)
+        listOf(computed["title"].orEmpty(), computed["body"].orEmpty()).filter { it.isNotBlank() }.joinToString(" — ")
+      }
+    }
+
+    val amt = rawDataMap?.let { d ->
+      val tv = d["totalValue"] ?: d["amount"] ?: d["totalSale"]
+      num(tv, 0.0)
+    } ?: 0.0
+
+    val category = if (col.isNotBlank()) SarimWebSchema.categoryForPending(col) else "Other"
+    val created = parseEpoch(m["submittedAt"] ?: m["createdAt"])
     return ApprovalRequestEntity(
       id = id,
-      submittedBy = str(m["submittedBy"], "Team Member"),
-      submittedRole = str(m["submittedRole"], "Staff"),
-      category = str(m["collection"], "Other").replaceFirstChar { it.uppercase() },
-      actionKind = if (str(m["action"]) == "delete") "Delete" else if (bool(m["isEdit"])) "Change" else "New",
-      targetSummary = str(m["summary"], id),
-      amount = (m["data"] as? Map<*, *>)?.let { num(it["amount"], num(it["totalValue"])) } ?: 0.0,
+      submittedBy = submittedByName,
+      submittedRole = str(m["submittedRole"], if (submittedByEmail.isNotBlank()) submittedByEmail else "Member"),
+      category = category,
+      actionKind = if (action == "delete") "Delete" else if (isEdit) "Change" else "New",
+      targetSummary = summaryText,
+      amount = amt,
       payloadJson = dataObj,
       status = status,
-      targetCollection = str(m["collection"]),
-      docId = str(m["docId"]),
-      action = str(m["action"], "set"),
-      isEdit = bool(m["isEdit"]),
+      targetCollection = col,
+      docId = docId,
+      action = action,
+      isEdit = isEdit,
       syncPending = false,
-      createdAt = parseEpoch(m["submittedAt"] ?: m["createdAt"]),
+      createdAt = created,
+      submittedByUid = submittedByUid,
+      submittedByEmail = submittedByEmail,
+      updatedAt = parseEpoch(m["decidedAt"] ?: m["updatedAt"] ?: created),
+    )
+  }
+
+  fun mapToAppAccount(uid: String, m: Map<String, Any?>): AppAccountEntity {
+    val roles = com.example.data.model.RolesHelper.normalizeRoles(m)
+    val email = str(m["email"]).trim().lowercase()
+    val name = str(m["displayName"]).ifBlank { str(m["name"]) }.ifBlank { email.substringBefore("@") }
+    return AppAccountEntity(
+      id = uid,
+      uid = uid,
+      email = email,
+      name = name,
+      rolesCsv = roles.joinToString(",") { it.uppercase() },
+      syncPending = false,
+      createdAt = parseEpoch(m["createdAt"], null),
+      approved = m["approved"] != false,
+      ownerUid = str(m["ownerUid"]).trim(),
+      createdBy = str(m["createdBy"]).trim(),
     )
   }
 
@@ -373,7 +433,7 @@ object SarimWebPullMappers {
         note = str(mOut["transferNote"]),
         dateStr = dateStr,
         outDocId = outEntry.first,
-        inDocId = inEntry?.first ?: "${pairId}_in",
+        inDocId = inEntry?.first ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_TRF),
         syncPending = false,
         createdAt = parseEpoch(mOut["createdAt"] ?: epoch),
         updatedAt = parseEpoch(mOut["updatedAt"] ?: epoch),
@@ -402,7 +462,7 @@ object SarimWebPullMappers {
         note = str(mOut["description"]),
         dateStr = dateStr,
         outDocId = outEntry.first,
-        inDocId = inEntry?.first ?: "${pairId}_in",
+        inDocId = inEntry?.first ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_PAY),
         syncPending = false,
         createdAt = parseEpoch(mOut["createdAt"] ?: epoch),
         updatedAt = parseEpoch(mOut["updatedAt"] ?: epoch),
@@ -418,9 +478,7 @@ object SarimWebPullMappers {
     val delAt = parseEpoch(m["deletedAt"])
     @Suppress("UNCHECKED_CAST")
     val snapMap = m["snapshot"] as? Map<String, Any?>
-    val snapJson = snapMap?.let {
-      JSONObject(it.entries.associate { (k, v) -> k to (v ?: JSONObject.NULL) }).toString()
-    }
+    val snapJson = snapMap?.let { encodeJsonMap(it) }
     return DeletionTombstoneEntity(
       id = id,
       recordId = recordId,
@@ -443,6 +501,44 @@ object SarimWebPullMappers {
     if (arr == null) return emptyList()
     return (0 until arr.length()).mapNotNull { idx ->
       arr.optJSONObject(idx)?.let { SarimWebSchema.jsonObjectToMap(it) }
+    }
+  }
+
+  private fun encodeJsonMap(map: Map<*, *>): String = buildString {
+    append('{')
+    var first = true
+    for ((k, v) in map) {
+      if (k == null) continue
+      if (!first) append(',')
+      first = false
+      append('"').append(escapeJsonString(k.toString())).append("\":")
+      append(encodeJsonValue(v))
+    }
+    append('}')
+  }
+
+  private fun encodeJsonValue(v: Any?): String = when (v) {
+    null -> "null"
+    is Boolean -> v.toString()
+    is Number -> v.toString()
+    is Map<*, *> -> encodeJsonMap(v)
+    is Iterable<*> -> v.joinToString(",", prefix = "[", postfix = "]") { encodeJsonValue(it) }
+    is Array<*> -> v.joinToString(",", prefix = "[", postfix = "]") { encodeJsonValue(it) }
+    else -> "\"${escapeJsonString(v.toString())}\""
+  }
+
+  private fun escapeJsonString(value: String): String = buildString(value.length + 4) {
+    for (c in value) {
+      when (c) {
+        '\\' -> append("\\\\")
+        '"' -> append("\\\"")
+        '\n' -> append("\\n")
+        '\r' -> append("\\r")
+        '\t' -> append("\\t")
+        '\b' -> append("\\b")
+        '\u000C' -> append("\\f")
+        else -> if (c.code < 0x20) append("\\u%04x".format(c.code)) else append(c)
+      }
     }
   }
 }

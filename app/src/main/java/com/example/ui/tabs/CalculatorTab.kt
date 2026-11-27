@@ -365,7 +365,7 @@ fun CalculatorTab(
                 ) {
                   viewModel.repository.saveCalculatorSettlement(
                     CalculatorSettlementEntity(
-                      id = currentEditId ?: java.util.UUID.randomUUID().toString(),
+                      id = currentEditId ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_CALC),
                       repName = selectedRepOption,
                       fromDateEpoch = fromDate,
                       toDateEpoch = toDate,
