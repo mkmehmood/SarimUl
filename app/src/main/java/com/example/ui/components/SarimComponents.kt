@@ -337,7 +337,7 @@ fun SarimSearchFieldWithDropdown(
           }
         },
         textFieldModifier = Modifier
-          .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true)
+          .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, enabled = true)
           .onFocusChanged { focusState ->
             if (!focusState.isFocused && !showDropdown) {
               filterActive = false
@@ -353,7 +353,7 @@ fun SarimSearchFieldWithDropdown(
           filterActive = false
         },
         modifier = Modifier
-          .exposedDropdownSize(matchTextFieldWidth = true)
+          .exposedDropdownSize(matchAnchorWidth = true)
           .heightIn(max = 280.dp)
           .background(palette.surfaceElevated)
           .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
@@ -423,7 +423,7 @@ fun SarimPopoverSelector(
       Surface(
         modifier = Modifier
           .fillMaxWidth()
-          .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
+          .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
           .defaultMinSize(minHeight = 48.dp)
           .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
@@ -452,7 +452,7 @@ fun SarimPopoverSelector(
         expanded = expanded,
         onDismissRequest = { expanded = false },
         modifier = Modifier
-          .exposedDropdownSize(matchTextFieldWidth = true)
+          .exposedDropdownSize(matchAnchorWidth = true)
           .heightIn(max = 320.dp)
           .background(palette.surfaceElevated)
           .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),

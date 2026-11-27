@@ -527,7 +527,7 @@ private fun SoundHapticsDropdownCard(
         border = BorderStroke(1.dp, if (expanded) accentColor else palette.border),
         modifier = Modifier
           .fillMaxWidth()
-          .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
+          .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
           .defaultMinSize(minHeight = 52.dp)
           .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
@@ -545,7 +545,7 @@ private fun SoundHapticsDropdownCard(
         expanded = expanded,
         onDismissRequest = { onExpandedChange(false) },
         modifier = Modifier
-          .exposedDropdownSize(matchTextFieldWidth = true)
+          .exposedDropdownSize(matchAnchorWidth = true)
           .background(palette.surfaceElevated)
           .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
       ) {
