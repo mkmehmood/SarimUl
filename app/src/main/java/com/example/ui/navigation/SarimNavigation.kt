@@ -6,13 +6,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.MenuBook
-import androidx.compose.material.icons.rounded.Dashboard
-import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -22,7 +17,6 @@ import com.example.data.model.MainTab
 import com.example.data.model.StandaloneScreen
 import com.example.ui.screens.*
 import com.example.ui.tabs.*
-import com.example.viewmodel.BaseInventoryViewModel
 import com.example.viewmodel.BaseLedgerViewModel
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
@@ -35,9 +29,8 @@ sealed class SarimRoute(
   val title: String,
   val isPrimaryDestination: Boolean = false,
 ) {
-  // Primary Hub Views (Dashboard <-> Inventory <-> Ledger)
+  // Primary Hub Views (Dashboard <-> Ledger)
   data object Dashboard : SarimRoute("dashboard", "Dashboard", isPrimaryDestination = true)
-  data object Inventory : SarimRoute("inventory", "Inventory", isPrimaryDestination = true)
   data object Ledger : SarimRoute("ledger", "Daily Ledger", isPrimaryDestination = true)
 
   // Operational Tabs
@@ -165,16 +158,6 @@ sealed class SarimRoute(
   }
 
   companion object {
-    // Must be lazy: the companion initializes together with the SarimRoute superclass, which can
-    // run while a subclass object (e.g. Dashboard) is still mid-initialization. An eager list would
-    // capture null for those objects and crash the bottom nav bar with an NPE on `dest.route`.
-    val primaryDestinations: List<Pair<SarimRoute, ImageVector>> by lazy {
-      listOf(
-        Dashboard to Icons.Rounded.Dashboard,
-        Inventory to Icons.Rounded.Inventory2,
-        Ledger to Icons.AutoMirrored.Rounded.MenuBook,
-      )
-    }
 
     fun routeForTab(tab: MainTab): String = when (tab) {
       MainTab.OVERVIEW -> Dashboard.route
@@ -226,14 +209,12 @@ sealed class SarimRoute(
 
     fun isTopBarPrimaryRoute(route: String?): Boolean {
       return route == Dashboard.route ||
-        route == Inventory.route ||
         route == Ledger.route ||
         tabForRoute(route) != null
     }
 
     fun titleForRoute(route: String?, isCloseFinYear: Boolean = false): String? = when {
       route == Dashboard.route || tabForRoute(route) != null -> null
-      route == Inventory.route -> "INVENTORY"
       route == Ledger.route -> "DAILY LEDGER"
       route == Settings.route -> "SETTINGS"
       route == Approvals.route -> "APPROVALS"
@@ -263,7 +244,6 @@ sealed class SarimRoute(
 
     fun fromRoute(route: String?): SarimRoute? = when {
       route == Dashboard.route -> Dashboard
-      route == Inventory.route -> Inventory
       route == Ledger.route -> Ledger
       route == Production.route -> Production
       route == Sales.route -> Sales
@@ -305,7 +285,7 @@ sealed interface SarimNavAction {
 }
 
 /**
- * Central NavHost managing transitions between Dashboard, Inventory, Ledger,
+ * Central NavHost managing transitions between Dashboard, Ledger,
  * and all operational tabs and detail screens.
  */
 @Composable
@@ -314,7 +294,6 @@ fun SarimNavHost(
   startDestination: String,
   state: SarimUiState,
   viewModel: SarimViewModel,
-  inventoryViewModel: BaseInventoryViewModel,
   ledgerViewModel: BaseLedgerViewModel,
   modifier: Modifier = Modifier,
 ) {
@@ -347,13 +326,6 @@ fun SarimNavHost(
   ) {
     composable(SarimRoute.Dashboard.route) {
       OverviewTab(state, viewModel)
-    }
-    composable(SarimRoute.Inventory.route) {
-      InventoryScreen(
-        appState = state,
-        inventoryViewModel = inventoryViewModel,
-        sarimViewModel = viewModel,
-      )
     }
     composable(SarimRoute.Ledger.route) {
       DailyLedgerScreen(

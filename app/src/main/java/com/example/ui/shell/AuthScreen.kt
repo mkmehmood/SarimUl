@@ -5,10 +5,10 @@ import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.CancellationSignal
 import android.util.Patterns
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -19,8 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.*
@@ -31,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -46,36 +45,24 @@ import com.example.ui.components.SarimCallout
 import com.example.ui.components.SarimPrimaryButton
 import com.example.ui.components.SarimSecondaryButton
 import com.example.ui.components.SarimTextField
-import com.example.ui.components.SarimToggleGroup
 import com.example.ui.theme.CinzelFontFamily
 import com.example.ui.theme.LocalSarimPalette
-import com.example.ui.theme.PlayfairDisplayFontFamily
 import kotlinx.coroutines.launch
-
-private enum class AuthScreenMode(val label: String) {
-  SIGN_IN("Sign In"),
-  REGISTER("Register"),
-}
 
 @Composable
 fun AuthScreen(
   savedEmail: String,
   syncManager: FirebaseSyncManager,
   onGoogleAuthSuccess: () -> Unit,
-  onContinueOffline: (String) -> Unit,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val palette = LocalSarimPalette.current
   val credentialManager = remember(context) { CredentialManager.create(context) }
 
-  var mode by remember { mutableStateOf(AuthScreenMode.SIGN_IN) }
-  var fullName by remember { mutableStateOf("") }
   var email by remember(savedEmail) { mutableStateOf(savedEmail) }
   var password by remember { mutableStateOf("") }
-  var confirmPassword by remember { mutableStateOf("") }
   var passwordVisible by remember { mutableStateOf(false) }
-  var confirmPasswordVisible by remember { mutableStateOf(false) }
   var isLoading by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf("") }
   var infoMessage by remember { mutableStateOf("") }
@@ -98,22 +85,14 @@ fun AuthScreen(
     label = "orb_shift",
   )
 
-  fun validateEmailAndPassword(isRegister: Boolean): Boolean {
+  fun validateEmailAndPassword(): Boolean {
     val cleanEmail = email.trim()
-    if (isRegister && fullName.trim().length < 2) {
-      errorMessage = "Enter your full name or dealership name."
-      return false
-    }
     if (cleanEmail.isEmpty() || !Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
       errorMessage = "Enter a valid email address."
       return false
     }
     if (password.length < 6) {
       errorMessage = "Password must be at least 6 characters."
-      return false
-    }
-    if (isRegister && password != confirmPassword) {
-      errorMessage = "Passwords do not match."
       return false
     }
     return true
@@ -124,24 +103,23 @@ fun AuthScreen(
       .fillMaxSize()
       .background(palette.background),
   ) {
-    // Soft animated colour orbs
     Canvas(modifier = Modifier.fillMaxSize()) {
       drawCircle(
         brush = Brush.radialGradient(
-          listOf(palette.green.copy(alpha = 0.24f), Color.Transparent),
-          center = Offset(size.width * (0.2f + orbShift * 0.25f), size.height * 0.18f),
+          listOf(palette.green.copy(alpha = 0.22f), Color.Transparent),
+          center = Offset(size.width * (0.2f + orbShift * 0.25f), size.height * 0.16f),
           radius = size.width * 0.6f,
         ),
-        center = Offset(size.width * (0.2f + orbShift * 0.25f), size.height * 0.18f),
+        center = Offset(size.width * (0.2f + orbShift * 0.25f), size.height * 0.16f),
         radius = size.width * 0.6f,
       )
       drawCircle(
         brush = Brush.radialGradient(
-          listOf(palette.cyan.copy(alpha = 0.18f), Color.Transparent),
-          center = Offset(size.width * (0.8f - orbShift * 0.2f), size.height * 0.82f),
+          listOf(palette.cyan.copy(alpha = 0.15f), Color.Transparent),
+          center = Offset(size.width * (0.8f - orbShift * 0.2f), size.height * 0.84f),
           radius = size.width * 0.55f,
         ),
-        center = Offset(size.width * (0.8f - orbShift * 0.2f), size.height * 0.82f),
+        center = Offset(size.width * (0.8f - orbShift * 0.2f), size.height * 0.84f),
         radius = size.width * 0.55f,
       )
     }
@@ -151,93 +129,73 @@ fun AuthScreen(
         .fillMaxSize()
         .systemBarsPadding()
         .verticalScroll(rememberScrollState())
-        .padding(24.dp),
+        .padding(horizontal = 22.dp, vertical = 28.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
+      // Brand Emblem & Header above login card (matches web auth layout)
+      Surface(
+        modifier = Modifier.size(84.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = palette.surfaceElevated,
+        border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f)),
+      ) {
+        Image(
+          painter = painterResource(id = R.drawable.brand_logo),
+          contentDescription = "Gull and Zubair logo",
+          contentScale = ContentScale.Crop,
+          modifier = Modifier.fillMaxSize(),
+        )
+      }
+
+      Spacer(Modifier.height(14.dp))
+
+      Text(
+        text = "GULL AND ZUBAIR",
+        color = palette.textPrimary,
+        fontFamily = CinzelFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 21.sp,
+        letterSpacing = 2.sp,
+        textAlign = TextAlign.Center,
+      )
+      Spacer(Modifier.height(4.dp))
+      Text(
+        text = "NASWAR DEALERS",
+        color = palette.green,
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 2.2.sp,
+      )
+
+      Spacer(Modifier.height(22.dp))
+
       Surface(
         modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(32.dp),
+        shape = RoundedCornerShape(28.dp),
         color = palette.surface.copy(alpha = 0.94f),
         border = BorderStroke(1.dp, palette.border),
       ) {
         Column(
-          modifier = Modifier.padding(24.dp),
+          modifier = Modifier.padding(22.dp),
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-          Box(
-            modifier = Modifier
-              .size(68.dp)
-              .clip(CircleShape)
-              .background(palette.green.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
+          Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            Icon(
-              painter = painterResource(id = R.drawable.ic_launcher_foreground),
-              contentDescription = "Gull and Zubair logo",
-              tint = Color.Unspecified,
-              modifier = Modifier.size(62.dp),
-            )
-          }
-
-          Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-              "GULL AND ZUBAIR",
+              text = "Welcome back",
               color = palette.textPrimary,
-              fontFamily = CinzelFontFamily,
-              fontWeight = FontWeight.Bold,
               fontSize = 20.sp,
-              letterSpacing = 1.8.sp,
-            )
-            Text(
-              "Naswar Dealers",
-              color = palette.green,
-              fontFamily = PlayfairDisplayFontFamily,
-              fontSize = 14.sp,
-            )
-          }
-
-          Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-              text = if (mode == AuthScreenMode.SIGN_IN) "Dealer Sign In" else "Register Dealer Account",
-              color = palette.textPrimary,
-              fontSize = 19.sp,
               fontWeight = FontWeight.Bold,
             )
             Text(
-              text = if (mode == AuthScreenMode.SIGN_IN) {
-                "Sign in with email & password to secure and sync your ledger and inventory."
-              } else {
-                "Create your secured Firebase dealer account."
-              },
+              text = "Sign in to unlock and sync your business data.",
               color = palette.textMuted,
-              fontSize = 12.5.sp,
-              textAlign = TextAlign.Center,
-            )
-          }
-
-          SarimToggleGroup(
-            options = AuthScreenMode.entries,
-            selected = mode,
-            labelOf = { it.label },
-            onSelect = {
-              mode = it
-              errorMessage = ""
-              infoMessage = ""
-            },
-            testTagPrefix = "auth_mode",
-          )
-
-          AnimatedVisibility(visible = mode == AuthScreenMode.REGISTER) {
-            SarimTextField(
-              value = fullName,
-              onValueChange = { fullName = it },
-              label = "Dealer / Full Name",
-              placeholder = "e.g. Gull & Zubair Dealer",
-              leadingIcon = Icons.Rounded.Person,
-              maxLength = 60,
-              testTag = "auth_full_name",
+              fontSize = 13.sp,
             )
           }
 
@@ -245,7 +203,7 @@ fun AuthScreen(
             value = email,
             onValueChange = { email = it },
             label = "Email address",
-            placeholder = "dealer@example.com",
+            placeholder = "name@example.com",
             leadingIcon = Icons.Rounded.Email,
             keyboardType = KeyboardType.Email,
             testTag = "auth_email",
@@ -255,7 +213,7 @@ fun AuthScreen(
             value = password,
             onValueChange = { password = it },
             label = "Password",
-            placeholder = "At least 6 characters",
+            placeholder = "Enter your password",
             leadingIcon = Icons.Rounded.Lock,
             keyboardType = KeyboardType.Password,
             isPassword = true,
@@ -275,82 +233,17 @@ fun AuthScreen(
             testTag = "auth_password",
           )
 
-          AnimatedVisibility(visible = mode == AuthScreenMode.REGISTER) {
-            SarimTextField(
-              value = confirmPassword,
-              onValueChange = { confirmPassword = it },
-              label = "Confirm Password",
-              placeholder = "Re-enter password",
-              leadingIcon = Icons.Rounded.Lock,
-              keyboardType = KeyboardType.Password,
-              isPassword = true,
-              passwordVisible = confirmPasswordVisible,
-              trailingContent = {
-                IconButton(
-                  onClick = { confirmPasswordVisible = !confirmPasswordVisible },
-                  modifier = Modifier.minimumInteractiveComponentSize().testTag("auth_toggle_confirm_password"),
-                ) {
-                  Icon(
-                    imageVector = if (confirmPasswordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                    contentDescription = if (confirmPasswordVisible) "Hide confirm password" else "Show confirm password",
-                    tint = palette.textMuted,
-                  )
-                }
-              },
-              testTag = "auth_confirm_password",
-            )
-          }
-
-          if (mode == AuthScreenMode.SIGN_IN) {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-              TextButton(
-                enabled = !isLoading,
-                onClick = {
-                  val cleanEmail = email.trim()
-                  if (cleanEmail.isEmpty() || !Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
-                    errorMessage = "Enter your email address first to reset your password."
-                    return@TextButton
-                  }
-                  isLoading = true
-                  errorMessage = ""
-                  infoMessage = ""
-                  scope.launch {
-                    val res = syncManager.sendPasswordReset(cleanEmail)
-                    isLoading = false
-                    res.fold(
-                      onSuccess = { infoMessage = "Password reset link sent to $cleanEmail." },
-                      onFailure = { err -> errorMessage = err.message ?: "Unable to send reset email." },
-                    )
-                  }
-                },
-                modifier = Modifier.testTag("auth_forgot_password"),
-              ) {
-                Text("Forgot password?", color = palette.cyan, fontSize = 12.5.sp)
-              }
-            }
-          }
-
           SarimPrimaryButton(
-            text = when {
-              isLoading && mode == AuthScreenMode.SIGN_IN -> "Signing in..."
-              isLoading && mode == AuthScreenMode.REGISTER -> "Creating account..."
-              mode == AuthScreenMode.SIGN_IN -> "Sign In with Email"
-              else -> "Create Dealer Account"
-            },
+            text = if (isLoading) "Signing in..." else "Sign in",
             enabled = !isLoading,
             testTag = "email_auth_submit_btn",
             onClick = {
               errorMessage = ""
               infoMessage = ""
-              val isRegister = mode == AuthScreenMode.REGISTER
-              if (!validateEmailAndPassword(isRegister)) return@SarimPrimaryButton
+              if (!validateEmailAndPassword()) return@SarimPrimaryButton
               isLoading = true
               scope.launch {
-                val res = if (isRegister) {
-                  syncManager.registerWithEmailPassword(fullName, email, password)
-                } else {
-                  syncManager.signInWithEmailPassword(email, password)
-                }
+                val res = syncManager.signInWithEmailPassword(email, password)
                 isLoading = false
                 res.fold(
                   onSuccess = { onGoogleAuthSuccess() },
@@ -378,7 +271,7 @@ fun AuthScreen(
           }
 
           SarimSecondaryButton(
-            text = "Sign in with Google",
+            text = "Continue with Google",
             modifier = Modifier.fillMaxWidth(),
             testTag = "google_sign_in_btn",
             onClick = {
@@ -405,28 +298,18 @@ fun AuthScreen(
               )
             },
           )
-
-          SarimSecondaryButton(
-            text = "Continue Offline (Local Vault)",
-            onClick = { onContinueOffline(email) },
-            icon = Icons.Rounded.Lock,
-            modifier = Modifier.fillMaxWidth(),
-            testTag = "offline_continue_btn",
-          )
-
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Icon(Icons.Rounded.Shield, contentDescription = null, tint = palette.green, modifier = Modifier.size(14.dp))
-            Text(
-              "Secured by Firebase Auth · Local Room Vault",
-              color = palette.textMuted,
-              fontSize = 11.sp,
-            )
-          }
         }
       }
+
+      Spacer(Modifier.height(18.dp))
+
+      Text(
+        text = "No account? Contact the administrator to have yours added.",
+        color = palette.textMuted,
+        fontSize = 12.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 12.dp),
+      )
     }
   }
 }

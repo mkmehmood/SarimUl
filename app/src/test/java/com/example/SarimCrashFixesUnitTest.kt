@@ -118,4 +118,97 @@ class SarimCrashFixesUnitTest {
     assertTrue(SafeSqliteCacheReader.isBlobTooBigError(RuntimeException("outer", IllegalStateException("CursorWindow allocation failed"))))
     assertFalse(SafeSqliteCacheReader.isBlobTooBigError(IllegalArgumentException("unrelated error")))
   }
+
+  @Test
+  fun sarimMetricsEngine_computesParityAnalyticsAndUnpaidCount() {
+    val now = System.currentTimeMillis()
+    val store = com.example.data.local.StoreEntity(
+      storeKey = "zubair",
+      name = "Zubair Store",
+      formulaId = "f1",
+      salePricePerKg = 400.0,
+    )
+    val formula = com.example.data.local.FormulaEntity(
+      id = "f1",
+      name = "Standard Formula",
+      unitsAvailable = 5.0,
+    )
+    val prod = com.example.data.local.ProductionEntryEntity(
+      id = "p1",
+      dateEpoch = now,
+      storeKey = "zubair",
+      storeName = "Zubair Store",
+      formulaId = "f1",
+      formulaName = "Standard Formula",
+      grossWeightKg = 52.0,
+      containerWeightKg = 2.0,
+      netWeightKg = 50.0,
+      formulaUnitsUsed = 1.0,
+      formulaUnitCost = 10_000.0,
+      totalFormulaCost = 10_000.0,
+      costPerKg = 200.0,
+      salePricePerKg = 400.0,
+      profitPerKg = 200.0,
+      totalValue = 20_000.0,
+      totalProfit = 10_000.0,
+    )
+    val unpaidCreditSale = com.example.data.local.SaleTransactionEntity(
+      id = "s1",
+      dateEpoch = now,
+      mode = "SALE",
+      customerId = "c1",
+      customerName = "Ali",
+      storeKey = "zubair",
+      storeName = "Zubair Store",
+      quantityKg = 10.0,
+      pricePerKg = 400.0,
+      totalValue = 4_000.0,
+      totalCost = 2_000.0,
+      profit = 2_000.0,
+      paymentType = "CREDIT",
+      creditReceived = false,
+    )
+    val settledCreditSale = unpaidCreditSale.copy(
+      id = "s2",
+      creditReceived = true,
+    )
+    val batch = com.example.data.local.FactoryBatchEntity(
+      id = "b1",
+      dateEpoch = now,
+      formulaId = "f1",
+      formulaName = "Standard Formula",
+      unitsProduced = 3.0,
+      outputKg = 150.0,
+      rawUsedKg = 150.0,
+      materialsCost = 25_000.0,
+      additionalCost = 500.0,
+      totalCost = 25_500.0,
+      costPerUnit = 8_500.0,
+    )
+
+    val snapshot = com.example.viewmodel.SarimMetricsEngine.compute(
+      stores = listOf(store),
+      materials = emptyList(),
+      formulas = listOf(formula),
+      production = listOf(prod),
+      sales = listOf(unpaidCreditSale, settledCreditSale),
+      customers = emptyList(),
+      entities = emptyList(),
+      payments = emptyList(),
+      ledger = emptyList(),
+      settlements = emptyList(),
+      stockTransfers = emptyList(),
+      accounts = emptyList(),
+      overviewMonths = 6,
+      factoryBatches = listOf(batch),
+    )
+
+    assertEquals(1, snapshot.unpaidSalesCount)
+    assertTrue(snapshot.salesByStore.any { it.label == "Zubair Store" && it.value == 8_000.0 })
+    assertTrue(snapshot.prodByFormula.any { it.label == "Standard Formula" && it.value == 50.0 })
+    assertTrue(snapshot.factoryOutputByFormula.any { it.label == "Standard Formula" && it.value == 3.0 })
+    assertTrue(snapshot.factoryOutputByMonth.any { it == 3.0 })
+    assertEquals(false, snapshot.formulaLinkedMap["f1"])
+    assertTrue(snapshot.recentActivity.isNotEmpty())
+  }
 }

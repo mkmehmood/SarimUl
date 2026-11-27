@@ -20,6 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import com.example.data.model.*
 import com.example.ui.components.*
 import com.example.ui.navigation.SarimRoute
@@ -122,7 +124,7 @@ fun OverviewTab(
             accent = palette.amber,
             modifier = Modifier.weight(1f),
             testTag = "kpi_remaining_tile",
-            onClick = { viewModel.openRoute(SarimRoute.Inventory) },
+            onClick = { viewModel.openRoute(SarimRoute.Production) },
           )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -144,7 +146,7 @@ fun OverviewTab(
             accent = palette.red,
             modifier = Modifier.weight(1f),
             testTag = "kpi_expenses_tile",
-            onClick = { viewModel.openRoute(SarimRoute.Factory) },
+            onClick = { viewModel.openRoute(SarimRoute.Payments) },
           )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -166,7 +168,7 @@ fun OverviewTab(
             accent = palette.cyan,
             modifier = Modifier.weight(1f),
             testTag = "kpi_inventory_tile",
-            onClick = { viewModel.openRoute(SarimRoute.Inventory) },
+            onClick = { viewModel.openRoute(SarimRoute.Factory) },
           )
         }
       }
@@ -238,10 +240,12 @@ fun OverviewTab(
             MultiLineTrendChart(
               labels = labels,
               seriesList = listOf(
-                ChartSeries("Sales", snap.monthlyRows.map { it.salesValue }, 0xFF67E8F9),
-                ChartSeries("Net profit", snap.monthlyRows.map { it.netProfit }, 0xFF4ADE80),
-                ChartSeries("Cash in", snap.monthlyRows.map { it.cashIn }, 0xFFC084FC),
-                ChartSeries("Expenses", snap.monthlyRows.map { it.expenses }, 0xFFF87171),
+                ChartSeries("Sales", snap.monthlyRows.map { it.salesValue }, 0xFF38BDF8L),
+                ChartSeries("Net profit", snap.monthlyRows.map { it.netProfit }, 0xFF34D399L),
+                ChartSeries("Sales profit", snap.monthlyRows.map { it.salesProfit }, 0xFFA78BFAL),
+                ChartSeries("Cash in", snap.monthlyRows.map { it.cashIn }, 0xFF2DD4BFL),
+                ChartSeries("Cash out", snap.monthlyRows.map { it.cashOut }, 0xFFF59E0BL),
+                ChartSeries("Expenses", snap.monthlyRows.map { it.expenses }, 0xFFF87171L),
               ),
               privacyHidden = hideMoney,
             )
@@ -259,6 +263,68 @@ fun OverviewTab(
         }
         item {
           SarimCard {
+            Text("Sales by customer over time", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val (cLabels, cSeries) = snap.salesByCustomerTrend
+            if (cSeries.isEmpty()) {
+              Text("No customer sales trends in this range.", color = palette.textMuted, fontSize = 12.5.sp)
+            } else {
+              MultiLineTrendChart(labels = cLabels, seriesList = cSeries, privacyHidden = hideMoney)
+            }
+          }
+        }
+        item {
+          SarimCard {
+            Text("Sales by store over time", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val (sLabels, sSeries) = snap.salesByStoreTrend
+            if (sSeries.isEmpty()) {
+              Text("No store sales trends in this range.", color = palette.textMuted, fontSize = 12.5.sp)
+            } else {
+              MultiLineTrendChart(labels = sLabels, seriesList = sSeries, privacyHidden = hideMoney)
+            }
+          }
+        }
+        item {
+          SarimCard {
+            Text("Stock movement (kg)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val soldTotalKg = snap.storeMetrics.values.sumOf { it.soldKg }
+            val prodPlusRetKg = snap.storeMetrics.values.sumOf { it.producedKg } + snap.returnsKg
+            RankedHorizontalBars(
+              items = listOf(
+                RankedBarItem("Sold", soldTotalKg, SarimFormat.formatKg(soldTotalKg)),
+                RankedBarItem("Remaining", snap.remainingKg, SarimFormat.formatKg(snap.remainingKg)),
+                RankedBarItem("Production + returns in", prodPlusRetKg, SarimFormat.formatKg(prodPlusRetKg)),
+              ),
+              barColor = palette.cyan,
+            )
+          }
+        }
+        item {
+          SarimCard {
+            Text("Sold by customer (kg)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val custKgBars = state.customers
+              .filter { it.totalQuantityKg > 0.01 }
+              .sortedByDescending { it.totalQuantityKg }
+              .take(6)
+              .map {
+                RankedBarItem(
+                  label = it.name,
+                  value = it.totalQuantityKg,
+                  secondaryText = "${SarimFormat.formatKg(it.totalQuantityKg)} · ${SarimFormat.formatRs(it.totalSaleValue, false, hideMoney)}",
+                  id = it.id,
+                )
+              }
+            RankedHorizontalBars(
+              items = custKgBars,
+              barColor = palette.purple,
+              emptyMessage = "No customer quantities recorded yet.",
+              onItemClick = { item ->
+                if (item.id.isNotBlank()) viewModel.openStandalone(StandaloneScreen.CustomerDetails(item.id))
+              },
+            )
+          }
+        }
+        item {
+          SarimCard {
             Text("Who owes you", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               SarimStatTile("Total owed", SarimFormat.formatRs(snap.owedToYou, false, hideMoney), Modifier.weight(1f), palette.amber)
@@ -271,8 +337,24 @@ fun OverviewTab(
             val topDebtors = state.customers.filter { it.currentCredit > 0.01 }
               .sortedByDescending { it.currentCredit }
               .take(6)
-              .map { RankedBarItem(it.name, it.currentCredit, SarimFormat.formatRs(it.currentCredit, true, hideMoney)) }
-            RankedHorizontalBars(topDebtors, palette.amber, emptyMessage = "No outstanding customer balances.")
+              .map { cust ->
+                val days = snap.customerOldestDays[cust.id] ?: 0
+                val ageSuffix = if (days > 0) " (${days}d)" else ""
+                RankedBarItem(
+                  label = cust.name,
+                  value = cust.currentCredit,
+                  secondaryText = "${SarimFormat.formatRs(cust.currentCredit, true, hideMoney)}$ageSuffix",
+                  id = cust.id,
+                )
+              }
+            RankedHorizontalBars(
+              items = topDebtors,
+              barColor = palette.amber,
+              emptyMessage = "No outstanding customer balances.",
+              onItemClick = { item ->
+                if (item.id.isNotBlank()) viewModel.openStandalone(StandaloneScreen.CustomerDetails(item.id))
+              },
+            )
           }
         }
         item {
@@ -281,8 +363,27 @@ fun OverviewTab(
             val topCust = state.customers.filter { it.totalSaleValue > 0.0 }
               .sortedByDescending { it.totalSaleValue }
               .take(6)
-              .map { RankedBarItem(it.name, it.totalSaleValue, "${SarimFormat.formatKg(it.totalQuantityKg)} · ${SarimFormat.formatRs(it.totalSaleValue, false, hideMoney)}") }
-            RankedHorizontalBars(topCust, palette.green)
+              .map {
+                RankedBarItem(
+                  label = it.name,
+                  value = it.totalSaleValue,
+                  secondaryText = "${SarimFormat.formatKg(it.totalQuantityKg)} · ${SarimFormat.formatRs(it.totalSaleValue, false, hideMoney)}",
+                  id = it.id,
+                )
+              }
+            RankedHorizontalBars(
+              items = topCust,
+              barColor = palette.green,
+              onItemClick = { item ->
+                if (item.id.isNotBlank()) viewModel.openStandalone(StandaloneScreen.CustomerDetails(item.id))
+              },
+            )
+          }
+        }
+        item {
+          SarimCard {
+            Text("Sales by store", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            RankedHorizontalBars(snap.salesByStore, palette.green, emptyMessage = "No store sales recorded in this range.")
           }
         }
         item {
@@ -314,6 +415,48 @@ fun OverviewTab(
         }
         item {
           SarimCard {
+            Text("Production by formula over time", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val (pfLabels, pfSeries) = snap.prodByFormulaTrend
+            if (pfSeries.isEmpty()) {
+              Text("No formula production trends in this range.", color = palette.textMuted, fontSize = 12.5.sp)
+            } else {
+              MultiLineTrendChart(labels = pfLabels, seriesList = pfSeries, privacyHidden = false)
+            }
+          }
+        }
+        item {
+          SarimCard {
+            Text("Production by store over time", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            val (psLabels, psSeries) = snap.prodByStoreTrend
+            if (psSeries.isEmpty()) {
+              Text("No store production trends in this range.", color = palette.textMuted, fontSize = 12.5.sp)
+            } else {
+              MultiLineTrendChart(labels = psLabels, seriesList = psSeries, privacyHidden = false)
+            }
+          }
+        }
+        item {
+          SarimCard {
+            Text("Factory output (units)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            if (snap.factoryOutputByMonth.any { it > 0.0 }) {
+              ColumnBarChart(
+                labels = snap.monthlyRows.map { it.monthLabel.take(3) },
+                values = snap.factoryOutputByMonth,
+                colors = snap.monthlyRows.map { palette.purple },
+              )
+            } else {
+              Text("No factory batches recorded in this range.", color = palette.textMuted, fontSize = 12.5.sp)
+            }
+          }
+        }
+        item {
+          SarimCard {
+            Text("Production by formula", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            RankedHorizontalBars(snap.prodByFormula, palette.cyan, emptyMessage = "No formula production recorded.")
+          }
+        }
+        item {
+          SarimCard {
             Text("Production by store", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             val storeBars = snap.storeMetrics.values
               .sortedByDescending { it.producedKg }
@@ -323,10 +466,17 @@ fun OverviewTab(
         }
         item {
           SarimCard {
+            Text("Factory output by formula", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            RankedHorizontalBars(snap.factoryOutputByFormula, palette.purple, emptyMessage = "No factory output recorded.")
+          }
+        }
+        item {
+          SarimCard {
             Text("Formula cost per kg", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             val fBars = state.formulas.map { f ->
               val cost = snap.formulaSummaries[f.id]?.costPerKgAdjusted ?: 0.0
-              RankedBarItem(f.name, cost, "${SarimFormat.formatRs(cost, true, hideMoney)}/kg", "${SarimFormat.formatQty(f.unitsAvailable, 1)} u")
+              val linkedSuffix = if (snap.formulaLinkedMap[f.id] == true) " (linked)" else ""
+              RankedBarItem("${f.name}$linkedSuffix", cost, "${SarimFormat.formatRs(cost, true, hideMoney)}/kg", "${SarimFormat.formatQty(f.unitsAvailable, 1)} u")
             }
             RankedHorizontalBars(fBars, palette.purple)
           }
@@ -439,6 +589,38 @@ fun OverviewTab(
       }
 
       OverviewPanel.ACTIVITY -> {
+        item {
+          SarimCard {
+            Text("Recent activity", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            if (snap.recentActivity.isEmpty()) {
+              Text("No activity recorded in this period.", color = palette.textMuted, fontSize = 12.5.sp)
+            } else {
+              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                snap.recentActivity.forEach { act ->
+                  val tone = Color(act.toneHex)
+                  Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated) {
+                    Row(
+                      modifier = Modifier.fillMaxWidth().padding(10.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                      Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(tone))
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(act.title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${act.subtitle} · ${SarimFormat.formatDate(act.dateEpoch)}", color = palette.textMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                      }
+                      Text(
+                        act.amountText,
+                        color = tone,
+                        style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold),
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
         item {
           SarimCard {
             Text("Monthly summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)

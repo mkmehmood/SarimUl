@@ -186,6 +186,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           stockTransfers = g3.c,
           accounts = g4.b,
           overviewMonths = g4.d.months,
+          factoryBatches = g1.e,
         )
         val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
         val bin = runCatching { syncRepo.getRecycleBinItems() }.getOrDefault(emptyList())
@@ -415,7 +416,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         activeRoute = route,
         activeTab = tab ?: current.activeTab,
         activeStandalone = when {
-          tab != null || route == SarimRoute.Inventory.route -> null
+          tab != null -> null
           route == SarimRoute.Ledger.route -> StandaloneScreen.DailyLedger
           else -> current.activeStandalone
         },

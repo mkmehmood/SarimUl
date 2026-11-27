@@ -84,6 +84,8 @@ fun CalculatorTab(
   var showExpensesBreakdown by remember { mutableStateOf(false) }
   var showCommissionBreakdown by remember { mutableStateOf(false) }
   var overviewPeriod by remember { mutableStateOf(TimePeriod.ALL_TIME) }
+  var editingSettlementId by remember { mutableStateOf<String?>(null) }
+  var sheetSettlement by remember { mutableStateOf<CalculatorSettlementEntity?>(null) }
 
   val isComparison = selectedRepOption == "COMPARISON"
 
@@ -249,7 +251,20 @@ fun CalculatorTab(
 
       item {
         SarimCard {
-          Text("Product Quantities", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(if (editingSettlementId == null) "Product Quantities" else "Edit Settlement", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            if (editingSettlementId != null) {
+              TextButton(onClick = {
+                editingSettlementId = null
+                receivedCashText = ""
+                commissionItems = emptyList()
+                expenseItems = emptyList()
+              }) { Text("Cancel Edit", color = palette.amber) }
+            }
+          }
+          if (editingSettlementId != null) {
+            SarimCallout("Editing settlement · Saving updates the original record & reconciles links.", palette.amber)
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimTextField(SarimFormat.formatQty(totalSoldKg), {}, "Total Sold Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f))
             SarimTextField(SarimFormat.formatQty(returnedKg), {}, "Returned Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f))
@@ -330,17 +345,19 @@ fun CalculatorTab(
           )
 
           SarimPrimaryButton(
-            text = "Save Transaction",
+            text = if (editingSettlementId == null) "Save Transaction" else "Update Settlement",
             onClick = {
               if (SarimFormat.isFutureDate(toDate)) {
                 viewModel.showDialog(AppDialogRequest("Invalid Date", "Settlement date cannot be in the future.", confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
+              val currentEditId = editingSettlementId
               val commitSettlement = {
                 viewModel.launchSafely(
                   errorTitle = "Settlement Save Failed",
-                  successMessage = "Settlement saved for $selectedRepOption",
+                  successMessage = if (currentEditId == null) "Settlement saved for $selectedRepOption" else "Settlement updated for $selectedRepOption",
                   onSuccess = {
+                    editingSettlementId = null
                     receivedCashText = ""
                     commissionItems = emptyList()
                     expenseItems = emptyList()
@@ -348,6 +365,7 @@ fun CalculatorTab(
                 ) {
                   viewModel.repository.saveCalculatorSettlement(
                     CalculatorSettlementEntity(
+                      id = currentEditId ?: java.util.UUID.randomUUID().toString(),
                       repName = selectedRepOption,
                       fromDateEpoch = fromDate,
                       toDateEpoch = toDate,
@@ -412,6 +430,18 @@ fun CalculatorTab(
             SarimStatTile("Expired", SarimFormat.formatKg(periodFiltered.sumOf { it.expiredKg }), Modifier.weight(1f), palette.red)
             SarimStatTile("Shared", SarimFormat.formatKg(periodFiltered.sumOf { it.sharedDeductionKg }), Modifier.weight(1f))
           }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Net Sold", SarimFormat.formatKg(periodFiltered.sumOf { it.netSoldKg }), Modifier.weight(1f), palette.green)
+            SarimStatTile("Gross Revenue", SarimFormat.formatRs(periodFiltered.sumOf { it.grossRevenue }, false, hideMoney), Modifier.weight(1f), palette.cyan)
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Net Profit", SarimFormat.formatRs(periodFiltered.sumOf { it.netProfit }, false, hideMoney), Modifier.weight(1f), palette.emerald)
+            SarimStatTile("Expected Cash", SarimFormat.formatRs(periodFiltered.sumOf { it.expectedCash }, false, hideMoney), Modifier.weight(1f), palette.amber)
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Comm Payable", SarimFormat.formatRs(periodFiltered.sumOf { it.commissionPayable }, false, hideMoney), Modifier.weight(1f), palette.purple)
+            SarimStatTile("Comm Paid", SarimFormat.formatRs(periodFiltered.sumOf { it.commissionPaid }, false, hideMoney), Modifier.weight(1f), palette.green)
+          }
           TextButton(onClick = { showExpensesBreakdown = !showExpensesBreakdown }) {
             Text(if (showExpensesBreakdown) "Hide Expenses breakdown" else "Expenses breakdown", color = palette.cyan)
           }
@@ -469,38 +499,92 @@ fun CalculatorTab(
           yearSummary = { items -> "${items.size} settlements" },
           monthSummary = { items -> "${items.size} · Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
           daySummary = { items -> "${items.size} entries" },
-        ) { rec ->
-          val s = rec.item
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Expected", SarimFormat.formatRs(s.expectedCash, false, hideMoney), Modifier.weight(1f))
-              SarimStatTile("Expenses", SarimFormat.formatRs(s.fieldExpenses, false, hideMoney), Modifier.weight(1f), palette.red)
-              SarimStatTile("Commission", SarimFormat.formatRs(s.commissionPaid, false, hideMoney), Modifier.weight(1f), palette.amber)
-            }
-            SarimDangerButton(
-              text = "Delete Settlement",
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Settlement",
-                    body = "Unlink reconciled sales, reverse return/CHORA changes, and move this settlement to Recycle Bin?",
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(
-                        errorTitle = "Delete Failed",
-                        successMessage = "Deleted settlement",
-                      ) {
-                        viewModel.repository.deleteSettlement(s.id)
-                      }
-                    },
-                  )
-                )
-              },
-            )
-          }
-        }
+          onItemClick = { rec -> sheetSettlement = rec.item },
+        )
       }
     }
+  }
+
+  sheetSettlement?.let { s ->
+    val sc = when (s.status) {
+      "OK" -> palette.green
+      "SHORT" -> palette.red
+      else -> palette.amber
+    }
+    val expLines = remember(s.expenseItemsJson) { JsonCodecs.decodeLineItems(s.expenseItemsJson) }
+    val commLines = remember(s.commissionItemsJson) { JsonCodecs.decodeLineItems(s.commissionItemsJson) }
+    SarimRecordBottomSheet(
+      title = "${s.repName} · ${s.status}",
+      subtitle = "${SarimFormat.formatDate(s.fromDateEpoch)} → ${SarimFormat.formatDate(s.toDateEpoch)}",
+      amountText = SarimFormat.formatRs(s.receivedCash, true, hideMoney),
+      amountColor = sc,
+      badgeText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
+      badgeColor = sc,
+      metrics = listOf(
+        "Total Sold" to SarimFormat.formatKg(s.totalSoldKg),
+        "Returned" to SarimFormat.formatKg(s.returnedKg),
+        "Expired (→ CHORA)" to SarimFormat.formatKg(s.expiredKg),
+        "Shared Deduction" to SarimFormat.formatKg(s.sharedDeductionKg),
+        "Net Sold" to SarimFormat.formatKg(s.netSoldKg),
+        "Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney),
+        "Credit Issued" to SarimFormat.formatRs(s.creditIssuedValue, false, hideMoney),
+        "Recovered Credit" to SarimFormat.formatRs(s.recoveredCredit, false, hideMoney),
+        "Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney),
+        "Commission Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney),
+        "Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney),
+        "Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney),
+        "Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney),
+      ),
+      extraContent = if (expLines.isNotEmpty() || commLines.isNotEmpty()) {
+        {
+          if (expLines.isNotEmpty()) {
+            SarimFieldLabel("Expense Breakdown")
+            expLines.forEach {
+              Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp)
+            }
+          }
+          if (commLines.isNotEmpty()) {
+            SarimFieldLabel("Commission Breakdown")
+            commLines.forEach {
+              Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp)
+            }
+          }
+        }
+      } else null,
+      onDismiss = { sheetSettlement = null },
+      onEdit = {
+        editingSettlementId = s.id
+        selectedRepOption = s.repName
+        fromDate = s.fromDateEpoch
+        toDate = s.toDateEpoch
+        sharedQtyText = s.sharedDeductionKg.toString()
+        if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
+        creditSalesQtyText = s.creditSalesQty.toString()
+        commissionPerUnitText = s.commissionPerUnit.toString()
+        commissionItems = expLines.let { commLines }
+        recoveredCreditText = s.recoveredCredit.toString()
+        expenseItems = expLines
+        receivedCashText = s.receivedCash.toString()
+        addToLedger = s.addToLedger
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Settlement",
+            body = "Unlink reconciled sales, reverse return/CHORA changes, and move this settlement to Recycle Bin?",
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(
+                errorTitle = "Delete Failed",
+                successMessage = "Deleted settlement",
+              ) {
+                viewModel.repository.deleteSettlement(s.id)
+              }
+            },
+          )
+        )
+      },
+    )
   }
 
   if (showExpensesPopup) {

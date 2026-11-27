@@ -132,6 +132,16 @@ data class RankedBarItem(
   val value: Double,
   val secondaryText: String = "",
   val badge: String = "",
+  val id: String = "",
+)
+
+data class RecentActivityItem(
+  val id: String,
+  val title: String,
+  val subtitle: String,
+  val amountText: String,
+  val toneHex: Long,
+  val dateEpoch: Long,
 )
 
 data class MonthlySummaryRow(

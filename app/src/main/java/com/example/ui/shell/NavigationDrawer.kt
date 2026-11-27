@@ -95,13 +95,6 @@ fun SarimNavigationDrawerContent(
           onClick = { onSelectTab(tab) },
         )
       }
-      DrawerItemRow(
-        label = "Inventory",
-        icon = Icons.Rounded.Inventory2,
-        selected = state.activeRoute == SarimRoute.Inventory.route,
-        testTag = "drawer_route_inventory",
-        onClick = { onOpenRoute(SarimRoute.Inventory) },
-      )
 
       if (state.isAdmin) {
         Spacer(Modifier.height(6.dp))
@@ -165,15 +158,13 @@ fun SarimNavigationDrawerContent(
       HorizontalDivider(color = palette.border)
       Spacer(Modifier.height(4.dp))
 
-      if (state.isAdmin) {
-        DrawerItemRow(
-          label = "Settings",
-          icon = Icons.Rounded.Settings,
-          selected = state.activeStandalone is StandaloneScreen.Settings,
-          testTag = "drawer_settings",
-          onClick = { onOpenStandalone(StandaloneScreen.Settings) },
-        )
-      }
+      DrawerItemRow(
+        label = "Settings",
+        icon = Icons.Rounded.Settings,
+        selected = state.activeStandalone is StandaloneScreen.Settings,
+        testTag = "drawer_settings",
+        onClick = { onOpenStandalone(StandaloneScreen.Settings) },
+      )
       DrawerItemRow(
         label = "Logout",
         icon = Icons.AutoMirrored.Rounded.Logout,

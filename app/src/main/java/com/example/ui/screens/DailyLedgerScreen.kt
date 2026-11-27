@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sync
@@ -20,13 +21,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.local.DailyLedgerEntity
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -43,6 +49,7 @@ fun DailyLedgerScreen(
 ) {
   val palette = LocalSarimPalette.current
   val context = LocalContext.current
+  val clipboardManager = LocalClipboardManager.current
   val ledgerState by ledgerViewModel.uiState.collectAsStateWithLifecycle()
 
   val activeEntries = ledgerState.entries
@@ -75,6 +82,11 @@ fun DailyLedgerScreen(
   var partyText by remember { mutableStateOf("") }
   var refText by remember { mutableStateOf("") }
   var noteText by remember { mutableStateOf("") }
+  var showCategoryDialog by remember { mutableStateOf(false) }
+  var pendingAmount by remember { mutableDoubleStateOf(0.0) }
+  var selectedCategory by remember { mutableStateOf("") }
+  var selectedScope by remember { mutableStateOf("Business") }
+  var sheetEntry by remember { mutableStateOf<DailyLedgerEntity?>(null) }
 
   fun resetForm() {
     editingId = null
@@ -84,6 +96,8 @@ fun DailyLedgerScreen(
     partyText = ""
     refText = ""
     noteText = ""
+    selectedCategory = ""
+    selectedScope = "Business"
   }
 
   val showSkeleton = state.isSyncing || ledgerState.isLoading
@@ -349,18 +363,26 @@ fun DailyLedgerScreen(
               viewModel.showDialog(AppDialogRequest("Invalid Destination", "Choose a different destination channel for transfer.", tone = DialogTone.ERROR, cancelLabel = null))
               return@SarimPrimaryButton
             }
-            ledgerViewModel.saveEntry(
-              editingId = editingId,
-              dateEpoch = dateEpoch,
-              type = entryType,
-              amount = amt,
-              mode = modeText.trim().take(40),
-              toMode = toModeText.trim().take(40),
-              party = partyText.trim().take(80),
-              refNo = refText.trim().take(40),
-              note = noteText.trim().take(120),
-              onSaved = { resetForm() },
-            )
+            if (entryType == "TRANSFER") {
+              ledgerViewModel.saveEntry(
+                editingId = editingId,
+                dateEpoch = dateEpoch,
+                type = entryType,
+                amount = amt,
+                mode = modeText.trim().take(40),
+                toMode = toModeText.trim().take(40),
+                party = partyText.trim().take(80),
+                refNo = refText.trim().take(40),
+                note = noteText.trim().take(120),
+                onSaved = { resetForm() },
+              )
+            } else {
+              pendingAmount = amt
+              if (selectedCategory.isBlank()) {
+                selectedCategory = if (entryType == "IN") "General Income" else "General Expense"
+              }
+              showCategoryDialog = true
+            }
           },
         )
       }
@@ -441,6 +463,7 @@ fun DailyLedgerScreen(
             amountColor = c,
             chipText = e.type,
             chipColor = c,
+            showDots = e.type == "TRANSFER",
           )
         },
         yearSummary = { items -> "${items.size} entries" },
@@ -451,50 +474,173 @@ fun DailyLedgerScreen(
         },
         daySummary = { items -> "${items.size} row(s)" },
         emptySubtitle = "No cashbook entries match your search.",
-      ) { rec ->
-        val entry = rec.item
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          if (entry.refNo.isNotBlank()) Text("Ref #: ${entry.refNo}", color = palette.textMuted, fontSize = 12.sp)
-          if (entry.note.isNotBlank()) Text("Note: ${entry.note}", color = palette.textMuted, fontSize = 12.sp)
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimSecondaryButton(
-              text = "Edit",
-              onClick = {
-                editingId = entry.id
-                entryType = entry.type
-                dateEpoch = entry.dateEpoch
-                amountText = entry.amount.toString()
-                modeText = entry.mode
-                toModeText = entry.toMode
-                partyText = entry.party
-                refText = entry.refNo
-                noteText = entry.note
-              },
-              modifier = Modifier.weight(1f),
+        onItemClick = { rec -> sheetEntry = rec.item },
+      )
+    }
+        Spacer(Modifier.height(24.dp))
+      }
+    }
+  }
+
+  if (showCategoryDialog) {
+    val defaultCats = if (entryType == "IN") {
+      listOf("Sales Revenue", "Debt Collection", "Partner Investment", "General Income", "Other Income")
+    } else {
+      listOf("Raw Materials", "Factory Expense", "Salary / Wages", "Fuel & Transport", "Rent & Utilities", "Supplier Payment", "Home / Personal", "General Expense")
+    }
+    val allSuggestions = (defaultCats + categorySummary.map { it.first }).distinct()
+    val toneColor = if (entryType == "IN") palette.green else palette.red
+    Dialog(
+      onDismissRequest = { showCategoryDialog = false },
+      properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true, usePlatformDefaultWidth = false),
+    ) {
+      Surface(
+        modifier = Modifier
+          .fillMaxWidth(0.92f)
+          .widthIn(max = 460.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = palette.surface.copy(alpha = 0.96f),
+        border = BorderStroke(1.dp, toneColor.copy(alpha = 0.45f)),
+      ) {
+        Column(
+          modifier = Modifier
+            .padding(18.dp)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Select Category", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            SarimChip(if (entryType == "IN") "CASH IN" else "CASH OUT", toneColor)
+          }
+          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
+            Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+              Text(modeText.ifBlank { "Cash" }, color = palette.textMuted, fontSize = 13.sp)
+              Text(
+                SarimFormat.formatRs(pendingAmount, true, state.hideMoneyFigures),
+                color = toneColor,
+                style = TabularNumberStyle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+              )
+            }
+          }
+          SarimSearchFieldWithDropdown(
+            value = selectedCategory,
+            onValueChange = { selectedCategory = it },
+            label = "Category",
+            placeholder = "Search or type category...",
+            suggestions = allSuggestions,
+            onSuggestionSelected = { selectedCategory = it },
+            testTag = "dl_category_input",
+          )
+          if (entryType == "OUT") {
+            SarimFieldLabel("Expense Scope")
+            SarimToggleGroup(
+              options = listOf("Business", "Home"),
+              selected = selectedScope,
+              labelOf = { it },
+              onSelect = { selectedScope = it },
+              testTagPrefix = "dl_scope",
             )
-            SarimDangerButton(
-              text = "Delete",
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SarimSecondaryButton("Cancel", onClick = { showCategoryDialog = false }, modifier = Modifier.weight(1f), testTag = "dl_cat_cancel")
+            SarimPrimaryButton(
+              text = "Save Entry",
               onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Ledger Entry",
-                    body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
-                    tone = DialogTone.PERMANENT,
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      ledgerViewModel.deleteEntry(entry.id)
-                    },
-                  )
+                val chosenCat = selectedCategory.trim().ifBlank { if (entryType == "IN") "General Income" else "General Expense" }
+                ledgerViewModel.saveEntry(
+                  editingId = editingId,
+                  dateEpoch = dateEpoch,
+                  type = entryType,
+                  amount = pendingAmount,
+                  mode = modeText.trim().take(40),
+                  toMode = toModeText.trim().take(40),
+                  party = partyText.trim().take(80),
+                  refNo = refText.trim().take(40),
+                  note = noteText.trim().take(120),
+                  category = chosenCat,
+                  scope = if (entryType == "OUT") selectedScope else "",
+                  onSaved = {
+                    showCategoryDialog = false
+                    resetForm()
+                  },
                 )
               },
               modifier = Modifier.weight(1f),
+              testTag = "dl_cat_save",
             )
           }
         }
       }
     }
-        Spacer(Modifier.height(24.dp))
-      }
+  }
+
+  sheetEntry?.let { entry ->
+    val tone = when (entry.type) {
+      "IN" -> palette.green
+      "OUT" -> palette.red
+      else -> palette.cyan
     }
+    SarimRecordBottomSheet(
+      title = if (entry.type == "TRANSFER") "${entry.mode} → ${entry.toMode}" else entry.party.ifBlank { entry.category },
+      subtitle = "${SarimFormat.formatDate(entry.dateEpoch)} · ${entry.type}",
+      amountText = SarimFormat.formatRs(entry.amount, true, state.hideMoneyFigures),
+      amountColor = tone,
+      badgeText = entry.type,
+      badgeColor = tone,
+      metrics = buildList {
+        add("Channel" to entry.mode)
+        if (entry.type == "TRANSFER" && entry.toMode.isNotBlank()) add("To Channel" to entry.toMode)
+        if (entry.category.isNotBlank()) add("Category" to entry.category)
+        if (entry.party.isNotBlank()) add("Party" to entry.party)
+        if (entry.scope.isNotBlank()) add("Scope" to entry.scope)
+        if (entry.refNo.isNotBlank()) add("Ref #" to entry.refNo)
+        if (entry.note.isNotBlank()) add("Note" to entry.note)
+      },
+      onDismiss = { sheetEntry = null },
+      extraActionLabel = "Copy Voucher",
+      extraActionIcon = Icons.Rounded.ContentCopy,
+      onExtraAction = {
+        val voucher = buildString {
+          appendLine("=== CASHBOOK TRANSACTION STATEMENT VOUCHER ===")
+          appendLine("Date: ${SarimFormat.dateInput(entry.dateEpoch)}")
+          appendLine("Type: ${entry.type}")
+          appendLine("Amount: ${SarimFormat.formatRs(entry.amount)}")
+          appendLine("Channel: ${entry.mode}${if (entry.type == "TRANSFER" && entry.toMode.isNotBlank()) " -> ${entry.toMode}" else ""}")
+          if (entry.category.isNotBlank()) appendLine("Category: ${entry.category}")
+          if (entry.party.isNotBlank()) appendLine("Party: ${entry.party}")
+          if (entry.refNo.isNotBlank()) appendLine("Ref #: ${entry.refNo}")
+          if (entry.note.isNotBlank()) appendLine("Note: ${entry.note}")
+          append("Business: GULL AND ZUBAIR")
+        }
+        clipboardManager.setText(AnnotatedString(voucher))
+        viewModel.postStatus("Voucher copied")
+      },
+      onEdit = {
+        editingId = entry.id
+        entryType = entry.type
+        dateEpoch = entry.dateEpoch
+        amountText = entry.amount.toString()
+        modeText = entry.mode
+        toModeText = entry.toMode
+        partyText = entry.party
+        refText = entry.refNo
+        noteText = entry.note
+        selectedCategory = entry.category
+        selectedScope = entry.scope.ifBlank { "Business" }
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Ledger Entry",
+            body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
+            tone = DialogTone.PERMANENT,
+            confirmLabel = "Delete",
+            onConfirm = {
+              ledgerViewModel.deleteEntry(entry.id)
+            },
+          )
+        )
+      },
+    )
   }
 }

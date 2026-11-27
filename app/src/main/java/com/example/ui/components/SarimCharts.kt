@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -80,12 +82,14 @@ fun MultiLineTrendChart(
   val allValues = activeSeries.flatMap { it.values }
 
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    // Legend chips
-    Row(
+    // Legend chips (all series wrapped)
+    @OptIn(ExperimentalLayoutApi::class)
+    FlowRow(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      seriesList.take(4).forEach { s ->
+      seriesList.forEach { s ->
         val enabled = s.label !in hiddenSeries
         val c = Color(s.colorHex)
         Surface(
@@ -257,6 +261,7 @@ fun RankedHorizontalBars(
   barColor: Color,
   modifier: Modifier = Modifier,
   emptyMessage: String = "Nothing recorded in this period",
+  onItemClick: ((RankedBarItem) -> Unit)? = null,
 ) {
   val palette = LocalSarimPalette.current
   if (items.isEmpty()) {
@@ -268,7 +273,16 @@ fun RankedHorizontalBars(
     items.forEach { item ->
       val safeVal = safeFinite(item.value)
       val ratio = (safeVal / maxVal).toFloat().let { if (it.isFinite()) it else 0.03f }.coerceIn(0.03f, 1f)
-      Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+      val rowModifier = if (onItemClick != null) {
+        Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(8.dp))
+          .clickable { onItemClick(item) }
+          .padding(vertical = 2.dp)
+      } else {
+        Modifier.fillMaxWidth()
+      }
+      Column(modifier = rowModifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
           Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
             Text(item.label, color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)

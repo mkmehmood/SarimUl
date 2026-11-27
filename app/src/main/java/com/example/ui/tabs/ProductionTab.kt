@@ -57,6 +57,7 @@ fun ProductionTab(
   var formulaUnits by remember { mutableStateOf("1") }
   var attachedPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
   var editingEntryId by remember { mutableStateOf<String?>(null) }
+  var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
 
   var combinedPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
   var compareMetric by remember { mutableStateOf(CompareMetric.WEIGHT) }
@@ -109,6 +110,9 @@ fun ProductionTab(
                 editingEntryId = null; grossWeight = ""; containerWeight = "0"; formulaUnits = "1"; attachedPhotos = emptyList()
               }) { Text("Cancel Edit", color = palette.amber) }
             }
+          }
+          if (editingEntryId != null) {
+            SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
           }
 
           // 1. Formula Units Available
@@ -377,59 +381,63 @@ fun ProductionTab(
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         monthSummary = { items -> "${items.size} entries · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
         daySummary = { items -> "${items.size} · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
-      ) { rec ->
-        val p: ProductionEntryEntity = rec.item
-        val photos = JsonCodecs.decodeStrings(p.photoUrisJson)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimStatTile("Gross", SarimFormat.formatKg(p.grossWeightKg), Modifier.weight(1f))
-          SarimStatTile("Cost", SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney), Modifier.weight(1f), palette.red)
-          SarimStatTile("Value", SarimFormat.formatRs(p.totalValue, false, hideMoney), Modifier.weight(1f), palette.green)
-        }
-        if (photos.isNotEmpty()) {
-          TextButton(onClick = { viewModel.openPhotoViewer(photos, 0) }) {
-            Text("View ${photos.size} photo(s)", color = palette.cyan)
-          }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimSecondaryButton(
-            text = "Edit",
-            icon = Icons.Rounded.Edit,
-            modifier = Modifier.weight(1f),
-            onClick = {
-              editingEntryId = p.id
-              selectedDate = p.dateEpoch
-              selectedStoreKey = p.storeKey
-              grossWeight = p.grossWeightKg.toString()
-              containerWeight = p.containerWeightKg.toString()
-              formulaUnits = p.formulaUnitsUsed.toString()
-              attachedPhotos = photos
-              topView = ProdTopView.STORE_ENTRY
-            },
-          )
-          SarimDangerButton(
-            text = "Delete",
-            icon = Icons.Rounded.Delete,
-            modifier = Modifier.weight(1f),
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Production Entry?",
-                  body = "Store: ${p.storeName}\nNet Weight: ${SarimFormat.formatKg(p.netWeightKg)}\nMoved to Recycle Bin for 90 days.",
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(
-                      errorTitle = "Delete Failed",
-                      successMessage = "Production entry deleted",
-                    ) {
-                      viewModel.repository.deleteProductionEntry(p.id)
-                    }
-                  },
-                )
-              )
-            },
-          )
-        }
-      }
+        onItemClick = { rec -> sheetEntry = rec.item },
+      )
     }
+  }
+
+  sheetEntry?.let { p ->
+    val photos = remember(p.photoUrisJson) { JsonCodecs.decodeStrings(p.photoUrisJson) }
+    val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
+    val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
+    SarimRecordBottomSheet(
+      title = p.storeName,
+      subtitle = "${SarimFormat.formatDate(p.dateEpoch)} · ${p.formulaName}",
+      amountText = SarimFormat.formatKg(p.netWeightKg),
+      amountColor = storeColorForKey(p.storeKey, palette.isDark),
+      badgeText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+      badgeColor = if (p.totalProfit >= 0) palette.green else palette.red,
+      metrics = listOf(
+        "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
+        "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
+        "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
+        "Formula Units Used" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
+        "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
+        "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
+        "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
+        "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
+        "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+      ),
+      onDismiss = { sheetEntry = null },
+      extraActionLabel = if (photos.isNotEmpty()) "View ${photos.size} Photo(s)" else null,
+      onExtraAction = if (photos.isNotEmpty()) { { viewModel.openPhotoViewer(photos, 0) } } else null,
+      onEdit = {
+        editingEntryId = p.id
+        selectedDate = p.dateEpoch
+        selectedStoreKey = p.storeKey
+        grossWeight = p.grossWeightKg.toString()
+        containerWeight = p.containerWeightKg.toString()
+        formulaUnits = p.formulaUnitsUsed.toString()
+        attachedPhotos = photos
+        topView = ProdTopView.STORE_ENTRY
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Production Entry?",
+            body = "Store: ${p.storeName}\nNet Weight: ${SarimFormat.formatKg(p.netWeightKg)}\nMoved to Recycle Bin for 90 days.",
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(
+                errorTitle = "Delete Failed",
+                successMessage = "Production entry deleted",
+              ) {
+                viewModel.repository.deleteProductionEntry(p.id)
+              }
+            },
+          )
+        )
+      },
+    )
   }
 }

@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.PaymentTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
 import com.example.ui.components.*
@@ -26,6 +27,8 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
+import com.example.util.DialogHighlight
+import com.example.util.DialogTone
 import com.example.util.PdfExporter
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
@@ -66,6 +69,8 @@ fun PaymentsTab(
   var unifiedSearch by remember { mutableStateOf("") }
   var unifiedMode by remember { mutableStateOf(UnifiedViewMode.ENTITIES) }
   var unifiedPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
+  var editingTxId by remember { mutableStateOf<String?>(null) }
+  var sheetPayment by remember { mutableStateOf<PaymentTransactionEntity?>(null) }
 
   val suggestions = remember(state.paymentEntities, state.paymentTransactions) {
     (state.paymentEntities.map { it.name } + state.paymentTransactions.filter { it.type == "EXPENSE" }.map { it.entityOrExpenseName }).distinct()
@@ -82,10 +87,13 @@ fun PaymentsTab(
     item {
       SarimCard {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-          Text("Transaction Manager", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+          Text(if (editingTxId == null) "Transaction Manager" else "Edit Transaction", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           TextButton(onClick = {
-            nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList()
-          }) { Text("Clear", color = palette.cyan) }
+            editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList()
+          }) { Text(if (editingTxId == null) "Clear" else "Cancel Edit", color = if (editingTxId == null) palette.cyan else palette.amber) }
+        }
+        if (editingTxId != null) {
+          SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
         }
 
         SarimDatePickerField("Date", dateEpoch, onDateSelected = { dateEpoch = it }, testTag = "expense_date")
@@ -145,7 +153,7 @@ fun PaymentsTab(
         SarimCheckboxRow(checked = addToLedger, onCheckedChange = { addToLedger = it }, label = "Add to Daily Ledger")
 
         SarimPrimaryButton(
-          text = "Save Transaction",
+          text = if (editingTxId == null) "Save Transaction" else "Update Transaction",
           onClick = {
             if (SarimFormat.isFutureDate(dateEpoch)) {
               viewModel.showDialog(AppDialogRequest("Invalid Date", "Future dates are not allowed.", confirmLabel = "OK", cancelLabel = null))
@@ -156,13 +164,14 @@ fun PaymentsTab(
               viewModel.showDialog(AppDialogRequest("Invalid Entry", "Enter a valid name/entity and positive amount.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
+            val currentEditId = editingTxId
             viewModel.launchSafely(
               errorTitle = "Save Payment Failed",
-              successMessage = "Payment transaction saved",
-              onSuccess = { nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList() },
+              successMessage = if (currentEditId == null) "Payment transaction saved" else "Payment transaction updated",
+              onSuccess = { editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList() },
             ) {
               viewModel.repository.savePaymentTransaction(
-                editingId = null,
+                editingId = currentEditId,
                 dateEpoch = dateEpoch,
                 type = txType.code,
                 name = nameText,
@@ -363,29 +372,68 @@ fun PaymentsTab(
             "${items.size} · In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
           },
           daySummary = { items -> "${items.size} entries" },
-        ) { rec ->
-          val p = rec.item
-          SarimDangerButton(
-            text = "Delete",
-            icon = Icons.Rounded.Delete,
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Payment?",
-                  body = "Name: ${p.entityOrExpenseName}\nAmount: ${SarimFormat.formatRs(p.amount)}",
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Payment Failed", successMessage = "Moved to Recycle Bin") {
-                      viewModel.repository.deletePaymentTransaction(p.id)
-                    }
-                  },
-                )
-              )
-            },
-          )
-        }
+          onItemClick = { rec -> sheetPayment = rec.item },
+        )
       }
     }
+  }
+
+  sheetPayment?.let { p ->
+    val isIn = p.type == "PAYMENT_IN"
+    val deleteTitle = when (p.type) {
+      "PAYMENT_IN" -> "Delete Payment IN"
+      "PAYMENT_OUT" -> "Delete Payment OUT"
+      else -> "Delete Expense"
+    }
+    val deleteTypeDesc = when (p.type) {
+      "PAYMENT_IN" -> "Payment Received (IN)"
+      "PAYMENT_OUT" -> "Payment Made (OUT)"
+      else -> "Operating Expense"
+    }
+    SarimRecordBottomSheet(
+      title = p.entityOrExpenseName,
+      subtitle = "${SarimFormat.formatDate(p.dateEpoch)}${if (p.timeStr.isNotBlank()) " · ${p.timeStr}" else ""}",
+      amountText = "${if (isIn) "+" else "−"} ${SarimFormat.formatRs(p.amount, false, hideMoney)}",
+      amountColor = if (isIn) palette.green else palette.red,
+      badgeText = p.type.replace("_", " "),
+      badgeColor = if (isIn) palette.green else palette.red,
+      metrics = buildList {
+        add("Type" to p.type.replace("_", " "))
+        add("Date" to SarimFormat.dateInput(p.dateEpoch))
+        add("Amount" to SarimFormat.formatRs(p.amount, true, hideMoney))
+        if (p.description.isNotBlank()) add("Description" to p.description)
+        add("Daily Ledger" to if (p.addToLedger) "Linked" else "Not linked")
+      },
+      onDismiss = { sheetPayment = null },
+      extraActionLabel = if (p.photoUri.isNotBlank()) "View Attached Photo" else null,
+      onExtraAction = if (p.photoUri.isNotBlank()) { { viewModel.openPhotoViewer(listOf(p.photoUri), 0) } } else null,
+      onEdit = {
+        editingTxId = p.id
+        dateEpoch = p.dateEpoch
+        txType = PayTxType.entries.firstOrNull { it.code == p.type } ?: PayTxType.PAYMENT_OUT
+        nameText = p.entityOrExpenseName
+        amountText = p.amount.toString()
+        descriptionText = p.description
+        photoUris = if (p.photoUri.isNotBlank()) listOf(p.photoUri) else emptyList()
+        addToLedger = p.addToLedger
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = deleteTitle,
+            body = "Delete this $deleteTypeDesc?\nEntity: ${p.entityOrExpenseName}\nDate: ${SarimFormat.dateInput(p.dateEpoch)}\nPermanent: This cannot be undone.",
+            tone = DialogTone.PERMANENT,
+            highlight = DialogHighlight("Amount", SarimFormat.formatRs(p.amount, false, hideMoney)),
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(errorTitle = "Delete Payment Failed", successMessage = "Moved to Recycle Bin") {
+                viewModel.repository.deletePaymentTransaction(p.id)
+              }
+            },
+          )
+        )
+      },
+    )
   }
 }
 

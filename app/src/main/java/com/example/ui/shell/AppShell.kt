@@ -30,7 +30,6 @@ import com.example.ui.navigation.SarimNavHost
 import com.example.ui.navigation.SarimRoute
 import com.example.ui.theme.CinzelFontFamily
 import com.example.ui.theme.LocalSarimPalette
-import com.example.viewmodel.BaseInventoryViewModel
 import com.example.viewmodel.BaseLedgerViewModel
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
@@ -48,9 +47,6 @@ fun AppShell(
   val snackbarHostState = remember { SnackbarHostState() }
   val navController = rememberNavController()
 
-  val inventoryViewModel: BaseInventoryViewModel = viewModel(
-    factory = remember(viewModel.repository) { BaseInventoryViewModel.Factory(viewModel.repository) },
-  )
   val ledgerViewModel: BaseLedgerViewModel = viewModel(
     factory = remember(viewModel.repository) { BaseLedgerViewModel.Factory(viewModel.repository) },
   )
@@ -254,34 +250,6 @@ fun AppShell(
           }
         }
       },
-      bottomBar = {
-        if (isPrimaryHeader) {
-          NavigationBar(
-            containerColor = palette.surface,
-            contentColor = palette.textPrimary,
-            windowInsets = WindowInsets.navigationBars,
-            tonalElevation = 0.dp,
-          ) {
-            SarimRoute.primaryDestinations.forEach { (dest, icon) ->
-              val selected = currentRoute == dest.route
-              NavigationBarItem(
-                selected = selected,
-                onClick = { viewModel.openRoute(dest) },
-                icon = { Icon(icon, contentDescription = dest.title) },
-                label = { Text(dest.title, fontSize = 11.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium) },
-                colors = NavigationBarItemDefaults.colors(
-                  selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                  selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                  indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                  unselectedIconColor = palette.textMuted,
-                  unselectedTextColor = palette.textMuted,
-                ),
-                modifier = Modifier.testTag("bottom_nav_${dest.route}"),
-              )
-            }
-          }
-        }
-      },
     ) { innerPadding ->
       Box(
         modifier = Modifier
@@ -299,7 +267,6 @@ fun AppShell(
             startDestination = initialRoute,
             state = state,
             viewModel = viewModel,
-            inventoryViewModel = inventoryViewModel,
             ledgerViewModel = ledgerViewModel,
           )
         }

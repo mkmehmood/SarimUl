@@ -279,6 +279,24 @@ class SarimRepository(
     )
   }
 
+  private suspend fun assertStoreRemainingNonNegative(
+    storeKey: String,
+    excludingProdId: String?,
+    addedNetKg: Double,
+  ) {
+    val producedWithout = dao.getAllProductionEntries()
+      .filter { !it.isDeleted && !it.isReturn && it.storeKey == storeKey && it.id != excludingProdId }
+      .sumOf { it.netWeightKg }
+    val tIn = dao.getAllStockTransfers().filter { !it.isDeleted && it.toStoreKey == storeKey }.sumOf { it.quantityKg }
+    val tOut = dao.getAllStockTransfers().filter { !it.isDeleted && it.fromStoreKey == storeKey }.sumOf { it.quantityKg }
+    val returned = dao.getAllSettlements().filter { !it.isDeleted && it.returnStoreKey == storeKey }.sumOf { it.returnedKg }
+    val sold = dao.getAllSales().filter { !it.isDeleted && !it.isRepSale && it.mode == "SALE" && it.storeKey == storeKey }.sumOf { it.quantityKg }
+    val projectedRemaining = producedWithout + addedNetKg + tIn + returned - sold - tOut
+    if (projectedRemaining < -0.001) {
+      throw IllegalStateException("Remaining store stock cannot drop below zero (sold or transferred stock exceeds new remaining).")
+    }
+  }
+
   suspend fun saveProductionEntry(
     editingId: String?,
     dateEpoch: Long,
@@ -293,6 +311,10 @@ class SarimRepository(
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllProductionEntries().firstOrNull { it.id == id } }
     val netKg = (grossKg - containerKg).coerceAtLeast(0.0)
+    if (existing != null && !existing.isReturn && existing.storeKey != store.storeKey) {
+      assertStoreRemainingNonNegative(existing.storeKey, existing.id, 0.0)
+    }
+    assertStoreRemainingNonNegative(store.storeKey, existing?.id, netKg)
     val totalFormulaCost = unitsUsed * unitCost
     val costPerKg = if (netKg > 0.0001) totalFormulaCost / netKg else 0.0
     val salePrice = store.salePricePerKg
@@ -428,6 +450,9 @@ class SarimRepository(
   suspend fun deleteProductionEntry(id: String) {
     val now = System.currentTimeMillis()
     val item = dao.getAllProductionEntries().firstOrNull { it.id == id }
+    if (item != null && !item.isReturn) {
+      assertStoreRemainingNonNegative(item.storeKey, item.id, 0.0)
+    }
     val groupId = if (item?.isReturn == true && !item.returnLogId.isNullOrBlank()) "grp_prod_${UUID.randomUUID()}" else null
 
     if (item != null) {
@@ -699,12 +724,57 @@ class SarimRepository(
     )
   }
 
-  suspend fun saveFactoryBatch(dateEpoch: Long, formula: FormulaEntity, units: Double) {
+  suspend fun saveFactoryBatch(
+    dateEpoch: Long,
+    formula: FormulaEntity,
+    units: Double,
+    editingId: String? = null,
+  ) {
     val now = System.currentTimeMillis()
+    val existing = editingId?.let { id -> dao.getAllFactoryBatches().firstOrNull { it.id == id && !it.isDeleted } }
+
+    if (existing != null) {
+      val priorFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
+      val oldFormula = priorFormulas[existing.formulaId]
+      if (oldFormula != null && (oldFormula.unitsAvailable + 0.0001) < existing.unitsProduced) {
+        throw IllegalStateException("Some units from this batch have already been consumed.")
+      }
+      val priorMats = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
+      val oldMatsUsed = JsonCodecs.decodeFormulaMaterialsUsed(existing.materialsUsedJson)
+      if (oldMatsUsed.isNotEmpty()) {
+        oldMatsUsed.forEach { used ->
+          priorMats[used.id]?.let { mat ->
+            val restored = mat.copy(stockKg = mat.stockKg + used.quantity, syncPending = true, updatedAt = now)
+            dao.upsertRawMaterial(restored)
+            enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, restored.id, SarimWebSchema.materialToMap(restored))
+          }
+        }
+      } else if (oldFormula != null) {
+        val flatOld = FormulaCalculator.flattenRawMaterials(oldFormula, existing.unitsProduced, priorFormulas, priorMats)
+        flatOld.forEach { (matId, kgUsed) ->
+          priorMats[matId]?.let { mat ->
+            val restored = mat.copy(stockKg = mat.stockKg + kgUsed, syncPending = true, updatedAt = now)
+            dao.upsertRawMaterial(restored)
+            enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, restored.id, SarimWebSchema.materialToMap(restored))
+          }
+        }
+      }
+      if (oldFormula != null) {
+        dao.upsertFormula(
+          oldFormula.copy(
+            unitsAvailable = (oldFormula.unitsAvailable - existing.unitsProduced).coerceAtLeast(0.0),
+            syncPending = true,
+            updatedAt = now,
+          )
+        )
+      }
+    }
+
     val allFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
     val allMaterials = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
-    val summary = FormulaCalculator.computeFormulaSummary(formula, allFormulas, allMaterials)
-    val flatRaw = FormulaCalculator.flattenRawMaterials(formula, units, allFormulas, allMaterials)
+    val targetFormula = allFormulas[formula.id] ?: formula
+    val summary = FormulaCalculator.computeFormulaSummary(targetFormula, allFormulas, allMaterials)
+    val flatRaw = FormulaCalculator.flattenRawMaterials(targetFormula, units, allFormulas, allMaterials)
     var rawUsedKg = 0.0
     val matsUsedList = mutableListOf<JsonCodecs.FormulaMaterialUsed>()
     flatRaw.forEach { (matId, kgUsed) ->
@@ -727,14 +797,14 @@ class SarimRepository(
       }
     }
 
-    val additionalTotal = formula.additionalCostPerUnit * units
+    val additionalTotal = targetFormula.additionalCostPerUnit * units
     val materialsTotal = summary.rawMaterialCostPerUnit * units
     val totalCost = materialsTotal + additionalTotal
     val outputKg = summary.unitWeightKg * units
 
     dao.upsertFormula(
-      formula.copy(
-        unitsAvailable = formula.unitsAvailable + units,
+      targetFormula.copy(
+        unitsAvailable = targetFormula.unitsAvailable + units,
         syncPending = true,
         updatedAt = now,
       )
@@ -742,9 +812,10 @@ class SarimRepository(
     touchTimestampKey("formulas_timestamp", SarimWebSchema.COL_FORMULAS, now)
 
     val batch = FactoryBatchEntity(
+      id = existing?.id ?: UUID.randomUUID().toString(),
       dateEpoch = dateEpoch,
-      formulaId = formula.id,
-      formulaName = formula.name,
+      formulaId = targetFormula.id,
+      formulaName = targetFormula.name,
       unitsProduced = units,
       rawUsedKg = rawUsedKg,
       outputKg = outputKg,
@@ -753,8 +824,9 @@ class SarimRepository(
       totalCost = totalCost,
       costPerUnit = summary.totalCostPerUnit,
       dateStr = SarimFormat.dateInput(dateEpoch),
-      timeStr = SarimFormat.formatTime(now),
+      timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
       materialsUsedJson = JsonCodecs.encodeFormulaMaterialsUsed(matsUsedList),
+      createdAt = existing?.createdAt ?: now,
       updatedAt = now,
     )
     dao.upsertFactoryBatch(batch)
@@ -1719,6 +1791,44 @@ class SarimRepository(
 
   suspend fun saveCalculatorSettlement(settlement: CalculatorSettlementEntity) {
     val now = System.currentTimeMillis()
+    val existing = dao.getAllSettlements().firstOrNull { it.id == settlement.id && !it.isDeleted }
+    if (existing != null) {
+      // Unlink prior sales tied to this settlement before re-reconciling
+      dao.getAllSales().filter { !it.isDeleted && it.usedInCalcId == existing.id }.forEach { sale ->
+        val col = if (sale.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+        val unlinked = sale.copy(usedInCalcId = null, syncPending = true, updatedAt = now)
+        dao.upsertSale(unlinked)
+        enqueueOutboxSet(col, unlinked.id, SarimWebSchema.saleToMap(unlinked))
+      }
+      // Reverse prior return log and return production entry
+      existing.returnLogId?.takeIf { it.isNotBlank() }?.let { rLogId ->
+        dao.softDeleteReturnLog(rLogId, now)
+      }
+      existing.returnEntryId?.takeIf { it.isNotBlank() }?.let { rEntryId ->
+        dao.softDeleteProductionEntry(rEntryId, now)
+      }
+      // Reverse prior CHORA adjustment
+      if (existing.expiredKg > 0.0 && existing.expiredApplied) {
+        dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }?.let { chora ->
+          val revertedChora = chora.copy(
+            stockKg = (chora.stockKg - existing.expiredKg).coerceAtLeast(0.0),
+            collectedKg = (chora.collectedKg - existing.expiredKg).coerceAtLeast(0.0),
+            syncPending = true,
+            updatedAt = now,
+          )
+          dao.upsertRawMaterial(revertedChora)
+          enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, revertedChora.id, SarimWebSchema.materialToMap(revertedChora))
+        }
+      }
+      // Soft-delete prior ledger rows created by this settlement
+      var touchedOldLedger = false
+      dao.getAllDailyLedger().filter { !it.isDeleted && it.sourceType == "CALCULATOR" && it.sourceId == existing.id }.forEach { l ->
+        dao.softDeleteLedgerEntry(l.id, now)
+        touchedOldLedger = true
+      }
+      if (touchedOldLedger) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+    }
+
     val dateStr = settlement.dateStr.ifBlank { SarimFormat.dateInput(settlement.dateEpoch) }
     val statusClass = when {
       settlement.status.contains("SHORT", ignoreCase = true) -> "status-short"
@@ -1733,8 +1843,8 @@ class SarimRepository(
       appendCategoryToKv("commission_categories", it.category, now)
     }
 
-    var returnLogId: String? = settlement.returnLogId
-    var returnEntryId: String? = settlement.returnEntryId
+    var returnLogId: String? = if (existing == null) settlement.returnLogId else null
+    var returnEntryId: String? = if (existing == null) settlement.returnEntryId else null
     if (settlement.returnedKg > 0.0 && settlement.returnStoreKey.isNotBlank()) {
       val log = ReturnLogEntity(
         id = returnLogId ?: UUID.randomUUID().toString(),

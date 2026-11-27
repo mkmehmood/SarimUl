@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.FactoryBatchEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
@@ -49,6 +50,8 @@ fun FactoryTab(
   var invAsc by remember { mutableStateOf(true) }
   var summaryPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
   var showMaterialsBreakdown by remember { mutableStateOf(false) }
+  var editingBatchId by remember { mutableStateOf<String?>(null) }
+  var sheetBatch by remember { mutableStateOf<FactoryBatchEntity?>(null) }
 
   val selectedFormula = state.formulas.firstOrNull { it.id == selectedFormulaId } ?: state.formulas.firstOrNull()
   val selectedSummary = selectedFormula?.let { snap?.formulaSummaries?.get(it.id) }
@@ -65,7 +68,17 @@ fun FactoryTab(
     // 1. New Production Entry
     item {
       SarimCard {
-        Text("New Production Entry", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+          Text(if (editingBatchId == null) "New Production Entry" else "Edit Factory Batch", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+          if (editingBatchId != null) {
+            TextButton(onClick = { editingBatchId = null; unitsText = "1" }) {
+              Text("Cancel Edit", color = palette.amber)
+            }
+          }
+        }
+        if (editingBatchId != null) {
+          SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
+        }
         SarimDatePickerField("Date", factoryDate, onDateSelected = { factoryDate = it }, testTag = "factory_date")
 
         if (state.formulas.isNotEmpty()) {
@@ -117,7 +130,7 @@ fun FactoryTab(
         }
 
         SarimPrimaryButton(
-          text = "Save Factory Production",
+          text = if (editingBatchId == null) "Save Factory Production" else "Update Factory Production",
           testTag = "btn_save_factory",
           onClick = {
             if (SarimFormat.isFutureDate(factoryDate)) {
@@ -128,12 +141,13 @@ fun FactoryTab(
               viewModel.showDialog(AppDialogRequest("Invalid Units", "Units to produce must be at least 1.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
+            val editId = editingBatchId
             viewModel.launchSafely(
               errorTitle = "Batch Save Failed",
-              successMessage = "Factory batch saved for ${selectedFormula.name}",
-              onSuccess = { unitsText = "1" },
+              successMessage = if (editId == null) "Factory batch saved for ${selectedFormula.name}" else "Factory batch updated for ${selectedFormula.name}",
+              onSuccess = { editingBatchId = null; unitsText = "1" },
             ) {
-              viewModel.repository.saveFactoryBatch(factoryDate, selectedFormula, unitsInt.toDouble())
+              viewModel.repository.saveFactoryBatch(factoryDate, selectedFormula, unitsInt.toDouble(), editingId = editId)
             }
           },
         )
@@ -269,6 +283,7 @@ fun FactoryTab(
             subtitle = "${SarimFormat.formatQty(b.unitsProduced, 1)} units · ${SarimFormat.formatKg(b.outputKg)}",
             amountText = SarimFormat.formatRs(b.totalCost, true, hideMoney),
             amountColor = palette.red,
+            showDots = true,
           )
         }
         AccordionHistoryList(
@@ -276,37 +291,63 @@ fun FactoryTab(
           yearSummary = { items -> "${items.size} entries" },
           monthSummary = { items -> "${items.size} entries · Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
           daySummary = { items -> "${items.size} batches" },
-        ) { rec ->
-          val b = rec.item
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Materials", SarimFormat.formatRs(b.materialsCost, false, hideMoney), Modifier.weight(1f), palette.red)
-              SarimStatTile("Extra", SarimFormat.formatRs(b.additionalCost, false, hideMoney), Modifier.weight(1f), palette.amber)
-              SarimStatTile("Per Unit", SarimFormat.formatRs(b.costPerUnit, false, hideMoney), Modifier.weight(1f), palette.cyan)
-            }
-            SarimDangerButton(
-              text = "Delete Batch",
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Factory Batch",
-                    body = "Restore raw materials and move this ${b.formulaName} batch to Recycle Bin?",
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(
-                        errorTitle = "Delete Failed",
-                        successMessage = "Deleted factory batch",
-                      ) {
-                        viewModel.repository.deleteFactoryBatch(b.id)
-                      }
-                    },
-                  )
-                )
-              },
-            )
-          }
-        }
+          onItemClick = { rec -> sheetBatch = rec.item },
+        )
       }
     }
+  }
+
+  sheetBatch?.let { b ->
+    val usedMats = remember(b.materialsUsedJson) { JsonCodecs.decodeFormulaMaterialsUsed(b.materialsUsedJson) }
+    SarimRecordBottomSheet(
+      title = b.formulaName,
+      subtitle = "${SarimFormat.formatDate(b.dateEpoch)}${if (b.timeStr.isNotBlank()) " · ${b.timeStr}" else ""}",
+      amountText = SarimFormat.formatRs(b.totalCost, true, hideMoney),
+      amountColor = palette.red,
+      metrics = listOf(
+        "Units Produced" to SarimFormat.formatQty(b.unitsProduced, 2),
+        "Output kg" to SarimFormat.formatKg(b.outputKg),
+        "Raw Used kg" to SarimFormat.formatKg(b.rawUsedKg),
+        "Materials Cost" to SarimFormat.formatRs(b.materialsCost, false, hideMoney),
+        "Additional Cost" to SarimFormat.formatRs(b.additionalCost, false, hideMoney),
+        "Cost Per Unit" to SarimFormat.formatRs(b.costPerUnit, false, hideMoney),
+      ),
+      extraContent = if (usedMats.isNotEmpty()) {
+        {
+          SarimFieldLabel("MATERIALS BREAKDOWN")
+          usedMats.forEach { mat ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
+              Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+            }
+          }
+        }
+      } else null,
+      onDismiss = { sheetBatch = null },
+      onEdit = {
+        editingBatchId = b.id
+        factoryDate = b.dateEpoch
+        selectedFormulaId = b.formulaId
+        unitsText = b.unitsProduced.toInt().coerceAtLeast(1).toString()
+      },
+      deleteLabel = "Delete & Restore",
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Factory Batch",
+            body = "Restore raw materials and move this ${b.formulaName} batch to Recycle Bin?",
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(
+                errorTitle = "Delete Failed",
+                successMessage = "Deleted factory batch",
+              ) {
+                viewModel.repository.deleteFactoryBatch(b.id)
+              }
+            },
+          )
+        )
+      },
+    )
   }
 }

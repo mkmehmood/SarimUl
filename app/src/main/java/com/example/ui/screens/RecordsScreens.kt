@@ -238,22 +238,31 @@ fun AddEntityScreen(
             viewModel.showDialog(AppDialogRequest("Invalid Amount", "Enter a valid non-negative opening amount.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
-            errorTitle = "Save Entity Failed",
-            successMessage = "Entity saved",
-            onSuccess = { viewModel.closeStandalone() },
-          ) {
-            viewModel.repository.savePaymentEntity(
-              editingId = editingEntity?.id,
-              name = clean,
-              phone = phone,
-              wallet = wallet,
-              ledgerPage = ledgerPage,
-              openingType = if (openingIndex == 0) "CREDIT" else "DEBIT",
-              openingAmount = openAmt,
-              photoUri = photoUris.firstOrNull().orEmpty(),
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = if (editingEntity == null) "Save Entity?" else "Update Entity?",
+              body = "Name: $clean\nPhone: ${phone.ifBlank { "—" }}\nWallet: ${wallet.ifBlank { "—" }}\nOld Balance: ${if (openingIndex == 0) "Credit (Payable)" else "Debit (Receivable)"} ${SarimFormat.formatRs(openAmt)}\nLedger Page: ${ledgerPage.ifBlank { "—" }}",
+              confirmLabel = "Save",
+              onConfirm = {
+                viewModel.launchSafely(
+                  errorTitle = "Save Entity Failed",
+                  successMessage = "Entity saved",
+                  onSuccess = { viewModel.closeStandalone() },
+                ) {
+                  viewModel.repository.savePaymentEntity(
+                    editingId = editingEntity?.id,
+                    name = clean,
+                    phone = phone,
+                    wallet = wallet,
+                    ledgerPage = ledgerPage,
+                    openingType = if (openingIndex == 0) "CREDIT" else "DEBIT",
+                    openingAmount = openAmt,
+                    photoUri = photoUris.firstOrNull().orEmpty(),
+                  )
+                }
+              },
             )
-          }
+          )
         },
       )
     }

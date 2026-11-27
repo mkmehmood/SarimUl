@@ -47,7 +47,6 @@ class MainActivity : ComponentActivity() {
               savedEmail = state.prefs.savedEmail,
               syncManager = viewModel.syncManager,
               onGoogleAuthSuccess = { viewModel.onFirebaseAuthChanged(Firebase.auth.currentUser) },
-              onContinueOffline = { email -> viewModel.enterOfflineSession(email) },
             )
           }
           state.isLockedByFingerprint -> {

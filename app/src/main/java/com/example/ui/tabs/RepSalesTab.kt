@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
 import com.example.ui.components.*
@@ -61,6 +62,8 @@ fun RepSalesTab(
   var adminMapDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
   var analyticsPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
   var custFilter by remember { mutableStateOf("") }
+  var editingRepTxId by remember { mutableStateOf<String?>(null) }
+  var sheetRepSale by remember { mutableStateOf<SaleTransactionEntity?>(null) }
 
   val repCustomers = remember(state.customers) { state.customers.filter { it.isRepCustomer } }
   val matchedCust = remember(customerName, repCustomers) {
@@ -81,8 +84,34 @@ fun RepSalesTab(
     // 1. New Transaction Card
     item {
       SarimCard {
-        Text("New Transaction", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        SarimToggleGroup(RepTxMode.entries, mode, { it.label }, { mode = it })
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column {
+            Text(
+              if (editingRepTxId == null) "New Transaction" else "Edit Transaction",
+              color = palette.textPrimary,
+              fontWeight = FontWeight.Bold,
+              fontSize = 16.sp,
+            )
+            if (editingRepTxId != null) {
+              TextButton(
+                onClick = {
+                  editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = ""
+                },
+                contentPadding = PaddingValues(0.dp),
+              ) { Text("Cancel Edit", color = palette.amber, fontSize = 12.sp) }
+            }
+          }
+          Box(modifier = Modifier.width(184.dp)) {
+            SarimToggleGroup(RepTxMode.entries, mode, { it.label }, { mode = it })
+          }
+        }
+        if (editingRepTxId != null) {
+          SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
+        }
         SarimDatePickerField("Date", dateEpoch, onDateSelected = { dateEpoch = it }, testTag = "rep_date")
         SarimSearchFieldWithDropdown(
           value = customerName,
@@ -112,7 +141,7 @@ fun RepSalesTab(
           Text(SarimFormat.formatRs(txValue), color = palette.green, style = TabularNumberStyle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold))
         }
         SarimPrimaryButton(
-          text = "Save Transaction",
+          text = if (editingRepTxId == null) "Save Transaction" else "Update Transaction",
           onClick = {
             if (SarimFormat.isFutureDate(dateEpoch) || customerName.isBlank()) {
               viewModel.showDialog(AppDialogRequest("Invalid Input", "Enter a valid non-future date and customer name.", confirmLabel = "OK", cancelLabel = null))
@@ -124,13 +153,14 @@ fun RepSalesTab(
               viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Quantity must be between 0.001 and 1,000,000 kg.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
+            val currentEditId = editingRepTxId
             viewModel.launchSafely(
               errorTitle = "Save Rep Transaction Failed",
-              successMessage = "Rep transaction saved",
-              onSuccess = { customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
+              successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
+              onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
             ) {
               viewModel.repository.saveSaleOrCollection(
-                editingId = null,
+                editingId = currentEditId,
                 dateEpoch = dateEpoch,
                 mode = mode.name,
                 customerName = customerName,
@@ -280,13 +310,17 @@ fun RepSalesTab(
       Spacer(Modifier.height(6.dp))
       val repHistory = state.sales.filter { it.isRepSale }
       val records = repHistory.map { s ->
+        val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
         HistoryRecordDisplay(
           item = s,
           dateEpoch = s.dateEpoch,
           title = s.customerName,
           subtitle = "${s.mode} · ${SarimFormat.formatKg(s.quantityKg)}",
           amountText = SarimFormat.formatRs(s.totalValue),
-          amountColor = if (s.paymentType == "CASH" || s.mode == "COLLECTION") palette.green else palette.amber,
+          amountColor = if (isCash) palette.green else palette.amber,
+          chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
+          chipColor = if (isCash || s.creditReceived) palette.green else palette.amber,
+          showStripe = !s.creditReceived && s.mode == "SALE" && s.paymentType == "CREDIT",
         )
       }
       AccordionHistoryList(
@@ -294,9 +328,63 @@ fun RepSalesTab(
         yearSummary = { "${it.size} entries" },
         monthSummary = { "${it.size} entries" },
         daySummary = { "${it.size} entries" },
-      ) { rec ->
-        Text("Rep: ${rec.item.repName} · Balance after: ${SarimFormat.formatRs(rec.item.balanceAfter)}", color = palette.textMuted, fontSize = 12.sp)
-      }
+        onItemClick = { rec -> sheetRepSale = rec.item },
+      )
     }
+  }
+
+  sheetRepSale?.let { s ->
+    val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+    SarimRecordBottomSheet(
+      title = s.customerName,
+      subtitle = "${SarimFormat.formatDate(s.dateEpoch)}${if (s.timeStr.isNotBlank()) " · ${s.timeStr}" else ""}",
+      amountText = SarimFormat.formatRs(s.totalValue),
+      amountColor = if (isCash) palette.green else palette.amber,
+      badgeText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else if (s.creditReceived) "SETTLED" else "PENDING") else s.mode,
+      badgeColor = if (isCash || s.creditReceived) palette.green else palette.amber,
+      metrics = buildList {
+        add("Mode" to s.mode)
+        add("Rep" to s.repName.ifBlank { "Rep" })
+        if (s.mode == "SALE") {
+          add("Quantity" to SarimFormat.formatKg(s.quantityKg))
+          add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg))
+          add("Total Value" to SarimFormat.formatRs(s.totalValue))
+          add("Payment" to s.paymentType)
+        } else {
+          add("Amount Received" to SarimFormat.formatRs(s.amountReceived))
+          if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
+        }
+        add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
+      },
+      onDismiss = { sheetRepSale = null },
+      onEdit = {
+        editingRepTxId = s.id
+        dateEpoch = s.dateEpoch
+        customerName = s.customerName
+        if (s.mode == "COLLECTION") {
+          mode = RepTxMode.COLLECTION
+          amountReceivedText = s.amountReceived.toString()
+          expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
+        } else {
+          mode = RepTxMode.SALE
+          quantityText = s.quantityKg.toString()
+          payType = if (s.paymentType == "CASH") RepPayType.CASH else RepPayType.CREDIT
+        }
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Transaction?",
+            body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                viewModel.repository.deleteSale(s.id)
+              }
+            },
+          )
+        )
+      },
+    )
   }
 }

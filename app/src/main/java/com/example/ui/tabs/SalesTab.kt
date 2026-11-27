@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
 import com.example.ui.components.*
@@ -78,6 +79,8 @@ fun SalesTab(
   var expiredQtyText by remember { mutableStateOf("") }
   var collAddToLedger by remember { mutableStateOf(true) }
   var showStockDetails by remember { mutableStateOf(false) }
+  var editingSaleId by remember { mutableStateOf<String?>(null) }
+  var sheetSale by remember { mutableStateOf<SaleTransactionEntity?>(null) }
 
   var custSearchFilter by remember { mutableStateOf("") }
   var analyticsPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
@@ -113,7 +116,22 @@ fun SalesTab(
     // 1. New Sale / Collection Card
     item {
       SarimCard {
-        Text("New Sale", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            if (editingSaleId == null) "New Sale" else if (mode == SalesMode.SALE) "Edit Sale" else "Edit Collection",
+            color = palette.textPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+          )
+          if (editingSaleId != null) {
+            TextButton(onClick = {
+              editingSaleId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = ""
+            }) { Text("Cancel Edit", color = palette.amber) }
+          }
+        }
+        if (editingSaleId != null) {
+          SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
+        }
         SarimToggleGroup(
           options = SalesMode.entries,
           selected = mode,
@@ -287,7 +305,7 @@ fun SalesTab(
         }
 
         SarimPrimaryButton(
-          text = "Save Transaction",
+          text = if (editingSaleId == null) "Save Transaction" else "Update Transaction",
           testTag = "btn_save_cust_transaction",
           onClick = {
             if (SarimFormat.isFutureDate(dateEpoch)) {
@@ -309,11 +327,11 @@ fun SalesTab(
               }
               viewModel.launchSafely(
                 errorTitle = "Save Sale Failed",
-                successMessage = "Sale saved",
-                onSuccess = { quantityText = ""; customerName = ""; newCustPhone = "" },
+                successMessage = if (editingSaleId == null) "Sale saved" else "Sale updated",
+                onSuccess = { editingSaleId = null; quantityText = ""; customerName = ""; newCustPhone = "" },
               ) {
                 viewModel.repository.saveSaleOrCollection(
-                  editingId = null,
+                  editingId = editingSaleId,
                   dateEpoch = dateEpoch,
                   mode = "SALE",
                   customerName = customerName,
@@ -340,11 +358,11 @@ fun SalesTab(
               val commitCollection: () -> Unit = {
                 viewModel.launchSafely(
                   errorTitle = "Save Collection Failed",
-                  successMessage = "Collection saved",
-                  onSuccess = { amountReceivedText = ""; expiredQtyText = ""; customerName = ""; newCustPhone = "" },
+                  successMessage = if (editingSaleId == null) "Collection saved" else "Collection updated",
+                  onSuccess = { editingSaleId = null; amountReceivedText = ""; expiredQtyText = ""; customerName = ""; newCustPhone = "" },
                 ) {
                   viewModel.repository.saveSaleOrCollection(
-                    editingId = null,
+                    editingId = editingSaleId,
                     dateEpoch = dateEpoch,
                     mode = "COLLECTION",
                     customerName = customerName,
@@ -553,6 +571,7 @@ fun SalesTab(
           amountColor = if (isCash) palette.green else palette.amber,
           chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
           chipColor = if (isCash) palette.green else palette.amber,
+          showStripe = !s.creditReceived && s.mode == "SALE" && s.paymentType == "CREDIT",
         )
       }
       AccordionHistoryList(
@@ -560,53 +579,91 @@ fun SalesTab(
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         monthSummary = { items -> "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { it.item.totalValue }, false, hideMoney)}" },
         daySummary = { items -> "${items.size} entries" },
-      ) { rec ->
-        val s = rec.item
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimSecondaryButton(
-            text = "Invoice",
-            icon = Icons.Rounded.Share,
-            modifier = Modifier.weight(1f),
-            onClick = {
-              PdfExporter.sharePdfReport(
-                context,
-                "invoice_${s.id.take(6)}",
-                "Sales Invoice · ${s.customerName}",
-                SarimFormat.formatDate(s.dateEpoch),
-                listOf(
-                  "Customer: ${s.customerName}",
-                  "Store: ${s.storeName}",
-                  "Quantity: ${SarimFormat.formatKg(s.quantityKg)}",
-                  "Rate: ${SarimFormat.formatRs(s.pricePerKg)}/kg",
-                  "Payment: ${s.paymentType}",
-                  "Total Value: ${SarimFormat.formatRs(s.totalValue)}",
-                ),
-              ).onFailure { err ->
-                viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+        onItemClick = { rec -> sheetSale = rec.item },
+      )
+    }
+  }
+
+  sheetSale?.let { s ->
+    val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+    val metrics = buildList {
+      add("Mode" to s.mode)
+      if (s.storeName.isNotBlank()) add("Store" to s.storeName)
+      if (s.mode == "SALE") {
+        add("Quantity" to SarimFormat.formatKg(s.quantityKg))
+        add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg, true, hideMoney))
+        add("Total Cost" to SarimFormat.formatRs(s.totalCost, false, hideMoney))
+        add("Total Value" to SarimFormat.formatRs(s.totalValue, false, hideMoney))
+        add("Profit" to SarimFormat.formatRs(s.profit, false, hideMoney))
+        add("Payment" to s.paymentType)
+        add("Rep" to s.repName.ifBlank { "Direct" })
+      } else {
+        add("Amount Received" to SarimFormat.formatRs(s.amountReceived, false, hideMoney))
+        if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
+      }
+      add("Balance After" to SarimFormat.formatRs(s.balanceAfter, false, hideMoney))
+    }
+    SarimRecordBottomSheet(
+      title = s.customerName,
+      subtitle = "${SarimFormat.formatDate(s.dateEpoch)}${if (s.timeStr.isNotBlank()) " · ${s.timeStr}" else ""}",
+      amountText = SarimFormat.formatRs(s.totalValue, true, hideMoney),
+      amountColor = if (isCash) palette.green else palette.amber,
+      badgeText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else if (s.creditReceived) "SETTLED" else "PENDING") else s.mode,
+      badgeColor = if (isCash || s.creditReceived) palette.green else palette.amber,
+      metrics = metrics,
+      onDismiss = { sheetSale = null },
+      extraActionLabel = "Invoice PDF",
+      extraActionIcon = Icons.Rounded.Share,
+      onExtraAction = {
+        PdfExporter.sharePdfReport(
+          context,
+          "invoice_${s.id.take(6)}",
+          "Sales Invoice · ${s.customerName}",
+          SarimFormat.formatDate(s.dateEpoch),
+          listOf(
+            "Customer: ${s.customerName}",
+            "Store: ${s.storeName}",
+            "Quantity: ${SarimFormat.formatKg(s.quantityKg)}",
+            "Rate: ${SarimFormat.formatRs(s.pricePerKg)}/kg",
+            "Payment: ${s.paymentType}",
+            "Total Value: ${SarimFormat.formatRs(s.totalValue)}",
+          ),
+        ).onFailure { err ->
+          viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+        }
+      },
+      onEdit = {
+        editingSaleId = s.id
+        dateEpoch = s.dateEpoch
+        customerName = s.customerName
+        if (s.mode == "COLLECTION") {
+          mode = SalesMode.COLLECTION
+          amountReceivedText = s.amountReceived.toString()
+          expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
+          collAddToLedger = s.addToLedger
+        } else {
+          mode = SalesMode.SALE
+          quantityText = s.quantityKg.toString()
+          if (s.storeKey.isNotBlank()) selectedStoreKey = s.storeKey
+          selectedRep = s.repName.ifBlank { "Direct" }
+          paymentChoice = if (s.paymentType == "CASH") PaymentChoice.CASH else PaymentChoice.CREDIT
+          saleAddToLedger = s.addToLedger
+        }
+      },
+      onDelete = {
+        viewModel.showDialog(
+          AppDialogRequest(
+            title = "Delete Transaction?",
+            body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+            confirmLabel = "Delete",
+            onConfirm = {
+              viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                viewModel.repository.deleteSale(s.id)
               }
             },
           )
-          SarimDangerButton(
-            text = "Delete",
-            icon = Icons.Rounded.Delete,
-            modifier = Modifier.weight(1f),
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Transaction?",
-                  body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                      viewModel.repository.deleteSale(s.id)
-                    }
-                  },
-                )
-              )
-            },
-          )
-        }
-      }
-    }
+        )
+      },
+    )
   }
 }

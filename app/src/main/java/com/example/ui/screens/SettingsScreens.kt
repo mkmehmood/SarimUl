@@ -385,6 +385,8 @@ fun DatabaseStructureScreen(
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
+  val sections = listOf("Collections", "Config Docs", "Listeners", "Summary")
+  var selectedSection by remember { mutableStateOf("Collections") }
   LaunchedEffect(Unit) { viewModel.refreshDiagnostics() }
 
   Column(
@@ -395,24 +397,85 @@ fun DatabaseStructureScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-      Text("Collections & Sync Queue", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      SarimSecondaryButton(text = "Refresh", icon = Icons.Rounded.Refresh, onClick = { viewModel.refreshDiagnostics() })
+      Column {
+        Text("Database Structure", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("${state.dbStructure.size} synced collections", color = palette.textMuted, fontSize = 12.sp)
+      }
+      IconButton(onClick = { viewModel.refreshDiagnostics() }) {
+        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh structure", tint = palette.cyan)
+      }
     }
 
-    if (state.dbStructure.isEmpty()) {
-      SarimEmptyState("Loading database structure…", "Inspecting Room tables and Firestore sync state.")
-    } else {
-      state.dbStructure.forEach { col ->
-        SarimCard(contentPadding = 12.dp) {
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-              Text(col.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-              Text("Active: ${col.activeCount} · Deleted: ${col.deletedCount}", color = palette.textMuted, fontSize = 12.sp)
+    SarimToggleGroup(
+      options = sections,
+      selected = selectedSection,
+      labelOf = { it },
+      onSelect = { selectedSection = it },
+      testTagPrefix = "db_struct_tab",
+    )
+
+    when (selectedSection) {
+      "Collections" -> {
+        if (state.dbStructure.isEmpty()) {
+          SarimEmptyState("Loading database structure…", "Inspecting Room tables and Firestore sync state.")
+        } else {
+          state.dbStructure.forEach { col ->
+            SarimCard(contentPadding = 12.dp) {
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                  Text(col.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                  Text("Active: ${col.activeCount} · Deleted: ${col.deletedCount}", color = palette.textMuted, fontSize = 12.sp)
+                }
+                SarimChip(
+                  text = "${col.pendingSyncCount} pending",
+                  color = if (col.pendingSyncCount > 0) palette.amber else palette.green,
+                )
+              }
             }
-            SarimChip(
-              text = "${col.pendingSyncCount} pending",
-              color = if (col.pendingSyncCount > 0) palette.amber else palette.green,
-            )
+          }
+        }
+      }
+      "Config Docs" -> {
+        val docs = listOf(
+          Triple("settings/app_config", "Theme & App Config", "Theme: ${state.prefs.themeMode.label} · Roles: ${state.activeRoles.joinToString { it.label }}"),
+          Triple("settings/stores", "Stores Registry", "${state.stores.size} configured stores"),
+          Triple("settings/formulas", "Formulas Catalog", "${state.formulas.size} active formulas"),
+        )
+        docs.forEach { (docPath, title, desc) ->
+          SarimCard(contentPadding = 12.dp) {
+            Text(docPath, color = palette.cyan, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(desc, color = palette.textMuted, fontSize = 12.sp)
+          }
+        }
+      }
+      "Listeners" -> {
+        val totalPending = state.dbStructure.sumOf { it.pendingSyncCount }
+        SarimCard(contentPadding = 12.dp) {
+          Text("Firestore & Outbox Sync", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Text(
+            if (state.isOfflineSession) "Mode: Offline Local Cache" else "Mode: Live Sync Enabled",
+            color = if (state.isOfflineSession) palette.amber else palette.green,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text("Last Updated: ${SarimFormat.formatTime(state.lastUpdatedMillis)}", color = palette.textMuted, fontSize = 12.sp)
+          Text("Pending Sync Queue: $totalPending record(s)", color = if (totalPending > 0) palette.amber else palette.green, fontSize = 12.sp)
+        }
+      }
+      else -> {
+        val activeSum = state.dbStructure.sumOf { it.activeCount }
+        val deletedSum = state.dbStructure.sumOf { it.deletedCount }
+        val pendingSum = state.dbStructure.sumOf { it.pendingSyncCount }
+        SarimCard(contentPadding = 12.dp) {
+          Text("Database Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Collections", state.dbStructure.size.toString(), Modifier.weight(1f), palette.cyan)
+            SarimStatTile("Active Docs", activeSum.toString(), Modifier.weight(1f), palette.green)
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("Deleted", deletedSum.toString(), Modifier.weight(1f), palette.red)
+            SarimStatTile("Pending Sync", pendingSum.toString(), Modifier.weight(1f), palette.amber)
           }
         }
       }
