@@ -440,33 +440,44 @@ object SarimWebSchema {
     val collAllocs = JsonCodecs.decodeCollectionAllocs(e.collectionAllocsJson).map {
       linkedMapOf<String, Any?>("cid" to it.cid, "amount" to it.amount, "full" to it.full)
     }
+    val webSalesRep = when {
+      e.isRepSale -> e.repName
+      isOldDebt -> "ADMIN"
+      e.repName.isNotBlank() && !e.repName.equals("Direct", true) && !e.repName.equals("NONE", true) -> e.repName
+      else -> "NONE"
+    }
+    val effectiveSupplyDate = e.supplyDate.ifBlank { e.dateStr.ifBlank { SarimFormat.dateInput(e.dateEpoch) } }
     val out = linkedMapOf<String, Any?>(
       "id" to e.id,
       "date" to e.dateStr.ifBlank { SarimFormat.dateInput(e.dateEpoch) },
-      "supplyDate" to e.dateStr.ifBlank { SarimFormat.dateInput(e.dateEpoch) },
+      "supplyDate" to effectiveSupplyDate,
       "time" to e.timeStr.ifBlank { SarimFormat.formatTime(e.dateEpoch) },
       "customerName" to e.customerName,
       "customerPhone" to e.customerPhone,
       "quantity" to e.quantityKg,
       "supplyStore" to e.storeKey.ifBlank { null },
       "paymentType" to webPayType,
-      "salesRep" to if (e.isRepSale) e.repName else if (isOldDebt) "ADMIN" else "NONE",
+      "salesRep" to webSalesRep,
       "currentRepProfile" to if (e.isRepSale) e.repName else "admin",
       "totalCost" to e.totalCost,
       "costSource" to e.costSource,
       "totalValue" to e.totalValue,
       "profit" to e.profit,
       "unitPrice" to e.pricePerKg,
-      "creditReceived" to (e.creditReceived || (!isOldDebt && (webPayType == "CASH" || webPayType == "COLLECTION" || webPayType == "PARTIAL_PAYMENT"))),
+      "creditReceived" to (e.creditReceived || (!isOldDebt && (webPayType == "CASH" || webPayType == "COLLECTION" || webPayType == "PARTIAL_PAYMENT" || webPayType == "REP_RETURN"))),
       "isCollection" to (e.mode == "COLLECTION" || e.isCollection),
       "expiredQty" to e.expiredQtyKg,
       "expiredValue" to e.expiredValue.takeIf { it > 0.0 },
       "expiredUnitPrice" to e.expiredUnitPrice.takeIf { it > 0.0 },
       "expiredAllocated" to e.expiredAllocated.takeIf { it > 0.0 },
       "returnedQty" to e.returnedQtyKg,
+      "returnValue" to e.returnValue.takeIf { it > 0.0 },
+      "returnUnitPrice" to e.returnUnitPrice.takeIf { it > 0.0 },
       "affectsInventory" to e.affectsInventory,
       "isMoneyOut" to (e.isMoneyOut || webPayType == "MONEY_OUT"),
       "isRepReturn" to (e.isRepReturn || webPayType == "REP_RETURN"),
+      "isRepTransfer" to true.takeIf { e.isRepTransfer },
+      "repTransferFrom" to e.repTransferFrom?.takeIf { it.isNotBlank() },
       "notes" to e.notes.ifBlank { null },
       "transactionType" to e.transactionType,
       "usedInCalcId" to e.usedInCalcId,
@@ -490,14 +501,17 @@ object SarimWebSchema {
   fun mapToSale(id: String, m: Map<String, Any?>, isRep: Boolean): SaleTransactionEntity? {
     if (bool(m["_placeholder"])) return null
     val dateStr = str(m["date"], SarimFormat.dateInput(System.currentTimeMillis()))
+    val supplyDateStr = str(m["supplyDate"], dateStr)
     val epoch = parseEpoch(m["timestamp"] ?: m["createdAt"], dateStr)
     val payType = str(m["paymentType"], "CREDIT")
     val txType = m["transactionType"]?.toString()?.takeIf { it.isNotBlank() }
     val isColl = bool(m["isCollection"]) || payType == "COLLECTION" || payType == "PARTIAL_PAYMENT"
     val isMoneyOut = bool(m["isMoneyOut"]) || payType == "MONEY_OUT"
     val isRepReturn = bool(m["isRepReturn"]) || payType == "REP_RETURN"
+    val isRepTransfer = bool(m["isRepTransfer"])
     val mode = when {
       txType == "OLD_DEBT" -> "OLD_DEBT"
+      isRepReturn -> "REP_RETURN"
       isMoneyOut -> "MONEY_OUT"
       isColl -> "COLLECTION"
       else -> "SALE"
@@ -515,13 +529,15 @@ object SarimWebSchema {
       val o = item as? Map<*, *> ?: return@mapNotNull null
       JsonCodecs.CollectionAllocItem(str(o["cid"]), num(o["amount"]), bool(o["full"]))
     }.orEmpty()
+    val rawRep = str(m["salesRep"])
+    val mappedRep = rawRep.takeIf { it.isNotBlank() && !it.equals("NONE", true) && !it.equals("ADMIN", true) } ?: "Direct"
     return SaleTransactionEntity(
       id = id,
       dateEpoch = epoch,
       mode = mode,
       customerId = "",
       customerName = str(m["customerName"]),
-      repName = str(m["salesRep"]).takeIf { it.isNotBlank() && !it.equals("NONE", true) && !it.equals("ADMIN", true) } ?: "Direct",
+      repName = mappedRep,
       storeKey = str(m["supplyStore"]),
       storeName = str(m["supplyStore"]).uppercase(),
       quantityKg = qty,
@@ -548,9 +564,14 @@ object SarimWebSchema {
       notes = str(m["notes"]),
       transactionType = txType,
       costSource = m["costSource"]?.toString(),
-      affectsInventory = if (m.containsKey("affectsInventory")) bool(m["affectsInventory"], true) else !isRep,
+      affectsInventory = if (m.containsKey("affectsInventory")) bool(m["affectsInventory"], true) else (!isRep && !isRepReturn && !isRepTransfer),
       isMoneyOut = isMoneyOut,
       isRepReturn = isRepReturn,
+      returnValue = num(m["returnValue"]),
+      returnUnitPrice = num(m["returnUnitPrice"]),
+      isRepTransfer = isRepTransfer,
+      repTransferFrom = m["repTransferFrom"]?.toString()?.takeIf { it.isNotBlank() },
+      supplyDate = supplyDateStr,
       expiredValue = num(m["expiredValue"]),
       expiredUnitPrice = num(m["expiredUnitPrice"]),
       expiredAllocated = num(m["expiredAllocated"]),

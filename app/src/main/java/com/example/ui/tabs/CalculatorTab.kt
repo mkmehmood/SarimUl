@@ -29,6 +29,7 @@ import com.example.data.local.CalculatorSettlementEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.LineItemBreakdown
 import com.example.data.model.TimePeriod
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -43,6 +44,11 @@ private enum class CompChartMetric(val label: String) {
   NET_PROFIT("Net Profit (Value)"),
   GROSS_REV("Gross Revenue (Value)"),
   QTY_SOLD("Quantity Sold"),
+}
+
+private enum class ReturnTargetMode(val label: String) {
+  RETURN("Return to Store"),
+  TRANSFER("Transfer to Rep"),
 }
 
 @Composable
@@ -60,8 +66,7 @@ fun CalculatorTab(
 
   var fromDate by remember { mutableLongStateOf(SarimFormat.daysAgo(30)) }
   var toDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
-  var pickingFrom by remember { mutableStateOf(false) }
-  var pickingTo by remember { mutableStateOf(false) }
+  var manualFromOverride by remember { mutableStateOf(false) }
 
   // Comparison state
   var compPeriod by remember { mutableStateOf(TimePeriod.ALL_TIME) }
@@ -69,7 +74,9 @@ fun CalculatorTab(
 
   // Individual state
   var sharedQtyText by remember { mutableStateOf("0") }
+  var returnTargetMode by remember { mutableStateOf(ReturnTargetMode.RETURN) }
   var returnStoreKey by remember(state.stores) { mutableStateOf(state.stores.firstOrNull()?.storeKey ?: "zubair") }
+  var transferTargetRep by remember { mutableStateOf("") }
   var creditSalesQtyText by remember { mutableStateOf("0") }
   var commissionPerUnitText by remember { mutableStateOf("0") }
   var commissionItems by remember { mutableStateOf<List<LineItemBreakdown>>(emptyList()) }
@@ -88,6 +95,40 @@ fun CalculatorTab(
   var sheetSettlement by remember { mutableStateOf<CalculatorSettlementEntity?>(null) }
 
   val isComparison = selectedRepOption == "COMPARISON"
+  val otherReps = remember(reps, selectedRepOption) {
+    reps.filter { !it.equals(selectedRepOption, ignoreCase = true) }
+  }
+  val fallbackStorePrice = state.stores.firstOrNull()?.salePricePerKg ?: 400.0
+  val cycle = remember(selectedRepOption, state.sales, state.settlements, fromDate, toDate, manualFromOverride, editingSettlementId, fallbackStorePrice) {
+    if (isComparison) null
+    else SarimLinkEngine.getCalcCycleSelection(
+      repName = selectedRepOption,
+      sales = state.sales,
+      settlements = state.settlements,
+      manualFromEpoch = if (manualFromOverride || editingSettlementId != null) fromDate else null,
+      toEpoch = toDate,
+      fallbackUnitPrice = fallbackStorePrice,
+      excludeCalcId = editingSettlementId,
+    )
+  }
+
+  LaunchedEffect(selectedRepOption) {
+    if (editingSettlementId == null) {
+      manualFromOverride = false
+      returnTargetMode = ReturnTargetMode.RETURN
+      transferTargetRep = reps.firstOrNull { !it.equals(selectedRepOption, ignoreCase = true) } ?: ""
+    }
+  }
+
+  LaunchedEffect(selectedRepOption, cycle?.effectiveFromEpoch, cycle?.creditSalesQty, cycle?.recoveredCredit, editingSettlementId) {
+    if (!isComparison && editingSettlementId == null && cycle != null) {
+      if (!manualFromOverride && fromDate != cycle.effectiveFromEpoch) {
+        fromDate = cycle.effectiveFromEpoch
+      }
+      creditSalesQtyText = if (cycle.creditSalesQty > 0.0) SarimFormat.formatQty(cycle.creditSalesQty) else "0"
+      recoveredCreditText = if (cycle.recoveredCredit > 0.0) SarimFormat.formatQty(cycle.recoveredCredit, 2) else "0"
+    }
+  }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -107,8 +148,25 @@ fun CalculatorTab(
           testTag = "seller_select_btn",
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          SarimDatePickerField("From", fromDate, onDateSelected = { fromDate = it }, modifier = Modifier.weight(1f), testTag = "calc_from_date")
+          SarimDatePickerField(
+            "From",
+            fromDate,
+            onDateSelected = {
+              fromDate = it
+              manualFromOverride = true
+            },
+            modifier = Modifier.weight(1f),
+            testTag = "calc_from_date",
+          )
           SarimDatePickerField("To", toDate, onDateSelected = { toDate = it }, modifier = Modifier.weight(1f), testTag = "calc_to_date")
+        }
+        if (!isComparison && manualFromOverride && editingSettlementId == null) {
+          TextButton(
+            onClick = { manualFromOverride = false },
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("btn_calc_auto_cycle"),
+          ) {
+            Text("Reset to unsettled cycle start", color = palette.cyan, fontSize = 12.sp)
+          }
         }
       }
     }
@@ -213,31 +271,26 @@ fun CalculatorTab(
         }
       }
     } else {
-      // Individual Representative Mode (Section 9.3)
-      val fromStart = SarimFormat.startOfDay(fromDate)
-      val toEnd = SarimFormat.endOfDay(toDate)
-      val repSales = state.sales.filter {
-        it.repName.equals(selectedRepOption, ignoreCase = true) && it.dateEpoch in fromStart..toEnd
-      }
-      val totalSoldKg = repSales.filter { it.mode == "SALE" }.sumOf { it.quantityKg }
-      val returnedKg = repSales.sumOf { it.returnedQtyKg }
-      val expiredKg = repSales.sumOf { it.expiredQtyKg }
+      // Individual Representative Mode (Section 9.3 + Cycle Link Engine)
+      val totalSoldKg = cycle?.totalSoldKg ?: 0.0
+      val returnedKg = cycle?.returnedKg ?: 0.0
+      val expiredKg = cycle?.expiredKg ?: 0.0
       val sharedNum = SarimFormat.parseSafeDouble(sharedQtyText) ?: 0.0
       val netSoldKg = (totalSoldKg - returnedKg - expiredKg - sharedNum).coerceAtLeast(0.0)
-      val avgUnitPrice = if (totalSoldKg > 0.0001) repSales.filter { it.mode == "SALE" }.sumOf { it.totalValue } / totalSoldKg else 400.0
-      val totalCost = repSales.filter { it.mode == "SALE" }.sumOf { it.totalCost }
-      val grossRevenue = netSoldKg * avgUnitPrice
+      val avgUnitPrice = cycle?.avgUnitPrice ?: fallbackStorePrice
+      val totalCost = cycle?.totalCost ?: 0.0
+      val grossRevenue = SarimLinkEngine.round2(netSoldKg * avgUnitPrice)
       val creditQtyNum = SarimFormat.parseSafeDouble(creditSalesQtyText) ?: 0.0
-      val creditValue = creditQtyNum * avgUnitPrice
+      val creditValue = SarimLinkEngine.round2(creditQtyNum * avgUnitPrice)
       val commPerUnit = SarimFormat.parseSafeDouble(commissionPerUnitText) ?: 0.0
-      val grossCommission = netSoldKg * commPerUnit
-      val commPaidTotal = commissionItems.sumOf { it.amount }
-      val commPayable = grossCommission - commPaidTotal
+      val grossCommission = SarimLinkEngine.round2(netSoldKg * commPerUnit)
+      val commPaidTotal = SarimLinkEngine.round2(commissionItems.sumOf { it.amount })
+      val commPayable = SarimLinkEngine.round2(grossCommission - commPaidTotal)
       val recoveredNum = SarimFormat.parseSafeDouble(recoveredCreditText) ?: 0.0
-      val fieldExpTotal = expenseItems.sumOf { it.amount }
-      val expectedCash = (grossRevenue - creditValue + recoveredNum - fieldExpTotal - commPaidTotal)
+      val fieldExpTotal = SarimLinkEngine.round2(expenseItems.sumOf { it.amount })
+      val expectedCash = SarimLinkEngine.round2(grossRevenue - creditValue + recoveredNum - fieldExpTotal - commPaidTotal)
       val receivedNum = SarimFormat.parseSafeDouble(receivedCashText) ?: 0.0
-      val cashDiff = receivedNum - expectedCash
+      val cashDiff = SarimLinkEngine.round2(receivedNum - expectedCash)
       val statusLabel = when {
         abs(cashDiff) <= 1.0 -> "OK"
         cashDiff < 0 -> "Short"
@@ -254,16 +307,26 @@ fun CalculatorTab(
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(if (editingSettlementId == null) "Product Quantities" else "Edit Settlement", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             if (editingSettlementId != null) {
-              TextButton(onClick = {
-                editingSettlementId = null
-                receivedCashText = ""
-                commissionItems = emptyList()
-                expenseItems = emptyList()
-              }) { Text("Cancel Edit", color = palette.amber) }
+              TextButton(
+                onClick = {
+                  editingSettlementId = null
+                  manualFromOverride = false
+                  receivedCashText = ""
+                  commissionItems = emptyList()
+                  expenseItems = emptyList()
+                },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("btn_cancel_edit_calc"),
+              ) { Text("Cancel Edit", color = palette.amber) }
             }
           }
           if (editingSettlementId != null) {
             SarimCallout("Editing settlement · Saving updates the original record & reconciles links.", palette.amber)
+          }
+          if (cycle != null) {
+            SarimCallout(
+              "Pending cycle: ${cycle.selectedDeliveries.size} deliveries · ${cycle.pendingReturns.size} rep returns · ${cycle.pendingRepSales.size} rep tx",
+              palette.cyan,
+            )
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimTextField(SarimFormat.formatQty(totalSoldKg), {}, "Total Sold Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f))
@@ -275,22 +338,50 @@ fun CalculatorTab(
           }
           SarimTextField(SarimFormat.formatQty(netSoldKg), {}, "Net Sold Qty", readOnly = true, dashedReadOnly = true, suffixText = "kg")
 
-          if (returnedKg > 0.0 && state.stores.isNotEmpty()) {
-            SarimFieldLabel("Return Stock To Physical Inventory")
-            SarimToggleGroup(
-              state.stores,
-              state.stores.firstOrNull { it.storeKey == returnStoreKey } ?: state.stores.first(),
-              { it.name },
-              { returnStoreKey = it.storeKey },
-            )
-            Text("This will increase the store's stock level without creating a new production record.", color = palette.textMuted, fontSize = 11.sp)
+          if (returnedKg > 0.0 && (state.stores.isNotEmpty() || otherReps.isNotEmpty())) {
+            if (otherReps.isNotEmpty()) {
+              SarimFieldLabel("Returned Stock Destination")
+              SarimToggleGroup(
+                options = ReturnTargetMode.entries,
+                selected = returnTargetMode,
+                labelOf = { it.label },
+                onSelect = {
+                  returnTargetMode = it
+                  if (it == ReturnTargetMode.TRANSFER && transferTargetRep.isBlank()) {
+                    transferTargetRep = otherReps.first()
+                  }
+                },
+                testTagPrefix = "calc_return_mode",
+              )
+            }
+            if (returnTargetMode == ReturnTargetMode.TRANSFER && otherReps.isNotEmpty()) {
+              val chosenTarget = if (transferTargetRep in otherReps) transferTargetRep else otherReps.first()
+              SarimPopoverSelector(
+                label = "Transfer Returned Stock To Rep",
+                selectedText = chosenTarget,
+                options = otherReps,
+                onSelect = { _, opt -> transferTargetRep = opt },
+                testTag = "calc_transfer_rep_btn",
+              )
+              SarimCallout("Creates a Credit delivery to $chosenTarget without changing physical store stock.", palette.purple)
+            } else if (state.stores.isNotEmpty()) {
+              SarimFieldLabel("Return Stock To Physical Inventory")
+              SarimToggleGroup(
+                state.stores,
+                state.stores.firstOrNull { it.storeKey == returnStoreKey } ?: state.stores.first(),
+                { it.name },
+                { returnStoreKey = it.storeKey },
+                testTagPrefix = "calc_return_store",
+              )
+              Text("This will increase the store's stock level without creating a new production record.", color = palette.textMuted, fontSize = 11.sp)
+            }
           }
 
           if (expiredKg > 0.0) {
             SarimCallout("Expired Stock — Added to CHORA Raw Material (${SarimFormat.formatKg(expiredKg)})", palette.amber)
           }
 
-          SarimTextField(creditSalesQtyText, { creditSalesQtyText = it }, "Credit Sales Qty", suffixText = "kg", keyboardType = KeyboardType.Decimal)
+          SarimTextField(creditSalesQtyText, { creditSalesQtyText = it }, "Credit Sales Qty", suffixText = "kg", keyboardType = KeyboardType.Decimal, testTag = "calc_credit_qty")
 
           HorizontalDivider(color = palette.border)
           Text("Commission", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -310,7 +401,7 @@ fun CalculatorTab(
           HorizontalDivider(color = palette.border)
           Text("Collections & Handover Cash", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimTextField(recoveredCreditText, { recoveredCreditText = it }, "Recovered Credit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f))
+            SarimTextField(recoveredCreditText, { recoveredCreditText = it }, "Recovered Credit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f), testTag = "calc_recovered_credit")
             SarimTextField(
               value = if (fieldExpTotal > 0) SarimFormat.formatRs(fieldExpTotal, false) else "",
               onValueChange = {},
@@ -321,7 +412,7 @@ fun CalculatorTab(
               modifier = Modifier.weight(1f),
             )
           }
-          SarimTextField(receivedCashText, { receivedCashText = it }, "Physical Cash Received from Rep", prefixText = "Rs", keyboardType = KeyboardType.Decimal)
+          SarimTextField(receivedCashText, { receivedCashText = it }, "Physical Cash Received from Rep", prefixText = "Rs", keyboardType = KeyboardType.Decimal, testTag = "calc_received_cash")
 
           // Result Card
           Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))) {
@@ -346,11 +437,16 @@ fun CalculatorTab(
 
           SarimPrimaryButton(
             text = if (editingSettlementId == null) "Save Transaction" else "Update Settlement",
+            testTag = "btn_save_calc_settlement",
             onClick = {
               if (SarimFormat.isFutureDate(toDate)) {
                 viewModel.showDialog(AppDialogRequest("Invalid Date", "Settlement date cannot be in the future.", confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
+              val useTransfer = returnedKg > 0.0 && returnTargetMode == ReturnTargetMode.TRANSFER && otherReps.isNotEmpty()
+              val chosenTargetRep = if (useTransfer) {
+                (transferTargetRep.takeIf { it in otherReps } ?: otherReps.first())
+              } else null
               val currentEditId = editingSettlementId
               val commitSettlement = {
                 viewModel.launchSafely(
@@ -358,6 +454,7 @@ fun CalculatorTab(
                   successMessage = if (currentEditId == null) "Settlement saved for $selectedRepOption" else "Settlement updated for $selectedRepOption",
                   onSuccess = {
                     editingSettlementId = null
+                    manualFromOverride = false
                     receivedCashText = ""
                     commissionItems = emptyList()
                     expenseItems = emptyList()
@@ -375,7 +472,9 @@ fun CalculatorTab(
                       expiredKg = expiredKg,
                       sharedDeductionKg = sharedNum,
                       netSoldKg = netSoldKg,
-                      returnStoreKey = returnStoreKey,
+                      returnStoreKey = if (returnedKg > 0.0 && !useTransfer) returnStoreKey else "",
+                      returnType = if (returnedKg > 0.0) (if (useTransfer) "TRANSFER" else "RETURN") else null,
+                      returnRep = chosenTargetRep,
                       creditSalesQty = creditQtyNum,
                       commissionPerUnit = commPerUnit,
                       commissionPaid = commPaidTotal,
@@ -492,18 +591,21 @@ fun CalculatorTab(
             amountColor = sc,
             chipText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
             chipColor = sc,
-            detailMetrics = listOf(
-              "Total Sold" to SarimFormat.formatKg(s.totalSoldKg),
-              "Returned" to SarimFormat.formatKg(s.returnedKg),
-              "Expired" to SarimFormat.formatKg(s.expiredKg),
-              "Net Sold" to SarimFormat.formatKg(s.netSoldKg),
-              "Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney),
-              "Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney),
-              "Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney),
-              "Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney),
-              "Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney),
-              "Comm Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney),
-            ),
+            detailMetrics = buildList {
+              add("Total Sold" to SarimFormat.formatKg(s.totalSoldKg))
+              add("Returned" to SarimFormat.formatKg(s.returnedKg))
+              if (s.returnType.equals("TRANSFER", true) && !s.returnRep.isNullOrBlank()) {
+                add("Transfer To" to s.returnRep)
+              }
+              add("Expired" to SarimFormat.formatKg(s.expiredKg))
+              add("Net Sold" to SarimFormat.formatKg(s.netSoldKg))
+              add("Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney))
+              add("Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney))
+              add("Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney))
+              add("Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney))
+              add("Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney))
+              add("Comm Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney))
+            },
           )
         }
         AccordionHistoryList(
@@ -551,10 +653,13 @@ fun CalculatorTab(
                 text = "Edit",
                 onClick = {
                   editingSettlementId = s.id
+                  manualFromOverride = true
                   selectedRepOption = s.repName
                   fromDate = s.fromDateEpoch
                   toDate = s.toDateEpoch
                   sharedQtyText = s.sharedDeductionKg.toString()
+                  returnTargetMode = if (s.returnType.equals("TRANSFER", true)) ReturnTargetMode.TRANSFER else ReturnTargetMode.RETURN
+                  transferTargetRep = s.returnRep.orEmpty()
                   if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
                   creditSalesQtyText = s.creditSalesQty.toString()
                   commissionPerUnitText = s.commissionPerUnit.toString()
@@ -609,21 +714,24 @@ fun CalculatorTab(
       amountColor = sc,
       badgeText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
       badgeColor = sc,
-      metrics = listOf(
-        "Total Sold" to SarimFormat.formatKg(s.totalSoldKg),
-        "Returned" to SarimFormat.formatKg(s.returnedKg),
-        "Expired (→ CHORA)" to SarimFormat.formatKg(s.expiredKg),
-        "Shared Deduction" to SarimFormat.formatKg(s.sharedDeductionKg),
-        "Net Sold" to SarimFormat.formatKg(s.netSoldKg),
-        "Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney),
-        "Credit Issued" to SarimFormat.formatRs(s.creditIssuedValue, false, hideMoney),
-        "Recovered Credit" to SarimFormat.formatRs(s.recoveredCredit, false, hideMoney),
-        "Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney),
-        "Commission Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney),
-        "Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney),
-        "Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney),
-        "Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney),
-      ),
+      metrics = buildList {
+        add("Total Sold" to SarimFormat.formatKg(s.totalSoldKg))
+        add("Returned" to SarimFormat.formatKg(s.returnedKg))
+        if (s.returnType.equals("TRANSFER", true) && !s.returnRep.isNullOrBlank()) {
+          add("Transfer To" to s.returnRep)
+        }
+        add("Expired (→ CHORA)" to SarimFormat.formatKg(s.expiredKg))
+        add("Shared Deduction" to SarimFormat.formatKg(s.sharedDeductionKg))
+        add("Net Sold" to SarimFormat.formatKg(s.netSoldKg))
+        add("Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney))
+        add("Credit Issued" to SarimFormat.formatRs(s.creditIssuedValue, false, hideMoney))
+        add("Recovered Credit" to SarimFormat.formatRs(s.recoveredCredit, false, hideMoney))
+        add("Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney))
+        add("Commission Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney))
+        add("Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney))
+        add("Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney))
+        add("Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney))
+      },
       extraContent = if (expLines.isNotEmpty() || commLines.isNotEmpty()) {
         {
           if (expLines.isNotEmpty()) {
@@ -659,14 +767,17 @@ fun CalculatorTab(
       onDismiss = { sheetSettlement = null },
       onEdit = {
         editingSettlementId = s.id
+        manualFromOverride = true
         selectedRepOption = s.repName
         fromDate = s.fromDateEpoch
         toDate = s.toDateEpoch
         sharedQtyText = s.sharedDeductionKg.toString()
+        returnTargetMode = if (s.returnType.equals("TRANSFER", true)) ReturnTargetMode.TRANSFER else ReturnTargetMode.RETURN
+        transferTargetRep = s.returnRep.orEmpty()
         if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
         creditSalesQtyText = s.creditSalesQty.toString()
         commissionPerUnitText = s.commissionPerUnit.toString()
-        commissionItems = expLines.let { commLines }
+        commissionItems = commLines
         recoveredCreditText = s.recoveredCredit.toString()
         expenseItems = expLines
         receivedCashText = s.receivedCash.toString()

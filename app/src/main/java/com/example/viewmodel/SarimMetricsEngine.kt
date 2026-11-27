@@ -138,12 +138,14 @@ object SarimMetricsEngine {
 
     val storeMetricsMap = stores.associate { store ->
       val prodList = production.filter { it.storeKey == store.storeKey && !it.isReturn }
-      val saleList = sales.filter { it.storeKey == store.storeKey && it.mode == "SALE" && !it.isRepSale }
+      val saleList = sales.filter { it.storeKey == store.storeKey && it.mode == "SALE" && !it.isRepSale && !it.isRepReturn && !it.isRepTransfer }
       val tIn = stockTransfers.filter { it.toStoreKey == store.storeKey }.sumOf { it.quantityKg }
       val tOut = stockTransfers.filter { it.fromStoreKey == store.storeKey }.sumOf { it.quantityKg }
       val produced = prodList.sumOf { it.netWeightKg }
       val sold = saleList.sumOf { it.quantityKg }
-      val returned = settlements.filter { it.returnStoreKey == store.storeKey }.sumOf { it.returnedKg }
+      val returned = settlements
+        .filter { !it.returnType.equals("TRANSFER", ignoreCase = true) && it.returnStoreKey == store.storeKey }
+        .sumOf { it.returnedKg }
       val remaining = (produced + tIn + returned - sold - tOut).coerceAtLeast(0.0)
       val totalCost = prodList.sumOf { it.totalFormulaCost }
       val avgCost = if (produced > 0.0001) totalCost / produced else {
@@ -170,11 +172,16 @@ object SarimMetricsEngine {
         sales.map { it.repName }
       )
       .map { it.trim() }
-      .filter { it.isNotBlank() && !it.equals("Direct", ignoreCase = true) }
+      .filter {
+        it.isNotBlank() &&
+          !it.equals("Direct", ignoreCase = true) &&
+          !it.equals("NONE", ignoreCase = true) &&
+          !it.equals("ADMIN", ignoreCase = true)
+      }
       .distinctBy { it.uppercase() }
       .sorted()
 
-    val rangeSales = sales.filter { it.dateEpoch >= rangeStart && it.mode == "SALE" }
+    val rangeSales = sales.filter { it.dateEpoch >= rangeStart && it.mode == "SALE" && !it.isRepReturn }
     val rangeProd = production.filter { it.dateEpoch >= rangeStart && !it.isReturn }
     val rangePay = payments.filter { it.dateEpoch >= rangeStart }
     val rangeLedger = ledger.filter { it.dateEpoch >= rangeStart }
@@ -190,14 +197,16 @@ object SarimMetricsEngine {
 
     val cashIn = rangeLedger.filter { it.type == "IN" }.sumOf { it.amount } +
       rangeSales.filter { it.paymentType == "CASH" && !it.addToLedger }.sumOf { it.totalValue } +
-      sales.filter { it.dateEpoch >= rangeStart && it.mode == "COLLECTION" && !it.addToLedger }.sumOf { it.amountReceived } +
+      sales.filter { it.dateEpoch >= rangeStart && it.mode == "COLLECTION" && !it.addToLedger }.sumOf {
+        it.amountReceived.takeIf { amt -> amt > 0.0 } ?: it.totalValue
+      } +
       rangePay.filter { it.type == "PAYMENT_IN" && !it.addToLedger }.sumOf { it.amount }
 
     val cashOut = rangeLedger.filter { it.type == "OUT" }.sumOf { it.amount } +
       rangePay.filter { (it.type == "PAYMENT_OUT" || it.type == "EXPENSE") && !it.addToLedger }.sumOf { it.amount }
 
     val owedToYou = customers.filter { it.currentCredit > 0.01 }.sumOf { it.currentCredit }
-    val unpaidCount = sales.count { it.mode == "SALE" && it.paymentType == "CREDIT" && !it.creditReceived }
+    val unpaidCount = sales.count { it.mode == "SALE" && !it.isRepReturn && it.paymentType == "CREDIT" && !it.creditReceived }
 
     val totalStockVal = materials.sumOf { it.stockKg * it.avgCostPerKg }
     val outOfStockCount = materials.count { !it.name.equals("CHORA", ignoreCase = true) && it.stockKg <= 0.001 }

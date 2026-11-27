@@ -234,7 +234,7 @@ fun RepSalesTab(
         val repTxPeriod = state.sales.filter { it.isRepSale && it.dateEpoch >= cutoff }
         val cashSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue }
         val credSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CREDIT" }.sumOf { it.totalValue }
-        val colls = repTxPeriod.filter { it.mode == "COLLECTION" }.sumOf { it.amountReceived }
+        val colls = repTxPeriod.filter { it.mode == "COLLECTION" }.sumOf { it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue }
         val moneyIn = cashSales + colls
 
         SarimCard {
@@ -311,12 +311,13 @@ fun RepSalesTab(
       val repHistory = state.sales.filter { it.isRepSale }
       val records = repHistory.map { s ->
         val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+        val dispAmt = if (s.mode == "COLLECTION" || s.mode == "MONEY_OUT") (s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue) else s.totalValue
         HistoryRecordDisplay(
           item = s,
           dateEpoch = s.dateEpoch,
           title = s.customerName,
           subtitle = "${s.mode} · ${SarimFormat.formatKg(s.quantityKg)}",
-          amountText = SarimFormat.formatRs(s.totalValue),
+          amountText = SarimFormat.formatRs(dispAmt),
           amountColor = if (isCash) palette.green else palette.amber,
           chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
           chipColor = if (isCash || s.creditReceived) palette.green else palette.amber,
@@ -368,10 +369,11 @@ fun RepSalesTab(
           SarimDangerButton(
             text = "Delete",
             onClick = {
+              val dispAmt = if (s.mode == "COLLECTION" || s.mode == "MONEY_OUT") (s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue) else s.totalValue
               viewModel.showDialog(
                 AppDialogRequest(
                   title = "Delete Transaction?",
-                  body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+                  body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(dispAmt)}\nMoves to Recycle Bin for 90 days.",
                   confirmLabel = "Delete",
                   onConfirm = {
                     viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
@@ -390,10 +392,11 @@ fun RepSalesTab(
 
   sheetRepSale?.let { s ->
     val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+    val sheetDispAmt = if (s.mode == "COLLECTION" || s.mode == "MONEY_OUT") (s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue) else s.totalValue
     SarimRecordBottomSheet(
       title = s.customerName,
       subtitle = "${SarimFormat.formatDate(s.dateEpoch)}${if (s.timeStr.isNotBlank()) " · ${s.timeStr}" else ""}",
-      amountText = SarimFormat.formatRs(s.totalValue),
+      amountText = SarimFormat.formatRs(sheetDispAmt),
       amountColor = if (isCash) palette.green else palette.amber,
       badgeText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else if (s.creditReceived) "SETTLED" else "PENDING") else s.mode,
       badgeColor = if (isCash || s.creditReceived) palette.green else palette.amber,
@@ -406,7 +409,7 @@ fun RepSalesTab(
           add("Total Value" to SarimFormat.formatRs(s.totalValue))
           add("Payment" to s.paymentType)
         } else {
-          add("Amount Received" to SarimFormat.formatRs(s.amountReceived))
+          add("Amount Received" to SarimFormat.formatRs(sheetDispAmt))
           if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
         }
         add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
@@ -418,7 +421,7 @@ fun RepSalesTab(
         customerName = s.customerName
         if (s.mode == "COLLECTION") {
           mode = RepTxMode.COLLECTION
-          amountReceivedText = s.amountReceived.toString()
+          amountReceivedText = sheetDispAmt.toString()
           expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
         } else {
           mode = RepTxMode.SALE
@@ -430,7 +433,7 @@ fun RepSalesTab(
         viewModel.showDialog(
           AppDialogRequest(
             title = "Delete Transaction?",
-            body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(s.totalValue)}\nMoves to Recycle Bin for 90 days.",
+            body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(sheetDispAmt)}\nMoves to Recycle Bin for 90 days.",
             confirmLabel = "Delete",
             onConfirm = {
               viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {

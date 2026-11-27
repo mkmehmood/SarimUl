@@ -297,8 +297,12 @@ class SarimRepository(
       .sumOf { it.netWeightKg }
     val tIn = dao.getAllStockTransfers().filter { !it.isDeleted && it.toStoreKey == storeKey }.sumOf { it.quantityKg }
     val tOut = dao.getAllStockTransfers().filter { !it.isDeleted && it.fromStoreKey == storeKey }.sumOf { it.quantityKg }
-    val returned = dao.getAllSettlements().filter { !it.isDeleted && it.returnStoreKey == storeKey }.sumOf { it.returnedKg }
-    val sold = dao.getAllSales().filter { !it.isDeleted && !it.isRepSale && it.mode == "SALE" && it.storeKey == storeKey }.sumOf { it.quantityKg }
+    val returned = dao.getAllSettlements()
+      .filter { !it.isDeleted && !it.returnType.equals("TRANSFER", true) && it.returnStoreKey == storeKey }
+      .sumOf { it.returnedKg }
+    val sold = dao.getAllSales()
+      .filter { !it.isDeleted && !it.isRepSale && !it.isRepReturn && !it.isRepTransfer && it.mode == "SALE" && it.storeKey == storeKey }
+      .sumOf { it.quantityKg }
     val projectedRemaining = producedWithout + addedNetKg + tIn + returned - sold - tOut
     if (projectedRemaining < -0.001) {
       throw IllegalStateException("Remaining store stock cannot drop below zero (sold or transferred stock exceeds new remaining).")
@@ -1091,40 +1095,44 @@ class SarimRepository(
       }
     }
 
-    // Reverse Customer totals
-    dao.getAllCustomers().firstOrNull {
-      !it.isDeleted && it.isRepCustomer == sale.isRepSale &&
-        (it.id == sale.customerId || it.name.equals(sale.customerName, true))
-    }?.let { cust ->
-      val creditDelta = when (sale.mode) {
-        "SALE" -> if (sale.paymentType == "CREDIT") -sale.totalValue else 0.0
-        "COLLECTION" -> sale.amountReceived
-        "MONEY_OUT" -> -sale.amountReceived
-        "OLD_DEBT" -> -sale.totalValue
-        else -> 0.0
+    // Reverse Customer totals (only when record actually belongs to a registered customer rather than a Rep-linked Admin delivery)
+    val isRepLinkedAdmin = SarimLinkEngine.isRepLinkedAdminSale(sale) || sale.isRepReturn
+    if (!isRepLinkedAdmin) {
+      val cashCollected = if (sale.collectedAmount > 0.0) sale.collectedAmount else sale.amountReceived
+      dao.getAllCustomers().firstOrNull {
+        !it.isDeleted && it.isRepCustomer == sale.isRepSale &&
+          (it.id == sale.customerId || it.name.equals(sale.customerName, true))
+      }?.let { cust ->
+        val creditDelta = when (sale.mode) {
+          "SALE" -> if (sale.paymentType == "CREDIT") -sale.totalValue else 0.0
+          "COLLECTION" -> cashCollected + sale.expiredValue
+          "MONEY_OUT" -> -sale.totalValue.takeIf { it > 0.0 }.let { it ?: cashCollected }
+          "OLD_DEBT" -> -sale.totalValue
+          else -> 0.0
+        }
+        val qtyDelta = if (sale.mode == "SALE") -sale.quantityKg else 0.0
+        val valDelta = if (sale.mode == "SALE") -sale.totalValue else 0.0
+        val recDelta = when {
+          sale.mode == "COLLECTION" -> -cashCollected
+          sale.mode == "SALE" && sale.paymentType == "CASH" -> -sale.totalValue
+          else -> 0.0
+        }
+        val updatedCust = cust.copy(
+          currentCredit = cust.currentCredit + creditDelta,
+          totalQuantityKg = (cust.totalQuantityKg + qtyDelta).coerceAtLeast(0.0),
+          totalSaleValue = (cust.totalSaleValue + valDelta).coerceAtLeast(0.0),
+          totalReceived = (cust.totalReceived + recDelta).coerceAtLeast(0.0),
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertCustomer(updatedCust)
+        val custCol = if (updatedCust.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
+        enqueueOutboxSet(custCol, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
       }
-      val qtyDelta = if (sale.mode == "SALE") -sale.quantityKg else 0.0
-      val valDelta = if (sale.mode == "SALE") -sale.totalValue else 0.0
-      val recDelta = when {
-        sale.mode == "COLLECTION" -> -sale.amountReceived
-        sale.mode == "SALE" && sale.paymentType == "CASH" -> -sale.totalValue
-        else -> 0.0
-      }
-      val updatedCust = cust.copy(
-        currentCredit = cust.currentCredit + creditDelta,
-        totalQuantityKg = (cust.totalQuantityKg + qtyDelta).coerceAtLeast(0.0),
-        totalSaleValue = (cust.totalSaleValue + valDelta).coerceAtLeast(0.0),
-        totalReceived = (cust.totalReceived + recDelta).coerceAtLeast(0.0),
-        syncPending = true,
-        updatedAt = now,
-      )
-      dao.upsertCustomer(updatedCust)
-      val custCol = if (updatedCust.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
-      enqueueOutboxSet(custCol, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
     }
 
-    // Reverse CHORA if expiredQtyKg > 0
-    if (sale.expiredQtyKg > 0.0) {
+    // Reverse CHORA only for non-RepReturn collections where CHORA was incremented directly
+    if (sale.expiredQtyKg > 0.0 && !sale.isRepReturn && sale.mode != "REP_RETURN") {
       dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }?.let { chora ->
         val updatedChora = chora.copy(
           stockKg = (chora.stockKg - sale.expiredQtyKg).coerceAtLeast(0.0),
@@ -1171,14 +1179,22 @@ class SarimRepository(
       applySaleReversalOnDeleteOrEdit(existing, now)
     }
 
+    val cleanRep = repName.trim().ifBlank { "Direct" }
+    val isRepLinkedAdmin = !isRepSale && mode == "SALE" &&
+      !cleanRep.equals("Direct", true) && !cleanRep.equals("NONE", true) && !cleanRep.equals("ADMIN", true)
+    val effectiveCustomerName = if (isRepLinkedAdmin) cleanRep else customerName.trim()
+    val effectivePaymentType = if (isRepLinkedAdmin) "CREDIT" else paymentType
+    val effectiveAddToLedger = if (isRepLinkedAdmin) false else addToLedger
+
     val allCusts = dao.getAllCustomers().filter { !it.isDeleted }
-    var cust = allCusts.firstOrNull {
-      it.name.equals(customerName.trim(), ignoreCase = true) && it.isRepCustomer == isRepSale
-    }
-    if (cust == null) {
-      cust = saveCustomer(
+    var cust = if (isRepLinkedAdmin) {
+      null
+    } else {
+      allCusts.firstOrNull {
+        it.name.equals(effectiveCustomerName, ignoreCase = true) && it.isRepCustomer == isRepSale
+      } ?: saveCustomer(
         editingId = null,
-        name = customerName,
+        name = effectiveCustomerName,
         phone = newCustomerPhone,
         address = "",
         oldDebit = 0.0,
@@ -1186,39 +1202,123 @@ class SarimRepository(
         ledgerPage = "",
         photoUri = "",
         isRepCustomer = isRepSale,
-        repName = if (isRepSale) repName else "",
+        repName = if (isRepSale) cleanRep else "",
       )
     }
 
-    val pricePerKg = cust.customSalePrice ?: (store?.salePricePerKg ?: 400.0)
+    // Rep-linked admin deliveries may carry a custom price on a contact matching the rep name if present, else store price
+    val repPriceContact = if (isRepLinkedAdmin) {
+      allCusts.firstOrNull { !it.isRepCustomer && it.name.equals(effectiveCustomerName, ignoreCase = true) }
+    } else null
+    val fallbackStorePrice = store?.salePricePerKg ?: 400.0
+    val pricePerKg = cust?.customSalePrice ?: repPriceContact?.customSalePrice ?: fallbackStorePrice
+
+    val allSalesNow = dao.getAllSales()
+    val allSettlementsNow = dao.getAllSettlements()
+    val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
+    val dateStr = SarimFormat.dateInput(dateEpoch)
+    val saleCol = if (isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+
+    // Compute Goods Credit on Collection expired qty (matches web planGoodsCredit)
+    var expUnitPrice = 0.0
+    var expVal = 0.0
+    if (mode == "COLLECTION" && expiredQtyKg > 0.0) {
+      expUnitPrice = SarimLinkEngine.goodsCreditUnitPrice(
+        name = effectiveCustomerName,
+        sales = allSalesNow,
+        fallbackPrice = pricePerKg,
+        isRepProfile = isRepSale,
+        excludeSaleId = txId,
+      )
+      val partyOwedAfterCash = (SarimLinkEngine.partyOutstanding(
+        name = effectiveCustomerName,
+        sales = allSalesNow,
+        isRepProfile = isRepSale,
+        settlements = allSettlementsNow,
+        excludeSaleId = txId,
+      ) - amountReceived).coerceAtLeast(0.0)
+      expVal = SarimLinkEngine.planGoodsCredit(expiredQtyKg, expUnitPrice, partyOwedAfterCash).value
+    }
+
+    // Collection Allocation against unpaid CREDIT / OLD_DEBT sales (newest credit sales first, OLD_DEBT last)
+    val allocList = mutableListOf<JsonCodecs.AllocationItem>()
+    var cashLeftForCollection = amountReceived
+    var expAllocated = 0.0
+    if (mode == "COLLECTION" && (amountReceived > 0.0 || expVal > 0.0)) {
+      val eligibleOpen = SarimLinkEngine.sortForCollection(
+        SarimLinkEngine.collectionEligible(
+          allSalesNow.filter {
+            !it.isDeleted && it.id != txId && it.isRepSale == isRepSale &&
+              it.customerName.equals(effectiveCustomerName, true) &&
+              !it.creditReceived && it.usedInCalcId.isNullOrBlank() && !it.isRepTransfer &&
+              (it.mode == "OLD_DEBT" || it.transactionType == "OLD_DEBT" || (it.mode == "SALE" && it.paymentType == "CREDIT"))
+          },
+          dateStr,
+        )
+      )
+      val dues = eligibleOpen.map { it.id to (it.totalValue - it.partialPaymentReceived).coerceAtLeast(0.0) }
+      val planned = SarimLinkEngine.planCollectionAllocation(amountReceived + expVal, dues)
+      for (a in planned) {
+        val parent = eligibleOpen.firstOrNull { it.id == a.saleId } ?: continue
+        val newPartial = SarimLinkEngine.round2(parent.partialPaymentReceived + a.amount)
+        val full = a.full || newPartial >= parent.totalValue - 0.01
+        val existingChildAllocs = JsonCodecs.decodeCollectionAllocs(parent.collectionAllocsJson).toMutableList()
+        existingChildAllocs.removeAll { it.cid == txId }
+        existingChildAllocs += JsonCodecs.CollectionAllocItem(cid = txId, amount = a.amount, full = full)
+        val updatedParent = parent.copy(
+          partialPaymentReceived = newPartial,
+          creditReceived = full,
+          collectionAllocsJson = JsonCodecs.encodeCollectionAllocs(existingChildAllocs),
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertSale(updatedParent)
+        enqueueOutboxSet(saleCol, updatedParent.id, SarimWebSchema.saleToMap(updatedParent))
+        allocList += a.copy(full = full)
+      }
+      if (allocList.isNotEmpty()) {
+        val totalAlloc = allocList.sumOf { it.amount }
+        val cashPaid = minOf(amountReceived, totalAlloc)
+        cashLeftForCollection = SarimLinkEngine.round2((amountReceived - cashPaid).coerceAtLeast(0.0))
+        expAllocated = SarimLinkEngine.round2((totalAlloc - cashPaid).coerceAtLeast(0.0))
+      }
+    }
+
     val totalValue = when (mode) {
-      "SALE" -> quantityKg * pricePerKg
-      "COLLECTION" -> amountReceived
+      "SALE" -> SarimLinkEngine.round2(quantityKg * pricePerKg)
+      "COLLECTION" -> if (allocList.isNotEmpty()) cashLeftForCollection else amountReceived
       else -> amountReceived
     }
-    val totalCost = if (mode == "SALE") quantityKg * costPerKg else 0.0
-    val profit = if (mode == "SALE") totalValue - totalCost else 0.0
-
-    val updatedCredit = when (mode) {
-      "SALE" -> if (paymentType == "CREDIT") cust.currentCredit + totalValue else cust.currentCredit
-      "COLLECTION" -> cust.currentCredit - amountReceived
-      "MONEY_OUT" -> cust.currentCredit + amountReceived
-      else -> cust.currentCredit
+    val totalCost = if (mode == "SALE") SarimLinkEngine.round2(quantityKg * costPerKg) else 0.0
+    val profit = when (mode) {
+      "SALE" -> SarimLinkEngine.round2(totalValue - totalCost)
+      "COLLECTION" -> totalValue
+      else -> 0.0
     }
 
-    val updatedCust = cust.copy(
-      currentCredit = updatedCredit,
-      totalQuantityKg = cust.totalQuantityKg + if (mode == "SALE") quantityKg else 0.0,
-      totalSaleValue = cust.totalSaleValue + if (mode == "SALE") totalValue else 0.0,
-      totalReceived = cust.totalReceived + if (mode == "COLLECTION") amountReceived else if (mode == "SALE" && paymentType == "CASH") totalValue else 0.0,
-      syncPending = true,
-      updatedAt = now,
-    )
-    dao.upsertCustomer(updatedCust)
-    val custCol = if (updatedCust.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
-    enqueueOutboxSet(custCol, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
+    val currentCredBefore = cust?.currentCredit ?: 0.0
+    val updatedCredit = when (mode) {
+      "SALE" -> if (effectivePaymentType == "CREDIT") currentCredBefore + totalValue else currentCredBefore
+      "COLLECTION" -> currentCredBefore - (amountReceived + expVal)
+      "MONEY_OUT" -> currentCredBefore + amountReceived
+      else -> currentCredBefore
+    }
 
-    if (expiredQtyKg > 0.0) {
+    if (cust != null) {
+      val updatedCust = cust.copy(
+        currentCredit = updatedCredit,
+        totalQuantityKg = cust.totalQuantityKg + if (mode == "SALE") quantityKg else 0.0,
+        totalSaleValue = cust.totalSaleValue + if (mode == "SALE") totalValue else 0.0,
+        totalReceived = cust.totalReceived + if (mode == "COLLECTION") amountReceived else if (mode == "SALE" && effectivePaymentType == "CASH") totalValue else 0.0,
+        syncPending = true,
+        updatedAt = now,
+      )
+      dao.upsertCustomer(updatedCust)
+      val custCol = if (updatedCust.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
+      enqueueOutboxSet(custCol, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
+    }
+
+    if (mode == "COLLECTION" && expiredQtyKg > 0.0) {
       val chora = dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }
       if (chora != null) {
         val updatedChora = chora.copy(
@@ -1232,65 +1332,27 @@ class SarimRepository(
       }
     }
 
-    val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
-    val saleCol = if (isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
-
-    // FIFO Collection Allocation against unpaid CREDIT / OLD_DEBT sales
-    val allocList = mutableListOf<JsonCodecs.AllocationItem>()
-    if (mode == "COLLECTION" && amountReceived > 0.0) {
-      var remaining = amountReceived
-      val openSales = dao.getAllSales()
-        .filter {
-          !it.isDeleted && it.id != txId && it.isRepSale == isRepSale &&
-            (it.customerId == cust.id || it.customerName.equals(cust.name, true)) &&
-            !it.creditReceived && (it.mode == "OLD_DEBT" || (it.mode == "SALE" && it.paymentType == "CREDIT"))
-        }
-        .sortedWith(compareBy<SaleTransactionEntity> { it.dateEpoch }.thenBy { it.createdAt })
-
-      for (parent in openSales) {
-        if (remaining <= 0.001) break
-        val owed = (parent.totalValue - parent.partialPaymentReceived).coerceAtLeast(0.0)
-        if (owed <= 0.001) continue
-        val take = minOf(remaining, owed)
-        remaining -= take
-        val newPartial = parent.partialPaymentReceived + take
-        val full = newPartial >= parent.totalValue - 0.01
-        val existingChildAllocs = JsonCodecs.decodeCollectionAllocs(parent.collectionAllocsJson).toMutableList()
-        existingChildAllocs.removeAll { it.cid == txId }
-        existingChildAllocs += JsonCodecs.CollectionAllocItem(cid = txId, amount = take, full = full)
-        val updatedParent = parent.copy(
-          partialPaymentReceived = newPartial,
-          creditReceived = full,
-          collectionAllocsJson = JsonCodecs.encodeCollectionAllocs(existingChildAllocs),
-          syncPending = true,
-          updatedAt = now,
-        )
-        dao.upsertSale(updatedParent)
-        enqueueOutboxSet(saleCol, updatedParent.id, SarimWebSchema.saleToMap(updatedParent))
-        allocList += JsonCodecs.AllocationItem(saleId = parent.id, amount = take, full = full)
-      }
-    }
-
-    val ledgerId = if (addToLedger && ((mode == "SALE" && paymentType == "CASH") || mode == "COLLECTION" || mode == "MONEY_OUT")) {
+    val ledgerEligible = effectiveAddToLedger && (
+      (mode == "SALE" && effectivePaymentType == "CASH") ||
+        (mode == "COLLECTION" && amountReceived > 0.0) ||
+        (mode == "MONEY_OUT" && amountReceived > 0.0)
+      )
+    val ledgerId = if (ledgerEligible) {
       existing?.ledgerId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_DAILY_LEDGER, tsMs = now)
     } else null
 
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) {
-      history.add(0, EditHistoryEntry(now, "Edited $mode · ${cust.name}"))
+      history.add(0, EditHistoryEntry(now, "Edited $mode · $effectiveCustomerName"))
     }
-
-    val expUnitPrice = if (expiredQtyKg > 0.0) pricePerKg else 0.0
-    val expVal = expiredQtyKg * expUnitPrice
-    val expAllocated = if (expiredQtyKg > 0.0) amountReceived else 0.0
 
     val saleEntity = SaleTransactionEntity(
       id = txId,
       dateEpoch = dateEpoch,
       mode = mode,
-      customerId = cust.id,
-      customerName = cust.name,
-      repName = repName,
+      customerId = cust?.id ?: "",
+      customerName = effectiveCustomerName,
+      repName = cleanRep,
       storeKey = store?.storeKey ?: "",
       storeName = store?.name ?: "",
       quantityKg = quantityKg,
@@ -1298,19 +1360,20 @@ class SarimRepository(
       totalValue = totalValue,
       totalCost = totalCost,
       profit = profit,
-      paymentType = paymentType,
+      paymentType = effectivePaymentType,
       amountReceived = amountReceived,
       expiredQtyKg = expiredQtyKg,
       returnedQtyKg = returnedQtyKg,
       balanceAfter = updatedCredit,
-      addToLedger = addToLedger,
+      addToLedger = ledgerEligible,
       isRepSale = isRepSale,
       latitude = lat,
       longitude = lng,
-      dateStr = SarimFormat.dateInput(dateEpoch),
+      dateStr = dateStr,
+      supplyDate = dateStr,
       timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
-      customerPhone = cust.phone,
-      creditReceived = (paymentType == "CASH" || mode == "COLLECTION"),
+      customerPhone = cust?.phone ?: "",
+      creditReceived = (effectivePaymentType == "CASH" || mode == "COLLECTION"),
       isCollection = (mode == "COLLECTION"),
       ledgerId = ledgerId,
       notes = notes.trim(),
@@ -1318,7 +1381,7 @@ class SarimRepository(
       costSource = costSource ?: if (mode == "SALE" && store != null) "store" else existing?.costSource,
       affectsInventory = !isRepSale && mode == "SALE",
       isMoneyOut = (mode == "MONEY_OUT"),
-      isRepReturn = (paymentType == "REP_RETURN"),
+      isRepReturn = false,
       expiredValue = expVal,
       expiredUnitPrice = expUnitPrice,
       expiredAllocated = expAllocated,
@@ -1344,12 +1407,12 @@ class SarimRepository(
             type = ledgerType,
             amount = amt,
             mode = "Cash",
-            party = cust.name,
+            party = effectiveCustomerName,
             note = "$mode · ${store?.name ?: ""}".trim(' ', '·'),
             category = if (mode == "SALE") "Cash Sale" else if (mode == "COLLECTION") "Collection" else "Customer Payout",
             sourceType = "SALE",
             sourceId = txId,
-            dateStr = SarimFormat.dateInput(dateEpoch),
+            dateStr = dateStr,
             linkJson = JsonCodecs.encodeLedgerLink(mapOf("saleId" to txId, "isRep" to isRepSale)),
             updatedAt = now,
           )
@@ -1359,20 +1422,117 @@ class SarimRepository(
     }
   }
 
+  suspend fun saveRepReturn(
+    editingId: String?,
+    dateEpoch: Long,
+    repName: String,
+    expiredQtyKg: Double,
+    returnedQtyKg: Double,
+    fallbackUnitPrice: Double = 400.0,
+  ): SaleTransactionEntity {
+    val cleanRep = repName.trim()
+    require(cleanRep.isNotBlank() && !cleanRep.equals("Direct", true)) {
+      "Select a sales representative."
+    }
+    require(expiredQtyKg >= 0.0 && returnedQtyKg >= 0.0 && (expiredQtyKg + returnedQtyKg) > 0.0) {
+      "Enter an expired and/or returned quantity."
+    }
+    val now = System.currentTimeMillis()
+    val allSales = dao.getAllSales()
+    val allSettlements = dao.getAllSettlements()
+    val reconciledReturns = SarimLinkEngine.reconciledRepReturnIds(allSettlements)
+    val existing = editingId?.let { id -> allSales.firstOrNull { it.id == id && !it.isDeleted } }
+    if (existing != null && existing.id in reconciledReturns) {
+      throw IllegalStateException("This return is already reconciled in the Calculator, so it can no longer be edited.")
+    }
+
+    val pendingDeliveries = SarimLinkEngine.getPendingRepDeliveries(cleanRep, allSales, allSettlements)
+    val pendingDeliveredKg = SarimLinkEngine.round2(pendingDeliveries.sumOf { it.quantityKg })
+    val alreadyPendingKg = SarimLinkEngine.round2(
+      SarimLinkEngine.getPendingRepReturns(cleanRep, allSales, allSettlements)
+        .filter { it.id != editingId }
+        .sumOf { it.expiredQtyKg + it.returnedQtyKg }
+    )
+    if (SarimLinkEngine.round2(alreadyPendingKg + expiredQtyKg + returnedQtyKg) > pendingDeliveredKg + 0.0001) {
+      throw IllegalStateException(
+        "$cleanRep only has $pendingDeliveredKg kg awaiting reconciliation ($alreadyPendingKg kg already pending return)."
+      )
+    }
+
+    val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
+    val dateStr = SarimFormat.dateInput(dateEpoch)
+    val repUnitPrice = SarimLinkEngine.goodsCreditUnitPrice(cleanRep, allSales, fallbackUnitPrice, isRepProfile = false, excludeSaleId = txId)
+    val repOwed = SarimLinkEngine.partyOutstanding(cleanRep, allSales, isRepProfile = false, settlements = allSettlements, excludeSaleId = txId)
+    val creditPlan = SarimLinkEngine.planGoodsCredit(expiredQtyKg + returnedQtyKg, repUnitPrice, repOwed)
+    val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
+    if (existing != null) {
+      history.add(0, EditHistoryEntry(now, "Edited REP_RETURN · $cleanRep"))
+    }
+
+    val entity = SaleTransactionEntity(
+      id = txId,
+      dateEpoch = existing?.dateEpoch ?: dateEpoch,
+      mode = "REP_RETURN",
+      customerId = "",
+      customerName = cleanRep,
+      repName = cleanRep,
+      storeKey = "",
+      storeName = "",
+      quantityKg = 0.0,
+      pricePerKg = 0.0,
+      totalValue = 0.0,
+      totalCost = 0.0,
+      profit = 0.0,
+      paymentType = "REP_RETURN",
+      amountReceived = 0.0,
+      expiredQtyKg = SarimLinkEngine.round2(expiredQtyKg),
+      returnedQtyKg = SarimLinkEngine.round2(returnedQtyKg),
+      returnValue = creditPlan.value,
+      returnUnitPrice = if (creditPlan.value > 0.0) repUnitPrice else 0.0,
+      balanceAfter = (repOwed - creditPlan.value).coerceAtLeast(0.0),
+      addToLedger = false,
+      isRepSale = false,
+      dateStr = existing?.dateStr ?: dateStr,
+      supplyDate = existing?.supplyDate ?: dateStr,
+      timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
+      creditReceived = true,
+      isCollection = false,
+      affectsInventory = false,
+      isMoneyOut = false,
+      isRepReturn = true,
+      transactionType = "REP_RETURN",
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      createdAt = existing?.createdAt ?: now,
+      updatedAt = now,
+    )
+    dao.upsertSale(entity)
+    enqueueOutboxSet(SarimWebSchema.COL_SALES, entity.id, SarimWebSchema.saleToMap(entity))
+    return entity
+  }
+
   suspend fun deleteSale(id: String) {
     val now = System.currentTimeMillis()
     val sale = dao.getAllSales().firstOrNull { it.id == id }
     if (sale != null) {
+      if (sale.isRepReturn && sale.id in SarimLinkEngine.reconciledRepReturnIds(dao.getAllSettlements())) {
+        throw IllegalStateException("This return is already reconciled in the Calculator. Delete the Calculator settlement first.")
+      }
       applySaleReversalOnDeleteOrEdit(sale, now)
     }
     dao.softDeleteSale(id, now)
     val targetCol = if (sale?.isRepSale == true) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+    val dispAmt = when {
+      sale == null -> 0.0
+      sale.mode == "COLLECTION" || sale.mode == "MONEY_OUT" -> sale.amountReceived.takeIf { it > 0.0 } ?: sale.totalValue
+      sale.isRepReturn -> sale.returnValue
+      else -> sale.totalValue
+    }
     enqueueOutboxDelete(
       collection = targetCol,
       docId = id,
       title = "${sale?.mode ?: "SALE"}: ${sale?.customerName ?: id}",
-      subtitle = "${sale?.quantityKg ?: 0.0} kg",
-      amountText = "Rs ${sale?.totalValue ?: 0.0}",
+      subtitle = if (sale?.isRepReturn == true) "${sale.expiredQtyKg} exp / ${sale.returnedQtyKg} ret kg" else "${sale?.quantityKg ?: 0.0} kg",
+      amountText = "Rs $dispAmt",
       snapshotMap = sale?.let { SarimWebSchema.saleToMap(it) },
     )
   }
@@ -1420,6 +1580,38 @@ class SarimRepository(
     )
     dao.upsertPaymentEntity(rec)
     enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, rec.id, SarimWebSchema.entityToMap(rec))
+
+    // Propagate entity rename across transactions, expenses, payment transfers, and inventory suppliers (matches web planEntityRename)
+    if (existing != null && !existing.name.equals(rec.name, ignoreCase = true)) {
+      dao.getAllPaymentTransactions().filter { !it.isDeleted && it.entityId == rec.id }.forEach { tx ->
+        val updatedTx = tx.copy(entityOrExpenseName = rec.name, syncPending = true, updatedAt = now)
+        dao.upsertPaymentTransaction(updatedTx)
+        enqueueOutboxSet(SarimWebSchema.COL_TRANSACTIONS, updatedTx.id, SarimWebSchema.transactionToMap(updatedTx))
+        tx.expenseId?.let { expId ->
+          dao.getAllExpenses().firstOrNull { it.id == expId && !it.isDeleted }?.let { exp ->
+            val updatedExp = exp.copy(name = rec.name, syncPending = true, updatedAt = now)
+            dao.upsertExpense(updatedExp)
+            enqueueOutboxSet(SarimWebSchema.COL_EXPENSES, updatedExp.id, SarimWebSchema.expenseToMap(updatedExp))
+          }
+        }
+        tx.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
+          dao.getAllDailyLedger().firstOrNull { it.id == lid && !it.isDeleted }?.let { led ->
+            dao.upsertLedgerEntry(led.copy(party = rec.name, updatedAt = now))
+            touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+          }
+        }
+      }
+      dao.getAllRawMaterials().filter { !it.isDeleted && it.supplierId == rec.id }.forEach { mat ->
+        val updatedMat = mat.copy(supplierName = rec.name, syncPending = true, updatedAt = now)
+        dao.upsertRawMaterial(updatedMat)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedMat.id, SarimWebSchema.materialToMap(updatedMat))
+      }
+      dao.getAllPurchases().filter { !it.isDeleted && it.supplierId == rec.id }.forEach { lot ->
+        val updatedLot = lot.copy(supplierName = rec.name, syncPending = true, updatedAt = now)
+        dao.upsertPurchase(updatedLot)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedLot.id, SarimWebSchema.purchaseLotToMap(updatedLot))
+      }
+    }
 
     val pKey = "entity:${rec.id}"
     if (photoUri.isNotBlank()) {
@@ -1497,6 +1689,78 @@ class SarimRepository(
     )
   }
 
+  private suspend fun revertPaymentTransactionEffects(tx: PaymentTransactionEntity, now: Long) {
+    if (!tx.entityId.isNullOrBlank()) {
+      dao.getAllPaymentEntities().firstOrNull { it.id == tx.entityId && !it.isDeleted }?.let { ent ->
+        val reversedBal = if (tx.type == "PAYMENT_IN") ent.currentBalance - tx.amount else ent.currentBalance + tx.amount
+        val updatedEnt = ent.copy(currentBalance = reversedBal, syncPending = true, updatedAt = now)
+        dao.upsertPaymentEntity(updatedEnt)
+        enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedEnt.id, SarimWebSchema.entityToMap(updatedEnt))
+      }
+    }
+
+    val consumed = JsonCodecs.decodeConsumedCredits(tx.consumedCreditsJson)
+    var restoredCreditTotal = 0.0
+    if (consumed.isNotEmpty()) {
+      val allPay = dao.getAllPaymentTransactions()
+      consumed.forEach { item ->
+        allPay.firstOrNull { it.id == item.id && !it.isDeleted }?.let { inTx ->
+          val addAmt = if (item.amount > 0.0) item.amount else tx.amount
+          restoredCreditTotal += addAmt
+          val updatedIn = inTx.copy(
+            supplierCreditAmount = inTx.supplierCreditAmount + addAmt,
+            syncPending = true,
+            updatedAt = now,
+          )
+          dao.upsertPaymentTransaction(updatedIn)
+          enqueueOutboxSet(SarimWebSchema.COL_TRANSACTIONS, updatedIn.id, SarimWebSchema.transactionToMap(updatedIn))
+        }
+      }
+    }
+
+    val remainingToRestore = (tx.amount - restoredCreditTotal).coerceAtLeast(0.0)
+    if (tx.isPayable && tx.type == "PAYMENT_OUT" && remainingToRestore > 0.001) {
+      val matIds = (JsonCodecs.decodeStrings(tx.materialIdsJson) + listOfNotNull(tx.materialId)).distinct()
+      var remRestore = remainingToRestore
+      val matchingLots = dao.getAllPurchases()
+        .filter { !it.isDeleted && (it.materialId in matIds || (!tx.entityId.isNullOrBlank() && it.supplierId == tx.entityId)) }
+        .sortedByDescending { it.dateEpoch }
+      val matDeltaMap = linkedMapOf<String, Double>()
+      for (lot in matchingLots) {
+        if (remRestore <= 0.001) break
+        val cap = (lot.totalAmount - lot.totalPayable).coerceAtLeast(0.0)
+        if (cap <= 0.001) continue
+        val addBack = minOf(remRestore, cap)
+        remRestore -= addBack
+        val updatedLot = lot.copy(
+          totalPayable = lot.totalPayable + addBack,
+          paymentStatus = "pending",
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertPurchase(updatedLot)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedLot.id, SarimWebSchema.purchaseLotToMap(updatedLot))
+        matDeltaMap[lot.materialId] = (matDeltaMap[lot.materialId] ?: 0.0) + addBack
+      }
+      if (remRestore > 0.001 && matIds.isNotEmpty()) {
+        matDeltaMap[matIds.first()] = (matDeltaMap[matIds.first()] ?: 0.0) + remRestore
+      }
+      matDeltaMap.forEach { (matId, delta) ->
+        if (delta <= 0.001) return@forEach
+        dao.getAllRawMaterials().firstOrNull { !it.isDeleted && it.id == matId }?.let { mat ->
+          val updatedMat = mat.copy(
+            pendingSupplierAmount = mat.pendingSupplierAmount + delta,
+            paymentStatus = "pending",
+            syncPending = true,
+            updatedAt = now,
+          )
+          dao.upsertRawMaterial(updatedMat)
+          enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedMat.id, SarimWebSchema.materialToMap(updatedMat))
+        }
+      }
+    }
+  }
+
   suspend fun savePaymentTransaction(
     editingId: String?,
     dateEpoch: Long,
@@ -1512,6 +1776,12 @@ class SarimRepository(
     val cleanName = name.trim()
     val dateStr = SarimFormat.dateInput(dateEpoch)
     val existing = editingId?.let { id -> dao.getAllPaymentTransactions().firstOrNull { it.id == id } }
+    val consumedOnExistingIn = if (existing?.type == "PAYMENT_IN") {
+      (existing.amount - existing.supplierCreditAmount).coerceAtLeast(0.0)
+    } else 0.0
+    if (existing != null) {
+      revertPaymentTransactionEffects(existing, now)
+    }
 
     if (type == "EXPENSE") {
       appendCategoryToKv("categories", category?.takeIf { it.isNotBlank() } ?: cleanName, now)
@@ -1523,21 +1793,19 @@ class SarimRepository(
     } else null
 
     if (entity != null) {
-      val prevImpact = if (existing != null && existing.entityId == entity.id) {
-        if (existing.type == "PAYMENT_IN") existing.amount else -existing.amount
-      } else 0.0
       val nextImpact = if (type == "PAYMENT_IN") amount else -amount
-      val newBal = entity.currentBalance - prevImpact + nextImpact
+      val newBal = entity.currentBalance + nextImpact
       val updatedEnt = entity.copy(currentBalance = newBal, syncPending = true, updatedAt = now)
       dao.upsertPaymentEntity(updatedEnt)
       enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedEnt.id, SarimWebSchema.entityToMap(updatedEnt))
     }
 
-    // FIFO supplier payable settlement for PAYMENT_OUT
+    // FIFO supplier payable settlement + consumed supplier credit for PAYMENT_OUT
     val settledMatIds = mutableListOf<String>()
+    val consumedCredits = mutableListOf<JsonCodecs.ConsumedCreditItem>()
     var isPayableOut = false
     var supplierCreditAmt = 0.0
-    if (type == "PAYMENT_OUT" && entity != null && existing == null) {
+    if (type == "PAYMENT_OUT" && entity != null) {
       var remainingPay = amount
       val openLots = dao.getAllPurchases()
         .filter { !it.isDeleted && it.supplierId == entity.id && it.totalPayable > 0.001 }
@@ -1590,8 +1858,30 @@ class SarimRepository(
           isPayableOut = true
         }
       }
-    } else if (type == "PAYMENT_IN" && entity?.isSupplier == true) {
-      supplierCreditAmt = amount
+      if (remainingPay > 0.001) {
+        val allEntityIn = dao.getAllPaymentTransactions()
+          .filter { !it.isDeleted && it.entityId == entity.id && it.type == "PAYMENT_IN" }
+        val toConsume = SarimLinkEngine.planSupplierCreditConsumption(remainingPay, allEntityIn)
+        toConsume.forEach { item ->
+          allEntityIn.firstOrNull { it.id == item.id }?.let { inTx ->
+            val updatedIn = inTx.copy(
+              supplierCreditAmount = (inTx.supplierCreditAmount - item.amount).coerceAtLeast(0.0),
+              syncPending = true,
+              updatedAt = now,
+            )
+            dao.upsertPaymentTransaction(updatedIn)
+            enqueueOutboxSet(SarimWebSchema.COL_TRANSACTIONS, updatedIn.id, SarimWebSchema.transactionToMap(updatedIn))
+            consumedCredits += item
+            isPayableOut = true
+          }
+        }
+      }
+    } else if (type == "PAYMENT_IN" && entity != null) {
+      val hasSupMaterials = entity.isSupplier || dao.getAllRawMaterials().any { !it.isDeleted && it.supplierId == entity.id }
+      if (hasSupMaterials) {
+        supplierCreditAmt = (amount - consumedOnExistingIn).coerceAtLeast(0.0)
+        isPayableOut = true
+      }
     }
 
     val txId = editingId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
@@ -1634,14 +1924,14 @@ class SarimRepository(
       timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
       isExpense = (type == "EXPENSE"),
       expenseId = expenseRec.id,
-      isPayable = existing?.isPayable ?: isPayableOut,
+      isPayable = isPayableOut,
       ledgerId = ledgerId,
       entityType = entity?.type ?: if (type == "EXPENSE") "expense" else "",
-      materialId = settledMatIds.firstOrNull() ?: existing?.materialId,
-      materialIdsJson = if (settledMatIds.isNotEmpty()) JsonCodecs.encodeStrings(settledMatIds.distinct()) else (existing?.materialIdsJson ?: "[]"),
-      consumedCreditsJson = existing?.consumedCreditsJson ?: "[]",
-      category = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else existing?.category,
-      supplierCreditAmount = if (supplierCreditAmt > 0.0) supplierCreditAmt else (existing?.supplierCreditAmount ?: 0.0),
+      materialId = settledMatIds.firstOrNull(),
+      materialIdsJson = JsonCodecs.encodeStrings(settledMatIds.distinct()),
+      consumedCreditsJson = JsonCodecs.encodeConsumedCredits(consumedCredits),
+      category = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else null,
+      supplierCreditAmount = supplierCreditAmt,
       editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
       createdAt = existing?.createdAt ?: now,
       updatedAt = now,
@@ -1687,30 +1977,7 @@ class SarimRepository(
     val groupId = if (tx?.expenseId != null) SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_pay", tsMs = now) else null
 
     if (tx != null) {
-      if (!tx.entityId.isNullOrBlank()) {
-        dao.getAllPaymentEntities().firstOrNull { it.id == tx.entityId && !it.isDeleted }?.let { ent ->
-          val reversedBal = if (tx.type == "PAYMENT_IN") ent.currentBalance - tx.amount else ent.currentBalance + tx.amount
-          val updatedEnt = ent.copy(currentBalance = reversedBal, syncPending = true, updatedAt = now)
-          dao.upsertPaymentEntity(updatedEnt)
-          enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedEnt.id, SarimWebSchema.entityToMap(updatedEnt))
-        }
-      }
-
-      if (tx.isPayable) {
-        val matIds = (JsonCodecs.decodeStrings(tx.materialIdsJson) + listOfNotNull(tx.materialId)).distinct()
-        if (matIds.isNotEmpty()) {
-          dao.getAllRawMaterials().firstOrNull { it.id == matIds.first() && !it.isDeleted }?.let { mat ->
-            val updatedMat = mat.copy(
-              pendingSupplierAmount = mat.pendingSupplierAmount + tx.amount,
-              paymentStatus = "pending",
-              syncPending = true,
-              updatedAt = now,
-            )
-            dao.upsertRawMaterial(updatedMat)
-            enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedMat.id, SarimWebSchema.materialToMap(updatedMat))
-          }
-        }
-      }
+      revertPaymentTransactionEffects(tx, now)
 
       tx.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
         dao.softDeleteLedgerEntry(lid, now)
@@ -1806,44 +2073,104 @@ class SarimRepository(
     )
   }
 
+  private suspend fun revertSettlementLinks(s: CalculatorSettlementEntity, now: Long, groupId: String?) {
+    val allSales = dao.getAllSales()
+    val linkedSalesIds = JsonCodecs.decodeStrings(s.linkedSalesIdsJson).toSet()
+    val linkedRepSalesIds = JsonCodecs.decodeStrings(s.linkedRepSalesIdsJson).toSet()
+
+    // Check if transferSaleId is already settled before reversing
+    s.transferSaleId?.takeIf { it.isNotBlank() }?.let { tId ->
+      allSales.firstOrNull { it.id == tId && !it.isDeleted }?.let { transferSale ->
+        if (transferSale.creditReceived || transferSale.partialPaymentReceived > 0.01) {
+          throw IllegalStateException("The transfer to ${transferSale.customerName} is already paid or reconciled.")
+        }
+        dao.softDeleteSale(tId, now)
+        enqueueOutboxDelete(
+          collection = SarimWebSchema.COL_SALES,
+          docId = tId,
+          title = "Rep Transfer: ${s.repName} → ${transferSale.customerName}",
+          subtitle = "${transferSale.quantityKg} kg",
+          amountText = "Rs ${transferSale.totalValue}",
+          snapshotMap = SarimWebSchema.saleToMap(transferSale),
+          groupId = groupId,
+        )
+      }
+    }
+
+    // Revert Admin sales reconciled by this settlement (sets creditReceived = false and clears usedInCalcId!)
+    allSales.filter { !it.isDeleted && (!it.isRepSale && (it.id in linkedSalesIds || it.usedInCalcId == s.id)) }.forEach { sale ->
+      val reverted = sale.copy(creditReceived = false, usedInCalcId = null, syncPending = true, updatedAt = now)
+      dao.upsertSale(reverted)
+      enqueueOutboxSet(SarimWebSchema.COL_SALES, reverted.id, SarimWebSchema.saleToMap(reverted))
+    }
+
+    // Revert Rep sub-sales (`rep`) linked by this settlement
+    allSales.filter { !it.isDeleted && it.isRepSale && (it.id in linkedRepSalesIds || it.usedInCalcId == s.id) }.forEach { repSale ->
+      val reverted = repSale.copy(usedInCalcId = null, syncPending = true, updatedAt = now)
+      dao.upsertSale(reverted)
+      enqueueOutboxSet(SarimWebSchema.COL_REP, reverted.id, SarimWebSchema.saleToMap(reverted))
+    }
+
+    // Reverse linked return log & return production record
+    s.returnLogId?.takeIf { it.isNotBlank() }?.let { rLogId ->
+      val log = dao.getAllReturns().firstOrNull { it.id == rLogId }
+      dao.softDeleteReturnLog(rLogId, now)
+      if (groupId != null && log != null) {
+        enqueueOutboxDelete(
+          collection = SarimWebSchema.COL_RETURNS,
+          docId = rLogId,
+          title = "Return: ${log.seller}",
+          subtitle = "${s.returnedKg} kg",
+          amountText = "${s.returnedKg} kg",
+          snapshotMap = SarimWebSchema.returnLogToMap(log),
+          groupId = groupId,
+        )
+      }
+    }
+    s.returnEntryId?.takeIf { it.isNotBlank() }?.let { rEntryId ->
+      val prodRet = dao.getAllProductionEntries().firstOrNull { it.id == rEntryId }
+      dao.softDeleteProductionEntry(rEntryId, now)
+      if (groupId != null && prodRet != null) {
+        enqueueOutboxDelete(
+          collection = SarimWebSchema.COL_PRODUCTION,
+          docId = rEntryId,
+          title = "Return: ${s.repName}",
+          subtitle = "${s.returnedKg} kg",
+          amountText = "${s.returnedKg} kg",
+          snapshotMap = SarimWebSchema.productionToMap(prodRet),
+          groupId = groupId,
+        )
+      }
+    }
+
+    // Reverse CHORA if expired was applied
+    if (s.expiredKg > 0.0 && s.expiredApplied) {
+      dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }?.let { chora ->
+        val updatedChora = chora.copy(
+          stockKg = (chora.stockKg - s.expiredKg).coerceAtLeast(0.0),
+          collectedKg = (chora.collectedKg - s.expiredKg).coerceAtLeast(0.0),
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertRawMaterial(updatedChora)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedChora.id, SarimWebSchema.materialToMap(updatedChora))
+      }
+    }
+
+    // Soft-delete prior ledger rows created by this settlement
+    var touchedLedger = false
+    dao.getAllDailyLedger().filter { !it.isDeleted && it.sourceType == "CALCULATOR" && it.sourceId == s.id }.forEach { l ->
+      dao.softDeleteLedgerEntry(l.id, now)
+      touchedLedger = true
+    }
+    if (touchedLedger) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+  }
+
   suspend fun saveCalculatorSettlement(settlement: CalculatorSettlementEntity) {
     val now = System.currentTimeMillis()
     val existing = dao.getAllSettlements().firstOrNull { it.id == settlement.id && !it.isDeleted }
     if (existing != null) {
-      // Unlink prior sales tied to this settlement before re-reconciling
-      dao.getAllSales().filter { !it.isDeleted && it.usedInCalcId == existing.id }.forEach { sale ->
-        val col = if (sale.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
-        val unlinked = sale.copy(usedInCalcId = null, syncPending = true, updatedAt = now)
-        dao.upsertSale(unlinked)
-        enqueueOutboxSet(col, unlinked.id, SarimWebSchema.saleToMap(unlinked))
-      }
-      // Reverse prior return log and return production entry
-      existing.returnLogId?.takeIf { it.isNotBlank() }?.let { rLogId ->
-        dao.softDeleteReturnLog(rLogId, now)
-      }
-      existing.returnEntryId?.takeIf { it.isNotBlank() }?.let { rEntryId ->
-        dao.softDeleteProductionEntry(rEntryId, now)
-      }
-      // Reverse prior CHORA adjustment
-      if (existing.expiredKg > 0.0 && existing.expiredApplied) {
-        dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }?.let { chora ->
-          val revertedChora = chora.copy(
-            stockKg = (chora.stockKg - existing.expiredKg).coerceAtLeast(0.0),
-            collectedKg = (chora.collectedKg - existing.expiredKg).coerceAtLeast(0.0),
-            syncPending = true,
-            updatedAt = now,
-          )
-          dao.upsertRawMaterial(revertedChora)
-          enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, revertedChora.id, SarimWebSchema.materialToMap(revertedChora))
-        }
-      }
-      // Soft-delete prior ledger rows created by this settlement
-      var touchedOldLedger = false
-      dao.getAllDailyLedger().filter { !it.isDeleted && it.sourceType == "CALCULATOR" && it.sourceId == existing.id }.forEach { l ->
-        dao.softDeleteLedgerEntry(l.id, now)
-        touchedOldLedger = true
-      }
-      if (touchedOldLedger) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+      revertSettlementLinks(existing, now, groupId = null)
     }
 
     val dateStr = settlement.dateStr.ifBlank { SarimFormat.dateInput(settlement.dateEpoch) }
@@ -1860,11 +2187,64 @@ class SarimRepository(
       appendCategoryToKv("commission_categories", it.category, now)
     }
 
-    var returnLogId: String? = if (existing == null) settlement.returnLogId else null
-    var returnEntryId: String? = if (existing == null) settlement.returnEntryId else null
-    if (settlement.returnedKg > 0.0 && settlement.returnStoreKey.isNotBlank()) {
+    var returnLogId: String? = null
+    var returnEntryId: String? = null
+    var transferSaleId: String? = null
+    var effectiveReturnType: String? = null
+    var effectiveReturnRep: String? = null
+    val isTransfer = settlement.returnedKg > 0.0 &&
+      settlement.returnType.equals("TRANSFER", ignoreCase = true) &&
+      !settlement.returnRep.isNullOrBlank()
+
+    if (isTransfer) {
+      val targetRep = settlement.returnRep!!.trim()
+      val targetContact = dao.getAllCustomers().firstOrNull {
+        !it.isDeleted && !it.isRepCustomer && it.name.equals(targetRep, ignoreCase = true)
+      }
+      val fallbackStorePrice = dao.getAllStores().firstOrNull { it.storeKey == settlement.returnStoreKey }?.salePricePerKg
+        ?: dao.getAllStores().firstOrNull()?.salePricePerKg
+        ?: 400.0
+      val transferUnitPrice = targetContact?.customSalePrice?.takeIf { it > 0.0 } ?: fallbackStorePrice
+      val transferTotal = SarimLinkEngine.round2(settlement.returnedKg * transferUnitPrice)
+      val tId = SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
+      val transferSale = SaleTransactionEntity(
+        id = tId,
+        dateEpoch = settlement.dateEpoch,
+        mode = "SALE",
+        customerId = "",
+        customerName = targetRep,
+        repName = targetRep,
+        storeKey = "N/A",
+        storeName = "TRANSFER",
+        quantityKg = SarimLinkEngine.round2(settlement.returnedKg),
+        pricePerKg = transferUnitPrice,
+        totalValue = transferTotal,
+        totalCost = transferTotal,
+        profit = 0.0,
+        paymentType = "CREDIT",
+        amountReceived = 0.0,
+        dateStr = dateStr,
+        supplyDate = dateStr,
+        timeStr = SarimFormat.formatTime(now),
+        creditReceived = false,
+        isRepSale = false,
+        affectsInventory = false,
+        isRepTransfer = true,
+        repTransferFrom = settlement.repName,
+        notes = "Transferred from ${settlement.repName}",
+        transactionType = "SALE",
+        syncPending = true,
+        createdAt = now,
+        updatedAt = now,
+      )
+      dao.upsertSale(transferSale)
+      enqueueOutboxSet(SarimWebSchema.COL_SALES, transferSale.id, SarimWebSchema.saleToMap(transferSale))
+      transferSaleId = transferSale.id
+      effectiveReturnType = "TRANSFER"
+      effectiveReturnRep = targetRep
+    } else if (settlement.returnedKg > 0.0 && settlement.returnStoreKey.isNotBlank()) {
       val log = ReturnLogEntity(
-        id = returnLogId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_RETLOG, tsMs = now),
+        id = SarimUuid.generateUUID(SarimUuid.PREFIX_RETLOG, tsMs = now),
         date = dateStr,
         time = SarimFormat.formatTime(now),
         store = settlement.returnStoreKey,
@@ -1879,7 +2259,7 @@ class SarimRepository(
 
       val retStore = dao.getAllStores().firstOrNull { it.storeKey == settlement.returnStoreKey }
       val prodReturn = ProductionEntryEntity(
-        id = returnEntryId ?: SarimUuid.generateUUID(SarimUuid.PREFIX_RET, tsMs = now),
+        id = SarimUuid.generateUUID(SarimUuid.PREFIX_RET, tsMs = now),
         dateEpoch = settlement.dateEpoch,
         storeKey = settlement.returnStoreKey,
         storeName = retStore?.name ?: settlement.returnStoreKey.uppercase(),
@@ -1908,48 +2288,65 @@ class SarimRepository(
       returnEntryId = prodReturn.id
       dao.upsertProductionEntry(prodReturn)
       enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, prodReturn.id, SarimWebSchema.productionToMap(prodReturn))
+      effectiveReturnType = "RETURN"
     }
 
-    // Reconcile matching unsettled sales in settlement range
-    val fromStart = SarimFormat.startOfDay(settlement.fromDateEpoch)
-    val toEnd = SarimFormat.endOfDay(settlement.toDateEpoch)
-    val linkedSalesIds = mutableListOf<String>()
-    val linkedRepSalesIds = mutableListOf<String>()
-    val linkedRepReturnIds = mutableListOf<String>()
+    // Reconcile pending Admin deliveries (customerName == repName, paymentType == CREDIT, !creditReceived) + Rep sub-sales + Rep returns
+    val allSales = dao.getAllSales()
+    val allSettlements = dao.getAllSettlements()
+    val cycle = SarimLinkEngine.getCalcCycleSelection(
+      repName = settlement.repName,
+      sales = allSales,
+      settlements = allSettlements,
+      manualFromEpoch = settlement.fromDateEpoch,
+      toEpoch = settlement.toDateEpoch,
+      excludeCalcId = settlement.id,
+    )
 
-    dao.getAllSales().filter {
-      !it.isDeleted && it.usedInCalcId.isNullOrBlank() &&
-        it.repName.equals(settlement.repName, ignoreCase = true) &&
-        it.dateEpoch in fromStart..toEnd
-    }.forEach { s ->
-      val col = if (s.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
-      val updatedSale = s.copy(
+    val linkedSalesIds = mutableListOf<String>()
+    cycle.selectedDeliveries.forEach { delivery ->
+      val reconciled = delivery.copy(
+        creditReceived = true,
         usedInCalcId = settlement.id,
-        creditReceived = if (!s.isRepSale && s.paymentType == "CREDIT") true else s.creditReceived,
         syncPending = true,
         updatedAt = now,
       )
-      dao.upsertSale(updatedSale)
-      enqueueOutboxSet(col, updatedSale.id, SarimWebSchema.saleToMap(updatedSale))
-      if (s.isRepSale) {
-        if (s.paymentType == "REP_RETURN" || s.isRepReturn) linkedRepReturnIds += s.id
-        else linkedRepSalesIds += s.id
-      } else {
-        linkedSalesIds += s.id
-      }
+      dao.upsertSale(reconciled)
+      enqueueOutboxSet(SarimWebSchema.COL_SALES, reconciled.id, SarimWebSchema.saleToMap(reconciled))
+      linkedSalesIds += reconciled.id
     }
+
+    val linkedRepSalesIds = mutableListOf<String>()
+    cycle.pendingRepSales.forEach { repSale ->
+      val reconciled = repSale.copy(
+        usedInCalcId = settlement.id,
+        syncPending = true,
+        updatedAt = now,
+      )
+      dao.upsertSale(reconciled)
+      enqueueOutboxSet(SarimWebSchema.COL_REP, reconciled.id, SarimWebSchema.saleToMap(reconciled))
+      linkedRepSalesIds += reconciled.id
+    }
+
+    val coveredReturnIds = SarimLinkEngine.pickReturnsCovered(
+      pending = cycle.pendingReturns,
+      retTarget = settlement.returnedKg,
+      expTarget = settlement.expiredKg,
+    ).map { it.id }
 
     val updatedSettlement = settlement.copy(
       dateStr = dateStr,
+      returnStoreKey = if (isTransfer) "" else if (settlement.returnedKg > 0.0) settlement.returnStoreKey else "",
       returnLogId = returnLogId,
       returnEntryId = returnEntryId,
+      transferSaleId = transferSaleId,
+      returnRep = effectiveReturnRep,
+      returnType = effectiveReturnType,
       statusClass = statusClass,
-      returnRep = if (settlement.returnedKg > 0.0) settlement.repName else settlement.returnRep,
-      returnType = if (settlement.returnedKg > 0.0) "store" else settlement.returnType,
       expiredApplied = settlement.expiredKg > 0.0,
-      linkedSalesIdsJson = if (linkedSalesIds.isNotEmpty()) JsonCodecs.encodeStrings(linkedSalesIds) else settlement.linkedSalesIdsJson,
-      linkedRepSalesIdsJson = if (linkedRepSalesIds.isNotEmpty()) JsonCodecs.encodeStrings(linkedRepSalesIds) else settlement.linkedRepSalesIdsJson,
-      linkedRepReturnIdsJson = if (linkedRepReturnIds.isNotEmpty()) JsonCodecs.encodeStrings(linkedRepReturnIds) else settlement.linkedRepReturnIdsJson,
+      linkedSalesIdsJson = JsonCodecs.encodeStrings(linkedSalesIds),
+      linkedRepSalesIdsJson = JsonCodecs.encodeStrings(linkedRepSalesIds),
+      linkedRepReturnIdsJson = JsonCodecs.encodeStrings(coveredReturnIds),
       syncPending = true,
       updatedAt = now,
     )
@@ -2035,63 +2432,7 @@ class SarimRepository(
     val s = dao.getAllSettlements().firstOrNull { it.id == id } ?: return
     val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_calc", tsMs = now)
 
-    // Unlink usedInCalcId across sales & rep
-    dao.getAllSales().filter { !it.isDeleted && it.usedInCalcId == s.id }.forEach { sale ->
-      val col = if (sale.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
-      val unlinked = sale.copy(usedInCalcId = null, syncPending = true, updatedAt = now)
-      dao.upsertSale(unlinked)
-      enqueueOutboxSet(col, unlinked.id, SarimWebSchema.saleToMap(unlinked))
-    }
-
-    // Reverse linked return log & return production record
-    s.returnLogId?.takeIf { it.isNotBlank() }?.let { rLogId ->
-      val log = dao.getAllReturns().firstOrNull { it.id == rLogId }
-      dao.softDeleteReturnLog(rLogId, now)
-      enqueueOutboxDelete(
-        collection = SarimWebSchema.COL_RETURNS,
-        docId = rLogId,
-        title = "Return: ${log?.seller ?: s.repName}",
-        subtitle = "${s.returnedKg} kg",
-        amountText = "${s.returnedKg} kg",
-        snapshotMap = log?.let { SarimWebSchema.returnLogToMap(it) },
-        groupId = groupId,
-      )
-    }
-    s.returnEntryId?.takeIf { it.isNotBlank() }?.let { rEntryId ->
-      val prodRet = dao.getAllProductionEntries().firstOrNull { it.id == rEntryId }
-      dao.softDeleteProductionEntry(rEntryId, now)
-      enqueueOutboxDelete(
-        collection = SarimWebSchema.COL_PRODUCTION,
-        docId = rEntryId,
-        title = "Return: ${s.repName}",
-        subtitle = "${s.returnedKg} kg",
-        amountText = "${s.returnedKg} kg",
-        snapshotMap = prodRet?.let { SarimWebSchema.productionToMap(it) },
-        groupId = groupId,
-      )
-    }
-
-    // Reverse CHORA if expired was applied
-    if (s.expiredKg > 0.0 && s.expiredApplied) {
-      dao.getAllRawMaterials().firstOrNull { it.name.equals("CHORA", ignoreCase = true) && !it.isDeleted }?.let { chora ->
-        val updatedChora = chora.copy(
-          stockKg = (chora.stockKg - s.expiredKg).coerceAtLeast(0.0),
-          collectedKg = (chora.collectedKg - s.expiredKg).coerceAtLeast(0.0),
-          syncPending = true,
-          updatedAt = now,
-        )
-        dao.upsertRawMaterial(updatedChora)
-        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedChora.id, SarimWebSchema.materialToMap(updatedChora))
-      }
-    }
-
-    // Soft delete linked Daily Ledger entries
-    var touchedLedger = false
-    dao.getAllDailyLedger().filter { !it.isDeleted && it.sourceType == "CALCULATOR" && it.sourceId == s.id }.forEach { l ->
-      dao.softDeleteLedgerEntry(l.id, now)
-      touchedLedger = true
-    }
-    if (touchedLedger) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+    revertSettlementLinks(s, now, groupId = groupId)
 
     dao.softDeleteSettlement(id, now)
     enqueueOutboxDelete(

@@ -72,8 +72,11 @@ fun CustomerDetailsScreen(
     return
   }
 
-  val custSales = remember(state.sales, customer.id) {
-    state.sales.filter { !it.isDeleted && it.customerId == customer.id }.sortedByDescending { it.dateEpoch }
+  val custSales = remember(state.sales, customer.id, customer.name, customer.isRepCustomer) {
+    state.sales.filter {
+      !it.isDeleted && it.isRepSale == customer.isRepCustomer &&
+        (it.customerId == customer.id || it.customerName.equals(customer.name, ignoreCase = true))
+    }.sortedByDescending { it.dateEpoch }
   }
 
   var searchQuery by remember { mutableStateOf("") }
@@ -247,7 +250,9 @@ fun CustomerDetailsScreen(
       byMonth.forEach { (monthLabel, mList) ->
         val mSold = mList.sumOf { it.quantityKg }
         val mSoldVal = mList.filter { it.mode == "SALE" }.sumOf { it.totalValue }
-        val mRecVal = mList.filter { it.mode == "COLLECTION" || (it.mode == "SALE" && it.paymentType == "CASH") }.sumOf { if (it.mode == "COLLECTION") it.amountReceived else it.totalValue }
+        val mRecVal = mList.filter { it.mode == "COLLECTION" || (it.mode == "SALE" && it.paymentType == "CASH") }.sumOf {
+          if (it.mode == "COLLECTION") (it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue) else it.totalValue
+        }
         Text(
           "$monthLabel · ${SarimFormat.formatKg(mSold)} sold · Sold ${SarimFormat.formatRs(mSoldVal, privacyHidden = state.hideMoneyFigures)} · Received ${SarimFormat.formatRs(mRecVal, privacyHidden = state.hideMoneyFigures)}",
           color = palette.textMuted,
@@ -257,30 +262,44 @@ fun CustomerDetailsScreen(
 
         mList.forEach { tx ->
           val typeLabel = when {
+            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> "Rep Return"
             tx.mode == "COLLECTION" -> "Collection"
             tx.mode == "MONEY_OUT" -> "Money out"
             tx.paymentType == "CASH" -> "Cash sale"
             else -> "Credit sale"
           }
-          val toneColor = when (tx.mode) {
-            "COLLECTION" -> palette.green
-            "MONEY_OUT" -> palette.red
-            else -> if (tx.paymentType == "CASH") palette.green else palette.amber
+          val toneColor = when {
+            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> palette.cyan
+            tx.mode == "COLLECTION" -> palette.green
+            tx.mode == "MONEY_OUT" -> palette.red
+            tx.paymentType == "CASH" -> palette.green
+            else -> palette.amber
+          }
+          val displayAmount = when {
+            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
+            tx.mode == "COLLECTION" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
+            else -> tx.totalValue
           }
           val isExpanded = tx.id in expandedTxIds
           val txDetails = buildList {
             if (tx.storeName.isNotBlank()) add("Store" to tx.storeName)
             if (tx.repName.isNotBlank()) add("Rep" to tx.repName)
-            if (tx.quantityKg > 0.0) {
-              add("Quantity" to SarimFormat.formatKg(tx.quantityKg))
-              add("Rate / kg" to SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures))
-            }
-            if (tx.mode == "SALE") {
-              add("Total Value" to SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures))
-              add("Profit" to SarimFormat.formatRs(tx.profit, privacyHidden = state.hideMoneyFigures))
-            } else {
-              add("Amount Received" to SarimFormat.formatRs(tx.amountReceived, privacyHidden = state.hideMoneyFigures))
+            if (tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN") {
+              if (tx.returnedQtyKg > 0.0) add("Returned Qty" to SarimFormat.formatKg(tx.returnedQtyKg))
               if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
+              add("Return Value" to SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures))
+            } else {
+              if (tx.quantityKg > 0.0) {
+                add("Quantity" to SarimFormat.formatKg(tx.quantityKg))
+                add("Rate / kg" to SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures))
+              }
+              if (tx.mode == "SALE") {
+                add("Total Value" to SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures))
+                add("Profit" to SarimFormat.formatRs(tx.profit, privacyHidden = state.hideMoneyFigures))
+              } else {
+                add("Amount Received" to SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures))
+                if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
+              }
             }
             add("Balance After" to SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures))
           }
@@ -307,7 +326,7 @@ fun CustomerDetailsScreen(
                 }
                 Column(horizontalAlignment = Alignment.End) {
                   Text(
-                    SarimFormat.formatRs(if (tx.mode == "SALE") tx.totalValue else tx.amountReceived, privacyHidden = state.hideMoneyFigures),
+                    SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures),
                     color = toneColor,
                     style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
                   )
@@ -391,7 +410,12 @@ fun CustomerDetailsScreen(
         Text("${tx.mode} · ${SarimFormat.formatDate(tx.dateEpoch)}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Text("Customer: ${tx.customerName}", color = palette.textMuted, fontSize = 13.sp)
         if (tx.quantityKg > 0.0) Text("Quantity: ${SarimFormat.formatKg(tx.quantityKg)}", color = palette.textPrimary, fontSize = 13.sp)
-        Text("Value: ${SarimFormat.formatRs(if (tx.mode == "SALE") tx.totalValue else tx.amountReceived, privacyHidden = state.hideMoneyFigures)}", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        val sheetAmt = when {
+          tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
+          tx.mode == "COLLECTION" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
+          else -> tx.totalValue
+        }
+        Text("Value: ${SarimFormat.formatRs(sheetAmt, privacyHidden = state.hideMoneyFigures)}", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         Text("Balance After: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}", color = palette.amber, fontSize = 13.sp)
         Spacer(Modifier.height(10.dp))
         SarimDangerButton(
