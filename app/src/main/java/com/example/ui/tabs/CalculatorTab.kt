@@ -452,7 +452,7 @@ fun CalculatorTab(
                 viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Please enter valid units sold (must be greater than 0).", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
-              if (salePricePerKg <= 0.0) {
+              if (fallbackStorePrice <= 0.0) {
                 viewModel.showDialog(AppDialogRequest("Sale Price Missing", "Please set a sale price in Store Manager / Factory Formulas first.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }

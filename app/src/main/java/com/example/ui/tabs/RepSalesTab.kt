@@ -149,7 +149,7 @@ fun RepSalesTab(
               viewModel.showDialog(AppDialogRequest("Invalid Input", "Enter a valid non-future date and customer name.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
-            if (isNewCustomer && newCustPhone.isNotBlank() && !SarimFormat.isValidPhone(newCustPhone)) {
+            if (isNewCust && newCustPhone.isNotBlank() && !SarimFormat.isValidPhone(newCustPhone)) {
               viewModel.showDialog(AppDialogRequest("Invalid Phone", "Phone number must have 7 to 15 digits.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
@@ -190,7 +190,7 @@ fun RepSalesTab(
                 viewModel.showDialog(AppDialogRequest("Invalid Collection", "Enter amount received or expired qty.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
-              val currentDebt = matchedCustomer?.currentCredit ?: 0.0
+              val currentDebt = matchedCust?.currentCredit ?: 0.0
               if (currentEditId == null && amtRec > 0.0 && currentDebt <= 0.01) {
                 viewModel.showDialog(AppDialogRequest("No Outstanding Balance", "${customerName.trim()} has no pending credit balance to collect.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
