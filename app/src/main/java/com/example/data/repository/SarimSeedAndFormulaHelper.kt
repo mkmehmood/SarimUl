@@ -79,7 +79,9 @@ object FormulaCalculator {
         val subFlat = flattenRawMaterials(sub, subUnitFactor, allFormulas, allMaterials, nextVisited)
         subFlat.forEach { (matId, kg) -> result[matId] = (result[matId] ?: 0.0) + kg }
       } else {
-        val matId = ing.refId
+        val matId = allMaterials[ing.refId]?.id
+          ?: allMaterials.values.firstOrNull { ing.refName.isNotBlank() && it.name.equals(ing.refName.trim(), ignoreCase = true) }?.id
+          ?: ing.refId
         result[matId] = (result[matId] ?: 0.0) + (ing.qtyKg * units)
       }
     }

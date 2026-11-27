@@ -23,6 +23,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import com.example.util.SarimDisplayNames
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
@@ -317,7 +318,7 @@ viewModel.launchSafely(
               ) {
                 usedMats.forEach { mat ->
                   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimDisplayNames.materialName(mat.id, mat.name, state.rawMaterials, state.formulas), color = palette.textMuted, fontSize = 12.sp)
                     Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
                   }
                 }
@@ -386,7 +387,7 @@ viewModel.launchSafely(
           ) {
             usedMats.forEach { mat ->
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(mat.name, color = palette.textMuted, fontSize = 12.sp)
+                Text(SarimDisplayNames.materialName(mat.id, mat.name, state.rawMaterials, state.formulas), color = palette.textMuted, fontSize = 12.sp)
                 Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
               }
             }

@@ -835,6 +835,15 @@ class SarimRepository(
     )
   }
 
+  private fun missingMaterialName(matId: String, root: FormulaEntity, formulas: Collection<FormulaEntity>): String {
+    for (f in listOf(root) + formulas) {
+      JsonCodecs.decodeIngredients(f.ingredientsJson)
+        .firstOrNull { it.refId == matId && it.refName.isNotBlank() && !com.example.util.SarimDisplayNames.looksLikeId(it.refName) }
+        ?.let { return it.refName.trim() }
+    }
+    return "an unnamed material"
+  }
+
   suspend fun saveFactoryBatch(
     dateEpoch: Long,
     formula: FormulaEntity,
@@ -878,7 +887,10 @@ class SarimRepository(
     val flatRawCheck = FormulaCalculator.flattenRawMaterials(targetFormulaCheck, units, allFormulasInit, allMaterialsInit)
     flatRawCheck.forEach { (matId, kgUsed) ->
       val mat = allMaterialsInit[matId]
-        ?: throw IllegalStateException("Missing raw material ($matId) required by ${targetFormulaCheck.name}.")
+        ?: throw IllegalStateException(
+          "Raw material \"${missingMaterialName(matId, targetFormulaCheck, allFormulasInit.values)}\" is missing or was deleted, " +
+            "but ${targetFormulaCheck.name} needs it. Open Formula Store and re-select that ingredient, or add the material again."
+        )
       if (mat.stockKg + 1e-6 < kgUsed) {
         throw IllegalStateException(
           "Insufficient ${mat.name} stock: need ${SarimLinkEngine.round2(kgUsed)} kg, available ${SarimLinkEngine.round2(mat.stockKg)} kg."
