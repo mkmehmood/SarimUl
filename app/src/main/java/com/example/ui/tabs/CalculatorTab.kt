@@ -10,9 +10,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -309,7 +309,7 @@ fun CalculatorTab(
           SarimTextField(receivedCashText, { receivedCashText = it }, "Physical Cash Received from Rep", prefixText = "Rs", keyboardType = KeyboardType.Decimal)
 
           // Result Card
-          Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))) {
+          Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Expected Cash: ${SarimFormat.formatRs(expectedCash, true, hideMoney)}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -555,7 +555,7 @@ private fun LineItemsPopupDialog(
       modifier = Modifier
         .fillMaxWidth(0.92f)
         .widthIn(max = 460.dp),
-      shape = RoundedCornerShape(22.dp),
+      shape = RoundedCornerShape(28.dp),
       color = palette.surface.copy(alpha = 0.96f),
       border = BorderStroke(1.dp, palette.green.copy(alpha = 0.45f)),
     ) {
@@ -575,7 +575,7 @@ private fun LineItemsPopupDialog(
             onClick = onDismiss,
             modifier = Modifier.size(48.dp).testTag("popup_close_btn"),
           ) {
-            Icon(Icons.Filled.Close, contentDescription = "Close popup", tint = palette.textMuted, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.Close, contentDescription = "Close popup", tint = palette.textMuted, modifier = Modifier.size(18.dp))
           }
         }
         Text(caption, color = palette.textMuted, fontSize = 12.sp)
@@ -608,7 +608,7 @@ private fun LineItemsPopupDialog(
             },
             modifier = Modifier.size(48.dp).testTag("popup_add_item_btn"),
           ) {
-            Icon(Icons.Filled.Add, contentDescription = "Add line item", tint = palette.green)
+            Icon(Icons.Rounded.Add, contentDescription = "Add line item", tint = palette.green)
           }
         }
         items.forEachIndexed { idx, row ->
@@ -623,7 +623,7 @@ private fun LineItemsPopupDialog(
               },
               modifier = Modifier.size(40.dp).testTag("popup_remove_item_$idx"),
             ) {
-              Icon(Icons.Filled.Close, contentDescription = "Remove item", tint = palette.red, modifier = Modifier.size(16.dp))
+              Icon(Icons.Rounded.Close, contentDescription = "Remove item", tint = palette.red, modifier = Modifier.size(16.dp))
             }
           }
         }

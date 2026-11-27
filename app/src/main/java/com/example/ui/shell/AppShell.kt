@@ -5,9 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -156,7 +156,7 @@ fun AppShell(
                   .size(48.dp)
                   .testTag("hamburger_btn"),
               ) {
-                Icon(Icons.Filled.Menu, contentDescription = "Open navigation menu", tint = palette.textPrimary)
+                Icon(Icons.Rounded.Menu, contentDescription = "Open navigation menu", tint = palette.textPrimary)
               }
 
               ShimmerHeading(
@@ -175,7 +175,7 @@ fun AppShell(
                     .size(48.dp)
                     .testTag("header_sync_btn"),
                 ) {
-                  Icon(Icons.Filled.Sync, contentDescription = "Sync pending data", tint = palette.green)
+                  Icon(Icons.Rounded.Sync, contentDescription = "Sync pending data", tint = palette.green)
                 }
               }
             }
@@ -201,7 +201,7 @@ fun AppShell(
                   .size(48.dp)
                   .testTag("standalone_back_btn"),
               ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
               }
               Text(
                 text = subScreenTitle ?: "DAILY LEDGER",
@@ -260,7 +260,7 @@ fun AppShell(
             containerColor = palette.surface,
             contentColor = palette.textPrimary,
             windowInsets = WindowInsets.navigationBars,
-            tonalElevation = 2.dp,
+            tonalElevation = 0.dp,
           ) {
             SarimRoute.primaryDestinations.forEach { (dest, icon) ->
               val selected = currentRoute == dest.route
@@ -270,9 +270,9 @@ fun AppShell(
                 icon = { Icon(icon, contentDescription = dest.title) },
                 label = { Text(dest.title, fontSize = 11.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium) },
                 colors = NavigationBarItemDefaults.colors(
-                  selectedIconColor = palette.green,
-                  selectedTextColor = palette.green,
-                  indicatorColor = palette.green.copy(alpha = 0.16f),
+                  selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                  selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                  indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
                   unselectedIconColor = palette.textMuted,
                   unselectedTextColor = palette.textMuted,
                 ),

@@ -16,13 +16,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -157,7 +157,7 @@ fun AuthScreen(
     ) {
       Surface(
         modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(32.dp),
         color = palette.surface.copy(alpha = 0.94f),
         border = BorderStroke(1.dp, palette.border),
       ) {
@@ -235,7 +235,7 @@ fun AuthScreen(
               onValueChange = { fullName = it },
               label = "Dealer / Full Name",
               placeholder = "e.g. Gull & Zubair Dealer",
-              leadingIcon = Icons.Filled.Person,
+              leadingIcon = Icons.Rounded.Person,
               maxLength = 60,
               testTag = "auth_full_name",
             )
@@ -246,7 +246,7 @@ fun AuthScreen(
             onValueChange = { email = it },
             label = "Email address",
             placeholder = "dealer@example.com",
-            leadingIcon = Icons.Filled.Email,
+            leadingIcon = Icons.Rounded.Email,
             keyboardType = KeyboardType.Email,
             testTag = "auth_email",
           )
@@ -256,7 +256,7 @@ fun AuthScreen(
             onValueChange = { password = it },
             label = "Password",
             placeholder = "At least 6 characters",
-            leadingIcon = Icons.Filled.Lock,
+            leadingIcon = Icons.Rounded.Lock,
             keyboardType = KeyboardType.Password,
             isPassword = true,
             passwordVisible = passwordVisible,
@@ -266,7 +266,7 @@ fun AuthScreen(
                 modifier = Modifier.minimumInteractiveComponentSize().testTag("auth_toggle_password"),
               ) {
                 Icon(
-                  imageVector = if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                  imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                   contentDescription = if (passwordVisible) "Hide password" else "Show password",
                   tint = palette.textMuted,
                 )
@@ -281,7 +281,7 @@ fun AuthScreen(
               onValueChange = { confirmPassword = it },
               label = "Confirm Password",
               placeholder = "Re-enter password",
-              leadingIcon = Icons.Filled.Lock,
+              leadingIcon = Icons.Rounded.Lock,
               keyboardType = KeyboardType.Password,
               isPassword = true,
               passwordVisible = confirmPasswordVisible,
@@ -291,7 +291,7 @@ fun AuthScreen(
                   modifier = Modifier.minimumInteractiveComponentSize().testTag("auth_toggle_confirm_password"),
                 ) {
                   Icon(
-                    imageVector = if (confirmPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    imageVector = if (confirmPasswordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                     contentDescription = if (confirmPasswordVisible) "Hide confirm password" else "Show confirm password",
                     tint = palette.textMuted,
                   )
@@ -409,7 +409,7 @@ fun AuthScreen(
           SarimSecondaryButton(
             text = "Continue Offline (Local Vault)",
             onClick = { onContinueOffline(email) },
-            icon = Icons.Filled.Lock,
+            icon = Icons.Rounded.Lock,
             modifier = Modifier.fillMaxWidth(),
             testTag = "offline_continue_btn",
           )
@@ -418,7 +418,7 @@ fun AuthScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            Icon(Icons.Filled.Shield, contentDescription = null, tint = palette.green, modifier = Modifier.size(14.dp))
+            Icon(Icons.Rounded.Shield, contentDescription = null, tint = palette.green, modifier = Modifier.size(14.dp))
             Text(
               "Secured by Firebase Auth · Local Room Vault",
               color = palette.textMuted,
@@ -492,7 +492,7 @@ fun FingerprintLockScreen(
         modifier = Modifier.size(86.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
-          Icon(Icons.Filled.Fingerprint, contentDescription = "Unlock with fingerprint", tint = palette.green, modifier = Modifier.size(44.dp))
+          Icon(Icons.Rounded.Fingerprint, contentDescription = "Unlock with fingerprint", tint = palette.green, modifier = Modifier.size(44.dp))
         }
       }
       Text(displayName, color = palette.textPrimary, fontFamily = CinzelFontFamily, fontSize = 18.sp, fontWeight = FontWeight.Bold)

@@ -7,9 +7,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -473,7 +473,7 @@ fun ApprovalsScreen(
         onValueChange = { searchQuery = it },
         label = "",
         placeholder = "Search by name, item or amount",
-        leadingIcon = Icons.Filled.Search,
+        leadingIcon = Icons.Rounded.Search,
         testTag = "approvals_search",
       )
 
@@ -515,7 +515,7 @@ fun ApprovalsScreen(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           SarimSecondaryButton(
             text = "Approve all (${filtered.size})",
-            icon = Icons.Filled.Check,
+            icon = Icons.Rounded.Check,
             modifier = Modifier.weight(1f),
             onClick = {
               val batch = filtered.toList()
@@ -529,7 +529,7 @@ fun ApprovalsScreen(
           )
           SarimDangerButton(
             text = "Discard all (${filtered.size})",
-            icon = Icons.Filled.Close,
+            icon = Icons.Rounded.Close,
             modifier = Modifier.weight(1f),
             onClick = {
               val batch = filtered.toList()
@@ -568,7 +568,7 @@ fun ApprovalsScreen(
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimSecondaryButton(
               text = "Approve",
-              icon = Icons.Filled.Check,
+              icon = Icons.Rounded.Check,
               modifier = Modifier.weight(1f),
               onClick = {
                 viewModel.launchSafely(
@@ -581,7 +581,7 @@ fun ApprovalsScreen(
             )
             SarimDangerButton(
               text = "Discard",
-              icon = Icons.Filled.Close,
+              icon = Icons.Rounded.Close,
               modifier = Modifier.weight(1f),
               onClick = {
                 viewModel.launchSafely(

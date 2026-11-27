@@ -10,9 +10,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -125,13 +125,13 @@ fun DailyLedgerScreen(
                   onClick = { viewModel.syncDataNow() },
                   modifier = Modifier.size(44.dp).testTag("dl_sync_btn"),
                 ) {
-                  Icon(Icons.Filled.Sync, contentDescription = "Sync ledger with Firestore", tint = palette.cyan)
+                  Icon(Icons.Rounded.Sync, contentDescription = "Sync ledger with Firestore", tint = palette.cyan)
                 }
               }
               Box(
                 modifier = Modifier
                   .size(44.dp)
-                  .clip(RoundedCornerShape(12.dp))
+                  .clip(RoundedCornerShape(16.dp))
                   .background(Brush.linearGradient(listOf(palette.gradientStart, palette.gradientEnd)))
                   .testTag("dl_pdf_btn")
                   .clickable {
@@ -149,7 +149,7 @@ fun DailyLedgerScreen(
                   },
                 contentAlignment = Alignment.Center,
               ) {
-                Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export Daily Ledger PDF", tint = Color(0xFF022112), modifier = Modifier.size(20.dp))
+                Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export Daily Ledger PDF", tint = Color(0xFF022112), modifier = Modifier.size(20.dp))
               }
             }
           }
@@ -419,7 +419,7 @@ fun DailyLedgerScreen(
         onValueChange = { ledgerViewModel.setSearchQuery(it) },
         label = "",
         placeholder = "Search by party, category, mode, amount...",
-        leadingIcon = Icons.Filled.Search,
+        leadingIcon = Icons.Rounded.Search,
         testTag = "dl_search",
       )
 

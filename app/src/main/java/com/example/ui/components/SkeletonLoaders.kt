@@ -8,7 +8,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -55,7 +56,7 @@ fun rememberSkeletonShimmerBrush(): Brush {
 @Composable
 fun ShimmerPlaceholder(
   modifier: Modifier = Modifier,
-  shape: Shape = RoundedCornerShape(10.dp),
+  shape: Shape = RoundedCornerShape(14.dp),
 ) {
   val brush = rememberSkeletonShimmerBrush()
   Box(
@@ -65,6 +66,7 @@ fun ShimmerPlaceholder(
   )
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SyncingSkeletonBanner(
   message: String,
@@ -74,18 +76,16 @@ private fun SyncingSkeletonBanner(
   val palette = LocalSarimPalette.current
   Surface(
     modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(14.dp),
-    color = palette.cyan.copy(alpha = 0.10f),
-    border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.38f)),
+    shape = RoundedCornerShape(20.dp),
+    color = palette.cyan.copy(alpha = 0.14f),
   ) {
     Row(
       modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      CircularProgressIndicator(
-        modifier = Modifier.size(16.dp),
-        strokeWidth = 2.dp,
+      LoadingIndicator(
+        modifier = Modifier.size(28.dp),
         color = palette.cyan,
       )
       Text(
@@ -139,7 +139,7 @@ fun InventorySkeletonContent(
           repeat(2) {
             Surface(
               modifier = Modifier.weight(1f),
-              shape = RoundedCornerShape(14.dp),
+              shape = RoundedCornerShape(20.dp),
               color = palette.surfaceElevated,
               border = BorderStroke(1.dp, palette.border),
             ) {
@@ -164,7 +164,7 @@ fun InventorySkeletonContent(
 
     // Search + Sort Card Skeleton
     SarimCard {
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp))
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         repeat(3) {
           ShimmerPlaceholder(Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(50))
@@ -187,7 +187,7 @@ fun InventorySkeletonContent(
         repeat(4) {
           Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(20.dp),
             color = palette.surfaceElevated,
             border = BorderStroke(1.dp, palette.border),
           ) {
@@ -230,7 +230,7 @@ fun InventorySkeletonContent(
     SarimCard {
       ShimmerPlaceholder(Modifier.width(168.dp).height(18.dp))
       repeat(2) { idx ->
-        ShimmerPlaceholder(Modifier.fillMaxWidth().height(46.dp), shape = RoundedCornerShape(12.dp))
+        ShimmerPlaceholder(Modifier.fillMaxWidth().height(46.dp), shape = RoundedCornerShape(16.dp))
         if (idx == 0) HorizontalDivider(color = palette.border)
       }
     }
@@ -269,13 +269,13 @@ fun LedgerSkeletonContent(
           ShimmerPlaceholder(Modifier.width(105.dp).height(12.dp))
           ShimmerPlaceholder(Modifier.width(185.dp).height(28.dp))
         }
-        ShimmerPlaceholder(Modifier.size(44.dp), shape = RoundedCornerShape(12.dp))
+        ShimmerPlaceholder(Modifier.size(44.dp), shape = RoundedCornerShape(16.dp))
       }
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         repeat(3) {
           Surface(
             modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(20.dp),
             color = palette.surfaceElevated,
             border = BorderStroke(1.dp, palette.border),
           ) {
@@ -296,7 +296,7 @@ fun LedgerSkeletonContent(
       repeat(3) {
         Surface(
           modifier = Modifier.weight(1f),
-          shape = RoundedCornerShape(14.dp),
+          shape = RoundedCornerShape(20.dp),
           color = palette.surfaceElevated,
           border = BorderStroke(1.dp, palette.border),
         ) {
@@ -320,9 +320,9 @@ fun LedgerSkeletonContent(
           ShimmerPlaceholder(Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(50))
         }
       }
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp))
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp))
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp))
       ShimmerPlaceholder(Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(50))
     }
 
@@ -341,7 +341,7 @@ fun LedgerSkeletonContent(
     SarimCard {
       ShimmerPlaceholder(Modifier.width(168.dp).height(17.dp))
       repeat(3) {
-        ShimmerPlaceholder(Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(12.dp))
+        ShimmerPlaceholder(Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp))
       }
     }
 

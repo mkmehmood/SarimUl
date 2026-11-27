@@ -65,7 +65,7 @@ fun SplashScreen(onFinished: () -> Unit) {
       .fillMaxSize()
       .background(
         Brush.verticalGradient(
-          listOf(Color(0xFF000000), Color(0xFF031A0E), Color(0xFF000000))
+          listOf(Color(0xFF0E1410), Color(0xFF0F2A1A), Color(0xFF0E1410))
         )
       )
       .clickable { onFinished() }

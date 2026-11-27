@@ -4,17 +4,20 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +27,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -87,12 +92,14 @@ fun SarimCard(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalSarimPalette.current
+  // Expressive cards are tonal, large-radius surfaces; an outline appears only when a caller
+  // explicitly asks for one (e.g. to flag an alert state).
   Surface(
     modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(18.dp),
+    shape = MaterialTheme.shapes.largeIncreased,
     color = containerColor ?: palette.surface,
-    border = BorderStroke(1.dp, borderColor ?: palette.border),
-    tonalElevation = 1.dp,
+    border = borderColor?.let { BorderStroke(1.5.dp, it) },
+    tonalElevation = 0.dp,
   ) {
     Column(
       modifier = Modifier.padding(contentPadding),
@@ -100,6 +107,27 @@ fun SarimCard(
       content = content,
     )
   }
+}
+
+/** Spring-driven press feedback: the control squishes slightly and its corners tighten. */
+@Composable
+private fun rememberExpressivePress(
+  source: MutableInteractionSource,
+  restCorner: Dp,
+  pressedCorner: Dp,
+): Pair<Float, Dp> {
+  val pressed by source.collectIsPressedAsState()
+  val scale by animateFloatAsState(
+    targetValue = if (pressed) 0.96f else 1f,
+    animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+    label = "pressScale",
+  )
+  val corner by animateDpAsState(
+    targetValue = if (pressed) pressedCorner else restCorner,
+    animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow),
+    label = "pressCorner",
+  )
+  return scale to corner
 }
 
 @Composable
@@ -187,7 +215,7 @@ fun SarimTextField(
   val palette = LocalSarimPalette.current
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
     if (label.isNotBlank()) SarimFieldLabel(label)
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(16.dp)
     val borderColor = if (dashedReadOnly) palette.cyan.copy(alpha = 0.45f) else palette.border
     OutlinedTextField(
       value = value,
@@ -298,7 +326,7 @@ fun SarimSearchFieldWithDropdown(
                 modifier = Modifier.size(40.dp).testTag("${testTag}_clear"),
               ) {
                 Icon(
-                  Icons.Filled.Close,
+                  Icons.Rounded.Close,
                   contentDescription = "Clear text",
                   tint = palette.textMuted,
                   modifier = Modifier.size(16.dp),
@@ -328,7 +356,7 @@ fun SarimSearchFieldWithDropdown(
           .exposedDropdownSize(matchTextFieldWidth = true)
           .heightIn(max = 280.dp)
           .background(palette.surfaceElevated)
-          .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(12.dp)),
+          .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
       ) {
         displayedSuggestions.forEachIndexed { idx, item ->
           val isCurrent = item.equals(value.trim(), ignoreCase = true)
@@ -353,7 +381,7 @@ fun SarimSearchFieldWithDropdown(
                   modifier = Modifier.weight(1f),
                 )
                 if (isCurrent) {
-                  Icon(Icons.Filled.Check, contentDescription = null, tint = palette.green, modifier = Modifier.size(16.dp))
+                  Icon(Icons.Rounded.Check, contentDescription = null, tint = palette.green, modifier = Modifier.size(16.dp))
                 }
               }
             },
@@ -397,10 +425,10 @@ fun SarimPopoverSelector(
           .fillMaxWidth()
           .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
           .defaultMinSize(minHeight = 48.dp)
-          .clip(RoundedCornerShape(12.dp))
+          .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
           .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         color = palette.surfaceElevated,
         border = BorderStroke(1.dp, if (expanded) palette.green else palette.border),
       ) {
@@ -427,7 +455,7 @@ fun SarimPopoverSelector(
           .exposedDropdownSize(matchTextFieldWidth = true)
           .heightIn(max = 320.dp)
           .background(palette.surfaceElevated)
-          .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(12.dp)),
+          .border(1.dp, palette.green.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
       ) {
         options.forEachIndexed { idx, opt ->
           val isSelected = opt == selectedText
@@ -449,7 +477,7 @@ fun SarimPopoverSelector(
                   modifier = Modifier.weight(1f),
                 )
                 if (isSelected) {
-                  Icon(Icons.Filled.Check, contentDescription = null, tint = palette.green, modifier = Modifier.size(16.dp))
+                  Icon(Icons.Rounded.Check, contentDescription = null, tint = palette.green, modifier = Modifier.size(16.dp))
                 }
               }
             },
@@ -475,25 +503,31 @@ fun SarimPrimaryButton(
   enabled: Boolean = true,
   testTag: String = "primary_button",
 ) {
-  val palette = LocalSarimPalette.current
-  val gradient = Brush.horizontalGradient(listOf(palette.gradientStart, palette.gradientEnd))
+  val scheme = MaterialTheme.colorScheme
+  val source = remember { MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 28.dp, pressedCorner = 14.dp)
+  val shape = RoundedCornerShape(corner)
   Box(
     modifier = modifier
       .fillMaxWidth()
-      .height(50.dp)
-      .clip(RoundedCornerShape(50))
-      .background(
-        brush = if (enabled) gradient else Brush.horizontalGradient(listOf(palette.border, palette.border)),
-      )
+      .height(56.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
+      .clip(shape)
+      .background(if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.12f), shape)
       .testTag(testTag)
-      .clickable(enabled = enabled, onClick = onClick),
+      .clickable(
+        interactionSource = source,
+        indication = LocalIndication.current,
+        enabled = enabled,
+        onClick = onClick,
+      ),
     contentAlignment = Alignment.Center,
   ) {
     Text(
       text = text,
-      color = if (enabled) Color(0xFF022112) else palette.textMuted,
+      color = if (enabled) scheme.onPrimary else scheme.onSurface.copy(alpha = 0.38f),
       fontWeight = FontWeight.Bold,
-      fontSize = 14.5.sp,
+      fontSize = 16.sp,
     )
   }
 }
@@ -506,27 +540,30 @@ fun SarimSecondaryButton(
   icon: ImageVector? = null,
   testTag: String = "secondary_button",
 ) {
-  val palette = LocalSarimPalette.current
-  Surface(
+  val scheme = MaterialTheme.colorScheme
+  val source = remember { MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 12.dp)
+  val shape = RoundedCornerShape(corner)
+  Box(
     modifier = modifier
-      .defaultMinSize(minHeight = 46.dp)
-      .clip(RoundedCornerShape(50))
+      .defaultMinSize(minHeight = 48.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
+      .clip(shape)
+      .background(scheme.secondaryContainer, shape)
       .testTag(testTag)
-      .clickable(onClick = onClick),
-    shape = RoundedCornerShape(50),
-    color = palette.surfaceElevated,
-    border = BorderStroke(1.dp, palette.border),
+      .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick),
+    contentAlignment = Alignment.Center,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+      modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
       horizontalArrangement = Arrangement.Center,
       verticalAlignment = Alignment.CenterVertically,
     ) {
       if (icon != null) {
-        Icon(icon, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
+        Icon(icon, contentDescription = null, tint = scheme.onSecondaryContainer, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
       }
-      Text(text, color = palette.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+      Text(text, color = scheme.onSecondaryContainer, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
   }
 }
@@ -541,26 +578,31 @@ fun SarimDangerButton(
   testTag: String = "danger_button",
 ) {
   val palette = LocalSarimPalette.current
-  Surface(
+  val scheme = MaterialTheme.colorScheme
+  val source = remember { MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 12.dp)
+  val shape = RoundedCornerShape(corner)
+  val content = if (enabled) palette.red else palette.textMuted
+  Box(
     modifier = modifier
-      .defaultMinSize(minHeight = 46.dp)
-      .clip(RoundedCornerShape(50))
+      .defaultMinSize(minHeight = 48.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
+      .clip(shape)
+      .background(if (enabled) palette.red.copy(alpha = 0.18f) else scheme.onSurface.copy(alpha = 0.08f), shape)
       .testTag(testTag)
-      .clickable(enabled = enabled, onClick = onClick),
-    shape = RoundedCornerShape(50),
-    color = if (enabled) palette.red.copy(alpha = 0.16f) else palette.surfaceElevated,
-    border = BorderStroke(1.dp, if (enabled) palette.red else palette.border),
+      .clickable(interactionSource = source, indication = LocalIndication.current, enabled = enabled, onClick = onClick),
+    contentAlignment = Alignment.Center,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+      modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
       horizontalArrangement = Arrangement.Center,
       verticalAlignment = Alignment.CenterVertically,
     ) {
       if (icon != null) {
-        Icon(icon, contentDescription = null, tint = if (enabled) palette.red else palette.textMuted, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
+        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
       }
-      Text(text, color = if (enabled) palette.red else palette.textMuted, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+      Text(text, color = content, fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
   }
 }
@@ -574,30 +616,29 @@ fun SarimStatTile(
   subText: String? = null,
 ) {
   val palette = LocalSarimPalette.current
-  val edge = accentColor ?: palette.border
+  val container = if (accentColor != null) lerp(palette.surfaceElevated, accentColor, 0.14f) else palette.surfaceElevated
   Surface(
     modifier = modifier,
-    shape = RoundedCornerShape(14.dp),
-    color = palette.surfaceElevated,
-    border = BorderStroke(1.dp, edge.copy(alpha = if (accentColor != null) 0.5f else 1f)),
+    shape = MaterialTheme.shapes.large,
+    color = container,
   ) {
     Column(
-      modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+      modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
       verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
       Text(
         text = label.uppercase(),
         color = palette.textMuted,
-        fontSize = 10.sp,
+        fontSize = 10.5.sp,
         fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.7.sp,
+        letterSpacing = 0.8.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
       Text(
         text = value,
         color = accentColor ?: palette.textPrimary,
-        style = TabularNumberStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+        style = TabularNumberStyle.copy(fontSize = 18.sp, fontWeight = FontWeight.ExtraBold),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -605,7 +646,7 @@ fun SarimStatTile(
         Text(
           text = subText,
           color = palette.textMuted,
-          fontSize = 10.5.sp,
+          fontSize = 11.sp,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -623,15 +664,14 @@ fun SarimChip(
   Surface(
     modifier = modifier,
     shape = RoundedCornerShape(50),
-    color = color.copy(alpha = 0.16f),
-    border = BorderStroke(1.dp, color.copy(alpha = 0.55f)),
+    color = color.copy(alpha = 0.18f),
   ) {
     Text(
       text = text,
       color = color,
-      fontSize = 10.5.sp,
+      fontSize = 11.sp,
       fontWeight = FontWeight.Bold,
-      modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
       maxLines = 1,
     )
   }
@@ -642,23 +682,22 @@ fun SarimCallout(
   text: String,
   toneColor: Color,
   modifier: Modifier = Modifier,
-  icon: ImageVector? = Icons.Filled.Warning,
+  icon: ImageVector? = Icons.Rounded.Warning,
 ) {
   Surface(
     modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(12.dp),
-    color = toneColor.copy(alpha = 0.12f),
-    border = BorderStroke(1.dp, toneColor.copy(alpha = 0.45f)),
+    shape = MaterialTheme.shapes.large,
+    color = toneColor.copy(alpha = 0.14f),
   ) {
     Row(
-      modifier = Modifier.padding(12.dp),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      modifier = Modifier.padding(16.dp),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       if (icon != null) {
-        Icon(icon, contentDescription = null, tint = toneColor, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = null, tint = toneColor, modifier = Modifier.size(20.dp))
       }
-      Text(text, color = toneColor, fontSize = 12.5.sp, lineHeight = 17.sp)
+      Text(text, color = toneColor, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
     }
   }
 }
@@ -677,7 +716,7 @@ fun SarimCheckboxRow(
     modifier = modifier
       .fillMaxWidth()
       .defaultMinSize(minHeight = 48.dp)
-      .clip(RoundedCornerShape(10.dp))
+      .clip(RoundedCornerShape(14.dp))
       .testTag(testTag)
       .clickable(enabled = enabled) { onCheckedChange(!checked) }
       .padding(vertical = 4.dp),
@@ -743,7 +782,7 @@ fun InitialsAvatar(
     }
     if (badgeText.isNotBlank()) {
       Surface(
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(8.dp),
         color = palette.amber,
       ) {
         Text(

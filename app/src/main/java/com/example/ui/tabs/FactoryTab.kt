@@ -92,7 +92,7 @@ fun FactoryTab(
         )
 
         // Formula preview
-        Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
+        Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
           Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (selectedFormula == null) {
               Text("Select a formula...", color = palette.textMuted, fontSize = 12.5.sp)
@@ -203,12 +203,12 @@ fun FactoryTab(
               val totalVal = mat.stockKg * mat.avgCostPerKg
               val unitsCount = if (mat.conversionFactorKg > 0.001) mat.stockKg / mat.conversionFactorKg else mat.stockKg
               Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = palette.surfaceElevated,
                 border = BorderStroke(1.dp, palette.border),
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clip(RoundedCornerShape(12.dp))
+                  .clip(RoundedCornerShape(16.dp))
                   .clickable { viewModel.openStandalone(StandaloneScreen.AddRawMaterial(mat.id)) },
               ) {
                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -15,8 +15,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -56,11 +56,11 @@ fun GlassAlertDialog(
     DialogTone.SUCCESS, DialogTone.CONFIRM -> palette.green
   }
   val toneIcon = when (tone) {
-    DialogTone.PERMANENT -> Icons.Filled.DeleteForever
-    DialogTone.WARNING -> Icons.Filled.Warning
-    DialogTone.ERROR -> Icons.Filled.ErrorOutline
-    DialogTone.SUCCESS -> Icons.Filled.CheckCircle
-    DialogTone.CONFIRM -> Icons.AutoMirrored.Filled.HelpOutline
+    DialogTone.PERMANENT -> Icons.Rounded.DeleteForever
+    DialogTone.WARNING -> Icons.Rounded.Warning
+    DialogTone.ERROR -> Icons.Rounded.ErrorOutline
+    DialogTone.SUCCESS -> Icons.Rounded.CheckCircle
+    DialogTone.CONFIRM -> Icons.AutoMirrored.Rounded.HelpOutline
   }
 
   var passwordText by remember { mutableStateOf("") }
@@ -77,7 +77,7 @@ fun GlassAlertDialog(
       modifier = Modifier
         .fillMaxWidth(0.9f)
         .widthIn(max = 460.dp),
-      shape = RoundedCornerShape(24.dp),
+      shape = RoundedCornerShape(32.dp),
       color = palette.surface.copy(alpha = 0.96f),
       border = BorderStroke(1.dp, toneColor.copy(alpha = 0.45f)),
       tonalElevation = 8.dp,
@@ -154,7 +154,7 @@ fun GlassAlertDialog(
         request.highlight?.let { hl ->
           Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(20.dp),
             color = toneColor.copy(alpha = 0.1f),
             border = BorderStroke(1.dp, toneColor.copy(alpha = 0.35f)),
           ) {
@@ -183,7 +183,7 @@ fun GlassAlertDialog(
             trailingContent = {
               IconButton(onClick = { showPassword = !showPassword }) {
                 Icon(
-                  if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                  if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                   contentDescription = "Toggle password visibility",
                   tint = palette.textMuted,
                 )
@@ -316,7 +316,7 @@ fun FullScreenPhotoViewer(
           onClick = onClose,
           modifier = Modifier.background(Color.Black.copy(alpha = 0.65f), CircleShape),
         ) {
-          Icon(Icons.Filled.Close, contentDescription = "Close viewer", tint = Color.White)
+          Icon(Icons.Rounded.Close, contentDescription = "Close viewer", tint = Color.White)
         }
       }
 
@@ -403,12 +403,12 @@ fun PhotoAttachmentBar(
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     Surface(
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(16.dp),
       color = palette.surfaceElevated,
       border = BorderStroke(1.dp, if (photoUris.isNotEmpty()) palette.green else palette.border),
       modifier = Modifier
         .defaultMinSize(minHeight = 46.dp)
-        .clip(RoundedCornerShape(12.dp))
+        .clip(RoundedCornerShape(16.dp))
         .clickable {
           runCatching {
             val uri = createTempCameraUri(context)
@@ -425,7 +425,7 @@ fun PhotoAttachmentBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         Box {
-          Icon(Icons.Filled.PhotoCamera, contentDescription = "Take photo", tint = palette.textPrimary, modifier = Modifier.size(20.dp))
+          Icon(Icons.Rounded.PhotoCamera, contentDescription = "Take photo", tint = palette.textPrimary, modifier = Modifier.size(20.dp))
           if (photoUris.isNotEmpty()) {
             Box(
               Modifier
@@ -446,12 +446,12 @@ fun PhotoAttachmentBar(
     }
 
     Surface(
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(16.dp),
       color = palette.surfaceElevated,
       border = BorderStroke(1.dp, palette.border),
       modifier = Modifier
         .defaultMinSize(minHeight = 46.dp)
-        .clip(RoundedCornerShape(12.dp))
+        .clip(RoundedCornerShape(16.dp))
         .clickable {
           runCatching {
             galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -465,7 +465,7 @@ fun PhotoAttachmentBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        Icon(Icons.Filled.PhotoLibrary, contentDescription = "Pick from gallery", tint = palette.cyan, modifier = Modifier.size(18.dp))
+        Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Pick from gallery", tint = palette.cyan, modifier = Modifier.size(18.dp))
         Text("Gallery", color = palette.textPrimary, fontSize = 12.5.sp)
       }
     }
@@ -475,7 +475,7 @@ fun PhotoAttachmentBar(
         Text("View", color = palette.green, fontSize = 12.5.sp)
       }
       IconButton(onClick = onClearAll, modifier = Modifier.size(36.dp)) {
-        Icon(Icons.Filled.Close, contentDescription = "Remove attached photos", tint = palette.red, modifier = Modifier.size(18.dp))
+        Icon(Icons.Rounded.Close, contentDescription = "Remove attached photos", tint = palette.red, modifier = Modifier.size(18.dp))
       }
     }
   }

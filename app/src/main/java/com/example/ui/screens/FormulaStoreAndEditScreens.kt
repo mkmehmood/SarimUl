@@ -8,12 +8,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Science
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Science
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -78,9 +78,9 @@ fun FormulaStoreScreen(
           Surface(
             modifier = Modifier
               .fillMaxWidth()
-              .clip(RoundedCornerShape(18.dp))
+              .clip(RoundedCornerShape(24.dp))
               .clickable { viewModel.openStandalone(StandaloneScreen.FormulaEdit(formula.id)) },
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(24.dp),
             color = palette.surface,
             border = BorderStroke(1.dp, palette.border),
           ) {
@@ -168,15 +168,15 @@ fun FormulaStoreScreen(
     ) {
       AnimatedVisibility(visible = fabExpanded) {
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          SmallFabRow("Correction", Icons.Filled.Tune, palette.amber) {
+          SmallFabRow("Correction", Icons.Rounded.Tune, palette.amber) {
             fabExpanded = false
             viewModel.openStandalone(StandaloneScreen.BatchCorrection())
           }
-          SmallFabRow("Batching", Icons.Filled.Build, palette.cyan) {
+          SmallFabRow("Batching", Icons.Rounded.Build, palette.cyan) {
             fabExpanded = false
             viewModel.openStandalone(StandaloneScreen.Batching())
           }
-          SmallFabRow("Formula", Icons.Filled.Science, palette.green) {
+          SmallFabRow("Formula", Icons.Rounded.Science, palette.green) {
             fabExpanded = false
             viewModel.openStandalone(StandaloneScreen.FormulaEdit(null))
           }
@@ -189,7 +189,7 @@ fun FormulaStoreScreen(
         contentColor = Color(0xFF022112),
         modifier = Modifier.testTag("formulaFabDial"),
       ) {
-        Icon(if (fabExpanded) Icons.Filled.Close else Icons.Filled.Add, contentDescription = "Formula actions")
+        Icon(if (fabExpanded) Icons.Rounded.Close else Icons.Rounded.Add, contentDescription = "Formula actions")
       }
     }
   }
@@ -205,7 +205,7 @@ private fun SmallFabRow(
   val palette = LocalSarimPalette.current
   Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     Surface(
-      shape = RoundedCornerShape(10.dp),
+      shape = RoundedCornerShape(14.dp),
       color = palette.surfaceElevated,
       border = BorderStroke(1.dp, palette.border),
       modifier = Modifier.clickable(onClick = onClick),
@@ -377,7 +377,7 @@ fun FormulaEditScreen(
               onClick = { if (idx in rows.indices) rows.removeAt(idx) },
               modifier = Modifier.size(36.dp),
             ) {
-              Icon(Icons.Filled.Delete, contentDescription = "Remove row", tint = palette.red, modifier = Modifier.size(18.dp))
+              Icon(Icons.Rounded.Delete, contentDescription = "Remove row", tint = palette.red, modifier = Modifier.size(18.dp))
             }
           }
           HorizontalDivider(color = palette.border)

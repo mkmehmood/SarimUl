@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -132,10 +132,10 @@ fun PaymentsTab(
               PayTxType.PAYMENT_OUT -> palette.amber
             }
             Surface(
-              shape = RoundedCornerShape(12.dp),
+              shape = RoundedCornerShape(16.dp),
               color = if (sel) c.copy(alpha = 0.16f) else palette.surfaceElevated,
               border = BorderStroke(1.dp, if (sel) c else palette.border),
-              modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { txType = t },
+              modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { txType = t },
             ) {
               Text(t.label, color = if (sel) c else palette.textMuted, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
             }
@@ -248,9 +248,9 @@ fun PaymentsTab(
                 PdfExporter.sharePdfReport(context, "payment_records", "Unified Payment Records", "${lines.size} entities", lines)
                   .onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") }
               },
-            ) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export PDF", tint = palette.cyan) }
+            ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export PDF", tint = palette.cyan) }
           }
-          SarimTextField(value = unifiedSearch, onValueChange = { unifiedSearch = it }, label = "", placeholder = "Search...", leadingIcon = Icons.Filled.Search)
+          SarimTextField(value = unifiedSearch, onValueChange = { unifiedSearch = it }, label = "", placeholder = "Search...", leadingIcon = Icons.Rounded.Search)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimPopoverSelector(
               label = "View Mode",
@@ -280,10 +280,10 @@ fun PaymentsTab(
               Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 filtered.forEach { ent ->
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = palette.surfaceElevated,
                     border = BorderStroke(1.dp, palette.border),
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
                       viewModel.openStandalone(StandaloneScreen.EntityDetails(ent.id))
                     },
                   ) {
@@ -315,10 +315,10 @@ fun PaymentsTab(
                 grouped.forEach { (expName, list) ->
                   val total = list.sumOf { it.amount }
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = palette.surfaceElevated,
                     border = BorderStroke(1.dp, palette.border),
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
                       viewModel.openStandalone(StandaloneScreen.ExpenseDetails(expName))
                     },
                   ) {
@@ -367,7 +367,7 @@ fun PaymentsTab(
           val p = rec.item
           SarimDangerButton(
             text = "Delete",
-            icon = Icons.Filled.Delete,
+            icon = Icons.Rounded.Delete,
             onClick = {
               viewModel.showDialog(
                 AppDialogRequest(

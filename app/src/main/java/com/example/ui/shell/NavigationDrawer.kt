@@ -8,9 +8,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -77,13 +77,13 @@ fun SarimNavigationDrawerContent(
       DrawerGroupHeader("NAVIGATION")
       visibleTabs.forEach { tab ->
         val icon = when (tab) {
-          MainTab.OVERVIEW -> Icons.Filled.Dashboard
-          MainTab.PRODUCTION -> Icons.Filled.PrecisionManufacturing
-          MainTab.SALES -> Icons.Filled.PointOfSale
-          MainTab.CALCULATOR -> Icons.Filled.Calculate
-          MainTab.FACTORY -> Icons.Filled.Factory
-          MainTab.PAYMENTS -> Icons.Filled.AccountBalanceWallet
-          MainTab.REP_SALES -> Icons.Filled.Badge
+          MainTab.OVERVIEW -> Icons.Rounded.Dashboard
+          MainTab.PRODUCTION -> Icons.Rounded.PrecisionManufacturing
+          MainTab.SALES -> Icons.Rounded.PointOfSale
+          MainTab.CALCULATOR -> Icons.Rounded.Calculate
+          MainTab.FACTORY -> Icons.Rounded.Factory
+          MainTab.PAYMENTS -> Icons.Rounded.AccountBalanceWallet
+          MainTab.REP_SALES -> Icons.Rounded.Badge
         }
         val label = if (tab == MainTab.PRODUCTION) "Production" else tab.title
         val tabRoute = SarimRoute.routeForTab(tab)
@@ -97,7 +97,7 @@ fun SarimNavigationDrawerContent(
       }
       DrawerItemRow(
         label = "Inventory",
-        icon = Icons.Filled.Inventory2,
+        icon = Icons.Rounded.Inventory2,
         selected = state.activeRoute == SarimRoute.Inventory.route,
         testTag = "drawer_route_inventory",
         onClick = { onOpenRoute(SarimRoute.Inventory) },
@@ -108,7 +108,7 @@ fun SarimNavigationDrawerContent(
         DrawerGroupHeader("DAILY WORK")
         DrawerItemRow(
           label = "Approvals",
-          icon = Icons.Filled.Verified,
+          icon = Icons.Rounded.Verified,
           selected = state.activeStandalone is StandaloneScreen.Approvals,
           badgeCount = pendingApprovals,
           testTag = "drawer_approvals",
@@ -116,21 +116,21 @@ fun SarimNavigationDrawerContent(
         )
         DrawerItemRow(
           label = "Daily Ledger",
-          icon = Icons.AutoMirrored.Filled.MenuBook,
+          icon = Icons.AutoMirrored.Rounded.MenuBook,
           selected = state.activeStandalone is StandaloneScreen.DailyLedger,
           testTag = "drawer_daily_ledger",
           onClick = { onOpenStandalone(StandaloneScreen.DailyLedger) },
         )
         DrawerItemRow(
           label = "Stock Transfer",
-          icon = Icons.Filled.SwapHoriz,
+          icon = Icons.Rounded.SwapHoriz,
           selected = state.activeStandalone is StandaloneScreen.StockTransfer,
           testTag = "drawer_stock_transfer",
           onClick = { onOpenStandalone(StandaloneScreen.StockTransfer) },
         )
         DrawerItemRow(
           label = "Payment Transfer",
-          icon = Icons.Filled.CurrencyExchange,
+          icon = Icons.Rounded.CurrencyExchange,
           selected = state.activeStandalone is StandaloneScreen.PaymentTransfer,
           testTag = "drawer_payment_transfer",
           onClick = { onOpenStandalone(StandaloneScreen.PaymentTransfer) },
@@ -140,21 +140,21 @@ fun SarimNavigationDrawerContent(
         DrawerGroupHeader("RECORDS")
         DrawerItemRow(
           label = "Add Entity",
-          icon = Icons.Filled.PersonAdd,
+          icon = Icons.Rounded.PersonAdd,
           selected = state.activeStandalone is StandaloneScreen.AddEntity,
           testTag = "drawer_add_entity",
           onClick = { onOpenStandalone(StandaloneScreen.AddEntity()) },
         )
         DrawerItemRow(
           label = "Add Raw Materials",
-          icon = Icons.Filled.Inventory2,
+          icon = Icons.Rounded.Inventory2,
           selected = state.activeStandalone is StandaloneScreen.AddRawMaterial,
           testTag = "drawer_add_raw_materials",
           onClick = { onOpenStandalone(StandaloneScreen.AddRawMaterial()) },
         )
         DrawerItemRow(
           label = "Formula Store",
-          icon = Icons.Filled.Science,
+          icon = Icons.Rounded.Science,
           selected = state.activeStandalone is StandaloneScreen.FormulaStore,
           testTag = "drawer_formula_store",
           onClick = { onOpenStandalone(StandaloneScreen.FormulaStore) },
@@ -168,7 +168,7 @@ fun SarimNavigationDrawerContent(
       if (state.isAdmin) {
         DrawerItemRow(
           label = "Settings",
-          icon = Icons.Filled.Settings,
+          icon = Icons.Rounded.Settings,
           selected = state.activeStandalone is StandaloneScreen.Settings,
           testTag = "drawer_settings",
           onClick = { onOpenStandalone(StandaloneScreen.Settings) },
@@ -176,7 +176,7 @@ fun SarimNavigationDrawerContent(
       }
       DrawerItemRow(
         label = "Logout",
-        icon = Icons.AutoMirrored.Filled.Logout,
+        icon = Icons.AutoMirrored.Rounded.Logout,
         selected = false,
         tint = palette.red,
         testTag = "drawer_logout",

@@ -8,9 +8,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -281,7 +281,7 @@ fun BatchingScreen(
                 }
               }
             ) {
-              Icon(Icons.Filled.Delete, contentDescription = "Delete saved calc", tint = palette.red, modifier = Modifier.size(18.dp))
+              Icon(Icons.Rounded.Delete, contentDescription = "Delete saved calc", tint = palette.red, modifier = Modifier.size(18.dp))
             }
           }
           HorizontalDivider(color = palette.border)
@@ -422,7 +422,7 @@ fun BatchCorrectionScreen(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           Text("Mixed differently than the formula?", color = palette.cyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-          Icon(if (showActualOverrides) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = palette.cyan)
+          Icon(if (showActualOverrides) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = palette.cyan)
         }
         AnimatedVisibility(visible = showActualOverrides) {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -565,7 +565,7 @@ fun BatchCorrectionScreen(
                 }
               }
             ) {
-              Icon(Icons.Filled.Delete, contentDescription = "Delete saved correction", tint = palette.red, modifier = Modifier.size(18.dp))
+              Icon(Icons.Rounded.Delete, contentDescription = "Delete saved correction", tint = palette.red, modifier = Modifier.size(18.dp))
             }
           }
           HorizontalDivider(color = palette.border)

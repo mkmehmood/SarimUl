@@ -12,11 +12,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -145,7 +145,7 @@ fun SalesTab(
         }
 
         if (matchedCustomer != null) {
-          Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.amber.copy(alpha = 0.45f))) {
+          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.amber.copy(alpha = 0.45f))) {
             Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
               Column {
                 Text("Current Credit", color = palette.textMuted, fontSize = 11.sp)
@@ -225,7 +225,7 @@ fun SalesTab(
           // Stock availability tile
           val stockTone = if (overStock || inStockKg <= 0.0) palette.red else palette.green
           Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(16.dp),
             color = stockTone.copy(alpha = 0.1f),
             border = BorderStroke(1.dp, stockTone.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth().clickable { showStockDetails = !showStockDetails },
@@ -400,9 +400,9 @@ fun SalesTab(
                 PdfExporter.sharePdfReport(context, "customers", "Direct Customers", "${filteredCusts.size} customers", lines)
                   .onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") }
               },
-            ) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
+            ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
             IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.CustomerEdit(null)) }) {
-              Icon(Icons.Filled.Add, contentDescription = "Add customer", tint = palette.green)
+              Icon(Icons.Rounded.Add, contentDescription = "Add customer", tint = palette.green)
             }
           }
         }
@@ -411,7 +411,7 @@ fun SalesTab(
           onValueChange = { custSearchFilter = it },
           label = "",
           placeholder = "Search customers...",
-          leadingIcon = Icons.Filled.Search,
+          leadingIcon = Icons.Rounded.Search,
           testTag = "customer_filter",
         )
         if (filteredCusts.isEmpty()) {
@@ -421,12 +421,12 @@ fun SalesTab(
             filteredCusts.forEach { c ->
               val avColor = avatarColorForName(c.name)
               Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = palette.surfaceElevated,
                 border = BorderStroke(1.dp, palette.border),
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clip(RoundedCornerShape(12.dp))
+                  .clip(RoundedCornerShape(16.dp))
                   .clickable { viewModel.openStandalone(StandaloneScreen.CustomerDetails(c.id)) },
               ) {
                 Row(
@@ -565,7 +565,7 @@ fun SalesTab(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           SarimSecondaryButton(
             text = "Invoice",
-            icon = Icons.Filled.Share,
+            icon = Icons.Rounded.Share,
             modifier = Modifier.weight(1f),
             onClick = {
               PdfExporter.sharePdfReport(
@@ -588,7 +588,7 @@ fun SalesTab(
           )
           SarimDangerButton(
             text = "Delete",
-            icon = Icons.Filled.Delete,
+            icon = Icons.Rounded.Delete,
             modifier = Modifier.weight(1f),
             onClick = {
               viewModel.showDialog(

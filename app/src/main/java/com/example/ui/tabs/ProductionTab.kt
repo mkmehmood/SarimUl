@@ -5,8 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -207,7 +207,7 @@ fun ProductionTab(
           )
 
           // Formula cost panel
-          Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.red.copy(alpha = 0.35f))) {
+          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.red.copy(alpha = 0.35f))) {
             Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Formula Unit Cost (per unit)", color = palette.textMuted, fontSize = 12.sp)
@@ -292,7 +292,7 @@ fun ProductionTab(
             state.stores.forEach { store ->
               val items = filteredProd.filter { it.storeKey == store.storeKey }
               val sColor = storeColorForKey(store.storeKey, palette.isDark)
-              Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, sColor.copy(alpha = 0.5f))) {
+              Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, sColor.copy(alpha = 0.5f))) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                   Text(store.name, color = sColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                   Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -393,7 +393,7 @@ fun ProductionTab(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           SarimSecondaryButton(
             text = "Edit",
-            icon = Icons.Filled.Edit,
+            icon = Icons.Rounded.Edit,
             modifier = Modifier.weight(1f),
             onClick = {
               editingEntryId = p.id
@@ -408,7 +408,7 @@ fun ProductionTab(
           )
           SarimDangerButton(
             text = "Delete",
-            icon = Icons.Filled.Delete,
+            icon = Icons.Rounded.Delete,
             modifier = Modifier.weight(1f),
             onClick = {
               viewModel.showDialog(

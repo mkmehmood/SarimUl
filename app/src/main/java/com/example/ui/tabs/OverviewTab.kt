@@ -412,12 +412,12 @@ fun OverviewTab(
                 snap.auditFindings.forEach { finding ->
                   val sevColor = if (finding.severity == "ERROR") palette.red else palette.amber
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = palette.surfaceElevated,
                     border = BorderStroke(1.dp, sevColor.copy(alpha = 0.45f)),
                     modifier = Modifier
                       .fillMaxWidth()
-                      .clip(RoundedCornerShape(12.dp))
+                      .clip(RoundedCornerShape(16.dp))
                       .clickable { fixingFinding = finding },
                   ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -444,7 +444,7 @@ fun OverviewTab(
             Text("Monthly summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
               snap.monthlyRows.reversed().forEach { row ->
-                Surface(shape = RoundedCornerShape(10.dp), color = palette.surfaceElevated) {
+                Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated) {
                   Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                       Text(row.monthLabel, color = palette.green, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
@@ -470,7 +470,7 @@ fun OverviewTab(
     var inputVal by remember(finding.id) { mutableStateOf(finding.currentFieldValue) }
     Dialog(onDismissRequest = { fixingFinding = null }) {
       Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(28.dp),
         color = palette.surface,
         border = BorderStroke(1.dp, palette.border),
       ) {
@@ -519,10 +519,10 @@ private fun KpiWaveTile(
 
   Surface(
     modifier = modifier
-      .clip(RoundedCornerShape(16.dp))
+      .clip(RoundedCornerShape(24.dp))
       .let { m -> if (testTag != null) m.testTag(testTag) else m }
       .let { m -> if (onClick != null) m.clickable(onClick = onClick) else m },
-    shape = RoundedCornerShape(16.dp),
+    shape = RoundedCornerShape(24.dp),
     color = if (highlighted) accent.copy(alpha = 0.08f) else palette.surface,
     border = BorderStroke(1.dp, if (highlighted) accent.copy(alpha = 0.55f) else palette.border),
   ) {
@@ -557,7 +557,7 @@ private fun RightNowPill(label: String, value: String, color: Color, modifier: M
   val palette = LocalSarimPalette.current
   Surface(
     modifier = modifier,
-    shape = RoundedCornerShape(12.dp),
+    shape = RoundedCornerShape(16.dp),
     color = palette.surfaceElevated,
     border = BorderStroke(1.dp, color.copy(alpha = 0.4f)),
   ) {

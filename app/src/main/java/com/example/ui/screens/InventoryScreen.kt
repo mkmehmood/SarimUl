@@ -8,11 +8,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Inventory2
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -91,12 +91,12 @@ fun InventoryScreen(
                   onClick = { sarimViewModel.syncDataNow() },
                   modifier = Modifier.size(48.dp).testTag("inv_sync_btn"),
                 ) {
-                  Icon(Icons.Filled.Sync, contentDescription = "Sync inventory with Firestore", tint = palette.cyan)
+                  Icon(Icons.Rounded.Sync, contentDescription = "Sync inventory with Firestore", tint = palette.cyan)
                 }
               }
               SarimSecondaryButton(
                 text = "Transfer",
-                icon = Icons.Filled.SwapHoriz,
+                icon = Icons.Rounded.SwapHoriz,
                 onClick = { sarimViewModel.openStandalone(StandaloneScreen.StockTransfer) },
                 testTag = "inv_stock_transfer_btn",
               )
@@ -155,7 +155,7 @@ fun InventoryScreen(
           onValueChange = { inventoryViewModel.setSearchQuery(it) },
           label = "",
           placeholder = "Search raw materials, supplier, or unit...",
-          leadingIcon = Icons.Filled.Search,
+          leadingIcon = Icons.Rounded.Search,
           testTag = "inv_search",
         )
         SarimToggleGroup(
@@ -209,12 +209,12 @@ fun InventoryScreen(
                 else -> palette.green
               }
               Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = palette.surfaceElevated,
                 border = BorderStroke(1.dp, palette.border),
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clip(RoundedCornerShape(14.dp))
+                  .clip(RoundedCornerShape(20.dp))
                   .testTag("inv_item_${mat.id}")
                   .clickable { sarimViewModel.openStandalone(StandaloneScreen.AddRawMaterial(mat.id)) },
               ) {
@@ -225,7 +225,7 @@ fun InventoryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                   ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                      Icon(Icons.Filled.Inventory2, contentDescription = null, tint = stockColor, modifier = Modifier.size(18.dp))
+                      Icon(Icons.Rounded.Inventory2, contentDescription = null, tint = stockColor, modifier = Modifier.size(18.dp))
                       Text(mat.name.uppercase(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                     Text(
@@ -259,7 +259,7 @@ fun InventoryScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                       SarimSecondaryButton(
                         text = "Restock",
-                        icon = Icons.Filled.Add,
+                        icon = Icons.Rounded.Add,
                         onClick = { sarimViewModel.openStandalone(StandaloneScreen.AddRawMaterial(mat.id)) },
                         modifier = Modifier.weight(1f),
                       )

@@ -167,7 +167,7 @@ fun MultiLineTrendChart(
     selectedIndex?.let { idx ->
       if (idx in labels.indices) {
         Surface(
-          shape = RoundedCornerShape(10.dp),
+          shape = RoundedCornerShape(14.dp),
           color = palette.surfaceElevated,
         ) {
           Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {

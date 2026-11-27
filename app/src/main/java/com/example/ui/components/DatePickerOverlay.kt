@@ -10,9 +10,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -50,10 +50,10 @@ fun SarimDatePickerField(
       modifier = Modifier
         .fillMaxWidth()
         .defaultMinSize(minHeight = 48.dp)
-        .clip(RoundedCornerShape(12.dp))
+        .clip(RoundedCornerShape(16.dp))
         .testTag(testTag)
         .clickable { open = true },
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(16.dp),
       color = palette.surfaceElevated,
       border = BorderStroke(1.dp, palette.border),
     ) {
@@ -68,7 +68,7 @@ fun SarimDatePickerField(
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.weight(1f),
         )
-        Icon(Icons.Filled.CalendarMonth, contentDescription = "Select date", tint = palette.green, modifier = Modifier.size(18.dp))
+        Icon(Icons.Rounded.CalendarMonth, contentDescription = "Select date", tint = palette.green, modifier = Modifier.size(18.dp))
       }
     }
   }
@@ -105,7 +105,7 @@ fun CustomCalendarDialog(
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(20.dp),
+      shape = RoundedCornerShape(28.dp),
       color = palette.surface,
       border = BorderStroke(1.dp, palette.border),
     ) {
@@ -127,7 +127,7 @@ fun CustomCalendarDialog(
               }
             },
           ) {
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous", tint = palette.textPrimary)
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, contentDescription = "Previous", tint = palette.textPrimary)
           }
 
           val headerLabel = when (mode) {
@@ -144,7 +144,7 @@ fun CustomCalendarDialog(
             fontWeight = FontWeight.Bold,
             fontSize = 15.sp,
             modifier = Modifier
-              .clip(RoundedCornerShape(8.dp))
+              .clip(RoundedCornerShape(12.dp))
               .clickable {
                 mode = when (mode) {
                   CalendarViewMode.DAYS -> CalendarViewMode.MONTHS
@@ -166,7 +166,7 @@ fun CustomCalendarDialog(
               }
             },
           ) {
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next", tint = palette.textPrimary)
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = "Next", tint = palette.textPrimary)
           }
         }
 
@@ -235,7 +235,7 @@ fun CustomCalendarDialog(
               items((0..11).toList()) { mIdx ->
                 val isCur = mIdx == displayMonth
                 Surface(
-                  shape = RoundedCornerShape(10.dp),
+                  shape = RoundedCornerShape(14.dp),
                   color = if (isCur) palette.green.copy(alpha = 0.2f) else palette.surfaceElevated,
                   border = BorderStroke(1.dp, if (isCur) palette.green else palette.border),
                   modifier = Modifier.clickable {
@@ -262,7 +262,7 @@ fun CustomCalendarDialog(
               items(years) { yr ->
                 val isCur = yr == displayYear
                 Surface(
-                  shape = RoundedCornerShape(10.dp),
+                  shape = RoundedCornerShape(14.dp),
                   color = if (isCur) palette.green.copy(alpha = 0.2f) else palette.surfaceElevated,
                   border = BorderStroke(1.dp, if (isCur) palette.green else palette.border),
                   modifier = Modifier.clickable {
