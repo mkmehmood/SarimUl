@@ -253,7 +253,12 @@ fun ExpenseDetailsScreen(
             viewModel.showDialog(AppDialogRequest("Invalid Amount", "Enter a positive expense amount.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
+          viewModel.confirmSave(
+"Expense",
+listOf("Expense" to expenseName, "Amount" to quickAmount, "Note" to quickDesc),
+isUpdate = false,
+) {
+viewModel.launchSafely(
             errorTitle = "Save Expense Failed",
             successMessage = "Saved $expenseName expense",
             onSuccess = {
@@ -272,6 +277,7 @@ fun ExpenseDetailsScreen(
               addToLedger = false,
             )
           }
+}
         },
       )
       Text("Adds a new expense record under $expenseName for today's date.", color = palette.textMuted, fontSize = 11.5.sp)

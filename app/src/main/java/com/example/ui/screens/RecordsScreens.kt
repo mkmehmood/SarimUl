@@ -410,7 +410,12 @@ fun AddRawMaterialScreen(
                 }
               }
 
-              viewModel.launchSafely(
+              viewModel.confirmSave(
+"Inventory Item",
+listOf("Material" to cleanMat, "Quantity" to unitsBought.toString(), "Unit" to unitName, "Cost" to costPerUnit.toString()),
+isUpdate = false,
+) {
+viewModel.launchSafely(
                 errorTitle = "Purchase Save Failed",
                 successMessage = "Saved raw material purchase ($cleanMat)",
                 onSuccess = {
@@ -431,6 +436,7 @@ fun AddRawMaterialScreen(
                   newSupplierPhone = newSupplierPhone,
                 )
               }
+}
             },
           )
         }

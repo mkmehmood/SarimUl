@@ -483,7 +483,12 @@ fun SalesTab(
                   return@SarimPrimaryButton
                 }
                 val effPayment = if (isRepSelected) PaymentChoice.CREDIT else paymentChoice
-                viewModel.launchSafely(
+                viewModel.confirmSave(
+"Transaction",
+listOf("Customer" to (if (isRepSelected) selectedRep else customerName), "Store" to store.name, "Quantity" to SarimFormat.formatKg(qtyNum), "Payment" to effPayment.name, "Date" to SarimFormat.formatDate(dateEpoch)),
+isUpdate = editingSaleId != null,
+) {
+viewModel.launchSafely(
                   errorTitle = "Save Sale Failed",
                   successMessage = if (editingSaleId == null) "Sale saved" else "Sale updated",
                   onSuccess = { editingSaleId = null; quantityText = ""; customerName = ""; newCustPhone = "" },
@@ -506,6 +511,7 @@ fun SalesTab(
                     isRepSale = false,
                   )
                 }
+}
               }
 
               SalesMode.COLLECTION -> {
@@ -520,8 +526,14 @@ fun SalesTab(
                   viewModel.showDialog(AppDialogRequest("No Outstanding Balance", "${customerName.trim()} has no pending credit balance to collect.", confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
-                val commitCollection: () -> Unit = {
-                  viewModel.launchSafely(
+                val commitCollection: (String?) -> Unit = { collWarn ->
+                  viewModel.confirmSave(
+"Transaction",
+listOf("Customer" to customerName, "Amount" to SarimFormat.formatRs(amtRec), "Expired (kg)" to expiredQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
+isUpdate = editingSaleId != null,
+warning = collWarn,
+) {
+viewModel.launchSafely(
                     errorTitle = "Save Collection Failed",
                     successMessage = if (editingSaleId == null) "Collection saved" else "Collection updated",
                     onSuccess = { editingSaleId = null; amountReceivedText = ""; expiredQtyText = ""; customerName = ""; newCustPhone = "" },
@@ -544,21 +556,13 @@ fun SalesTab(
                       isRepSale = false,
                     )
                   }
+}
                 }
-                if (amtRec > currentDebt + 0.01) {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Over-Collection Warning",
-                      body = "Amount received exceeds customer's current credit.\nProceed only if this is an advance payment.",
-                      tone = DialogTone.WARNING,
-                      highlight = DialogHighlight("Balance After", SarimFormat.formatRs(currentDebt - amtRec)),
-                      confirmLabel = "Proceed",
-                      onConfirm = { commitCollection() },
-                    )
-                  )
-                } else {
-                  commitCollection()
-                }
+                commitCollection(
+                  if (amtRec > currentDebt + 0.01) {
+                    "Amount received exceeds customer's current credit (balance after: ${SarimFormat.formatRs(currentDebt - amtRec)}). Proceed only if this is an advance payment."
+                  } else null
+                )
               }
 
               SalesMode.REP_RETURN -> {
@@ -572,7 +576,12 @@ fun SalesTab(
                   viewModel.showDialog(AppDialogRequest("Invalid Return", "Enter expired and/or returned quantity in kg.", confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
-                viewModel.launchSafely(
+                viewModel.confirmSave(
+"Transaction",
+listOf("Rep" to selectedRep, "Expired (kg)" to repExpiredQtyText, "Returned (kg)" to repReturnedQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
+isUpdate = editingSaleId != null,
+) {
+viewModel.launchSafely(
                   errorTitle = "Save Rep Return Failed",
                   successMessage = if (editingSaleId == null) "Rep return saved" else "Rep return updated",
                   onSuccess = { editingSaleId = null; repExpiredQtyText = ""; repReturnedQtyText = "" },
@@ -586,6 +595,7 @@ fun SalesTab(
                     fallbackUnitPrice = unitPriceKg,
                   )
                 }
+}
               }
             }
           },

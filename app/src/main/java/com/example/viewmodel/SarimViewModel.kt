@@ -1238,6 +1238,53 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   // Navigation, Preferences & Diagnostics
   // =====================================================================
 
+  /**
+   * Web-parity "Save / Update / Send for Approval" confirmation (modules/confirm-guard.js).
+   * Call after validation; [onConfirm] runs only when the person confirms.
+   */
+  fun confirmSave(
+    label: String,
+    details: List<Pair<String, String>> = emptyList(),
+    isUpdate: Boolean = false,
+    verb: String = "Save",
+    warning: String? = null,
+    onConfirm: () -> Unit,
+  ) {
+    val gated = _uiState.value.isGatedSession
+    val v = if (isUpdate) "Update" else verb
+    val title = if (gated) "${if (isUpdate) "Send Update for" else "Send for"} Approval: $label?" else "$v $label?"
+    val confirmWord = when {
+      gated -> if (isUpdate) "Send Update for Approval" else "Send for Approval"
+      warning != null -> "$v Anyway"
+      else -> v
+    }
+    val lines = details.mapNotNull { (k, value) ->
+      val t = value.replace(Regex("\\s+"), " ").trim()
+      if (t.isEmpty()) null else "$k: ${if (t.length > 44) t.take(43) + "…" else t}"
+    }
+    val tail = when {
+      gated -> "The admin must approve it before it becomes part of the shared records."
+      isUpdate -> "The existing record will be replaced."
+      lines.isEmpty() -> "Please review the details before continuing."
+      else -> ""
+    }
+    val body = buildString {
+      append(lines.joinToString("\n"))
+      if (tail.isNotEmpty()) { if (isNotEmpty()) append("\n\n"); append(tail) }
+      if (warning != null) { if (isNotEmpty()) append("\n\n"); append("Warning: $warning") }
+    }
+    feedbackManager.performTapFeedback()
+    showDialog(
+      AppDialogRequest(
+        title = title,
+        body = body,
+        tone = if (warning != null || isUpdate) DialogTone.WARNING else DialogTone.CONFIRM,
+        confirmLabel = confirmWord,
+        onConfirm = { onConfirm() },
+      )
+    )
+  }
+
   fun selectTab(tab: MainTab) {
     feedbackManager.performTapFeedback()
     val targetRoute = SarimRoute.routeForTab(tab)

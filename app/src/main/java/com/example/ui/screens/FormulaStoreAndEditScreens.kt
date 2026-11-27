@@ -466,13 +466,19 @@ fun FormulaEditScreen(
             viewModel.showDialog(AppDialogRequest("Duplicate Ingredient", "Each material or linked formula may only appear once.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
+          viewModel.confirmSave(
+"Formula",
+listOf("Name" to clean),
+isUpdate = existing != null,
+) {
+viewModel.launchSafely(
             errorTitle = "Save Formula Failed",
             successMessage = "Formula saved",
             onSuccess = { viewModel.closeStandalone() },
           ) {
             viewModel.repository.saveFormula(existing?.id, clean, addCostVal, factorVal, validRows)
           }
+}
         },
       )
     }

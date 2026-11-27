@@ -65,7 +65,16 @@ fun SettingsScreen(
       // 1. Data & Sync
       SarimFieldLabel("Data & Sync")
       SarimCard(contentPadding = 4.dp) {
-        SettingsRow("SYNC DATA", Icons.Rounded.Sync, palette.green) { viewModel.syncDataNow() }
+        SettingsRow("SYNC DATA", Icons.Rounded.Sync, palette.green) {
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Sync from Cloud",
+              body = "Sync this device with the latest cloud data?\n\n• Local records are compared with cloud records\n• The newer version of each record wins\n• This device only — other devices are not changed",
+              confirmLabel = "Update from Cloud",
+              onConfirm = { viewModel.syncDataNow() },
+            )
+          )
+        }
         HorizontalDivider(color = palette.border)
         SettingsRow("BACKUP & RESTORE", Icons.Rounded.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
         HorizontalDivider(color = palette.border)
@@ -180,15 +189,27 @@ fun BackupRestoreScreen(
       scope.launch {
         try {
           val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
-          val res = viewModel.syncRepo.restoreBackupJson(raw)
-          res.fold(
-            onSuccess = { count ->
-              viewModel.refreshDiagnostics()
-              viewModel.showDialog(AppDialogRequest("Restore Complete", "Restored $count record(s) from backup.", tone = DialogTone.SUCCESS, cancelLabel = null))
-            },
-            onFailure = { err ->
-              viewModel.showDialog(AppDialogRequest("Restore Failed", err.message ?: "Invalid backup file.", tone = DialogTone.ERROR, cancelLabel = null))
-            }
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Restore From Encrypted Backup",
+              body = "Restore the records from this backup file into this device?\n\n• Records in the file are merged with your current data\n• Check that this is the backup you intended to use",
+              tone = DialogTone.WARNING,
+              confirmLabel = "Restore & Merge",
+              onConfirm = {
+                scope.launch {
+                  val res = viewModel.syncRepo.restoreBackupJson(raw)
+                  res.fold(
+                    onSuccess = { count ->
+                      viewModel.refreshDiagnostics()
+                      viewModel.showDialog(AppDialogRequest("Restore Complete", "Restored $count record(s) from backup.", tone = DialogTone.SUCCESS, cancelLabel = null))
+                    },
+                    onFailure = { err ->
+                      viewModel.showDialog(AppDialogRequest("Restore Failed", err.message ?: "Invalid backup file.", tone = DialogTone.ERROR, cancelLabel = null))
+                    }
+                  )
+                }
+              },
+            )
           )
         } catch (e: Exception) {
           viewModel.showDialog(AppDialogRequest("Restore Failed", e.message ?: "Unable to read file.", tone = DialogTone.ERROR, cancelLabel = null))

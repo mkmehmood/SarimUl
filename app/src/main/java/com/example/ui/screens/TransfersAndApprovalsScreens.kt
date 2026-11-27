@@ -139,7 +139,11 @@ fun StockTransferScreen(
             )
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
+          viewModel.confirmSave(
+"Stock Transfer",
+listOf("From" to fromStore.name, "To" to toStore.name, "Quantity" to SarimFormat.formatKg(qty), "Date" to SarimFormat.formatDate(dateEpoch), "Note" to noteText),
+) {
+viewModel.launchSafely(
             errorTitle = "Transfer Failed",
             successMessage = "Transferred ${SarimFormat.formatKg(qty)} from ${fromStore.name} to ${toStore.name}",
             onSuccess = {
@@ -149,6 +153,7 @@ fun StockTransferScreen(
           ) {
             viewModel.repository.saveStockTransfer(fromStore, toStore, dateEpoch, qty, noteText)
           }
+}
         },
       )
     }
@@ -337,7 +342,11 @@ fun PaymentTransferScreen(
             )
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
+          viewModel.confirmSave(
+"Transfer",
+listOf("From" to fromEntity.name, "To" to toEntity.name, "Amount" to SarimFormat.formatRs(amt), "Date" to SarimFormat.formatDate(dateEpoch), "Note" to noteText),
+) {
+viewModel.launchSafely(
             errorTitle = "Transfer Failed",
             successMessage = "Transferred ${SarimFormat.formatRs(amt)} to ${toEntity.name}",
             onSuccess = {
@@ -355,6 +364,7 @@ fun PaymentTransferScreen(
               photoUri = photoUris.firstOrNull().orEmpty(),
             )
           }
+}
         },
       )
     }

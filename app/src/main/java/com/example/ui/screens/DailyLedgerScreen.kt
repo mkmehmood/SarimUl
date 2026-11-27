@@ -368,17 +368,37 @@ fun DailyLedgerScreen(
               return@SarimPrimaryButton
             }
             if (entryType == "TRANSFER") {
-              ledgerViewModel.saveEntry(
-                editingId = editingId,
-                dateEpoch = dateEpoch,
-                type = entryType,
-                amount = amt,
-                mode = modeText.trim().take(40),
-                toMode = toModeText.trim().take(40),
-                party = partyText.trim().take(80),
-                refNo = refText.trim().take(40),
-                note = noteText.trim().take(120),
-                onSaved = { resetForm() },
+              var chBal = 0.0
+              channelBalances.forEach { (ch, b) -> if (ch.equals(modeText.trim(), ignoreCase = true)) chBal = b.toDouble() }
+              val after = chBal - amt
+              val insufficient = after < 0.0
+              val fromCh = modeText.trim().take(40)
+              val toCh = toModeText.trim().take(40)
+              val bodyText = buildString {
+                append("Transfer ${SarimFormat.formatRs(amt)} from $fromCh ➔ $toCh?\n\nThis only moves money between channels. Cash in hand does not change.")
+                if (insufficient) append("\n\nWarning: $fromCh balance is ${if (chBal < 0) "-" else ""}${SarimFormat.formatRs(kotlin.math.abs(chBal))}. This transfer will leave it at -${SarimFormat.formatRs(kotlin.math.abs(after))}.")
+              }
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = if (insufficient) "Insufficient Channel Balance" else "Confirm Transfer",
+                  body = bodyText,
+                  tone = DialogTone.WARNING,
+                  confirmLabel = if (editingId != null) "Update Transfer" else "Transfer",
+                  onConfirm = {
+                    ledgerViewModel.saveEntry(
+                      editingId = editingId,
+                      dateEpoch = dateEpoch,
+                      type = entryType,
+                      amount = amt,
+                      mode = modeText.trim().take(40),
+                      toMode = toModeText.trim().take(40),
+                      party = partyText.trim().take(80),
+                      refNo = refText.trim().take(40),
+                      note = noteText.trim().take(120),
+                      onSaved = { resetForm() },
+                    )
+                  },
+                )
               )
             } else {
               pendingAmount = amt

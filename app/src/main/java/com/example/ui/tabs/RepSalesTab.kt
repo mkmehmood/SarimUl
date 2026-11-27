@@ -160,8 +160,14 @@ fun RepSalesTab(
               return@SarimPrimaryButton
             }
             val currentEditId = editingRepTxId
-            val commitRepTx: () -> Unit = {
-              viewModel.launchSafely(
+            val commitRepTx: (String?) -> Unit = { repWarn ->
+              viewModel.confirmSave(
+"Rep Sale",
+listOf("Date" to SarimFormat.formatDate(dateEpoch), "Customer" to customerName, "Quantity" to quantityText, "Collected" to amountReceivedText, "Expired (kg)" to expiredQtyText),
+isUpdate = currentEditId != null,
+warning = repWarn,
+) {
+viewModel.launchSafely(
                 errorTitle = "Save Rep Transaction Failed",
                 successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
                 onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
@@ -184,6 +190,7 @@ fun RepSalesTab(
                   isRepSale = true,
                 )
               }
+}
             }
             if (mode == RepTxMode.COLLECTION) {
               if (amtRec <= 0.0 && expQty <= 0.0) {
@@ -195,22 +202,13 @@ fun RepSalesTab(
                 viewModel.showDialog(AppDialogRequest("No Outstanding Balance", "${customerName.trim()} has no pending credit balance to collect.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
-              if (amtRec > currentDebt + 0.01) {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Over-Collection Warning",
-                    body = "Amount received exceeds customer's current credit.\nProceed only if this is an advance payment.",
-                    tone = DialogTone.WARNING,
-                    highlight = DialogHighlight("Balance After", SarimFormat.formatRs(currentDebt - amtRec)),
-                    confirmLabel = "Proceed",
-                    onConfirm = { commitRepTx() },
-                  )
-                )
-              } else {
-                commitRepTx()
-              }
+              commitRepTx(
+                if (amtRec > currentDebt + 0.01) {
+                  "Amount received exceeds customer's current credit (balance after: ${SarimFormat.formatRs(currentDebt - amtRec)}). Proceed only if this is an advance payment."
+                } else null
+              )
             } else {
-              commitRepTx()
+              commitRepTx(null)
             }
           },
         )

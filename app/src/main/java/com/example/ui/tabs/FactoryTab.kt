@@ -142,13 +142,19 @@ fun FactoryTab(
               return@SarimPrimaryButton
             }
             val editId = editingBatchId
-            viewModel.launchSafely(
+            viewModel.confirmSave(
+"Production",
+listOf("Formula" to selectedFormula.name, "Units" to unitsInt.toString(), "Date" to SarimFormat.formatDate(factoryDate)),
+isUpdate = editId != null,
+) {
+viewModel.launchSafely(
               errorTitle = "Batch Save Failed",
               successMessage = if (editId == null) "Factory batch saved for ${selectedFormula.name}" else "Factory batch updated for ${selectedFormula.name}",
               onSuccess = { editingBatchId = null; unitsText = "1" },
             ) {
               viewModel.repository.saveFactoryBatch(factoryDate, selectedFormula, unitsInt.toDouble(), editingId = editId)
             }
+}
           },
         )
       }

@@ -490,8 +490,14 @@ fun CalculatorTab(
                 (transferTargetRep.takeIf { it in otherReps } ?: otherReps.first())
               } else null
               val currentEditId = editingSettlementId
-              val commitSettlement = {
-                viewModel.launchSafely(
+              val commitSettlement: (String?) -> Unit = { calcWarn ->
+                viewModel.confirmSave(
+"Settlement",
+listOf("Seller" to selectedRepOption, "Date" to SarimFormat.formatDate(toDate), "Total Sold" to SarimFormat.formatKg(totalSoldKg), "Returned" to SarimFormat.formatKg(returnedKg), "Expired" to SarimFormat.formatKg(expiredKg), "Cash Received" to SarimFormat.formatRs(receivedNum)),
+isUpdate = currentEditId != null,
+warning = calcWarn,
+) {
+viewModel.launchSafely(
                   errorTitle = "Settlement Save Failed",
                   successMessage = if (currentEditId == null) "Settlement saved for $selectedRepOption" else "Settlement updated for $selectedRepOption",
                   onSuccess = {
@@ -538,20 +544,11 @@ fun CalculatorTab(
                     )
                   )
                 }
+}
               }
-              if (statusLabel != "OK") {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = if (cashDiff < 0) "Cash is Short" else "Cash is Over",
-                    body = "Cash is ${statusLabel.lowercase()} by ${SarimFormat.formatRs(abs(cashDiff))}. Save anyway?",
-                    tone = DialogTone.WARNING,
-                    confirmLabel = "Save Anyway",
-                    onConfirm = { commitSettlement() },
-                  )
-                )
-              } else {
-                commitSettlement()
-              }
+              commitSettlement(
+                if (statusLabel != "OK") "Cash is ${statusLabel.lowercase()} by ${SarimFormat.formatRs(abs(cashDiff))}." else null
+              )
             },
           )
         }

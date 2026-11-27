@@ -277,7 +277,12 @@ fun ProductionTab(
                 viewModel.showDialog(AppDialogRequest("Formula Cost Missing", "This formula has no cost (no ingredients or ingredient costs are zero). Set the formula and ingredient costs first.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                 return@SarimPrimaryButton
               }
-              viewModel.launchSafely(
+              viewModel.confirmSave(
+"Production Entry",
+listOf("Store" to store.name, "Date" to SarimFormat.formatDate(selectedDate), "Gross Weight" to grossWeight, "Container" to containerWeight, "Net Weight" to SarimFormat.formatKg(netKg), "Units" to formulaUnits),
+isUpdate = editingEntryId != null,
+) {
+viewModel.launchSafely(
                 errorTitle = "Production Save Failed",
                 successMessage = "Production entry saved",
                 onSuccess = {
@@ -300,6 +305,7 @@ fun ProductionTab(
                   photoUris = attachedPhotos,
                 )
               }
+}
             },
           )
         }

@@ -173,7 +173,12 @@ fun PaymentsTab(
                 return@SarimPrimaryButton
               }
             }
-            viewModel.launchSafely(
+            viewModel.confirmSave(
+"Transaction",
+listOf("Name" to nameText, "Amount" to amountText, "Date" to SarimFormat.formatDate(dateEpoch), "Note" to descriptionText),
+isUpdate = currentEditId != null,
+) {
+viewModel.launchSafely(
               errorTitle = "Save Payment Failed",
               successMessage = if (currentEditId == null) "Payment transaction saved" else "Payment transaction updated",
               onSuccess = { editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList() },
@@ -189,6 +194,7 @@ fun PaymentsTab(
                 addToLedger = addToLedger,
               )
             }
+}
           },
         )
       }

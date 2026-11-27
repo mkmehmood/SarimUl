@@ -800,7 +800,12 @@ fun CustomerEditScreen(
             viewModel.showDialog(AppDialogRequest("Invalid Price", "Enter a positive custom price or leave blank.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.launchSafely(
+          viewModel.confirmSave(
+"Customer",
+listOf("Name" to clean, "Phone" to phone, "Address" to address, "Old Debit" to oldDebitText, "Custom Price" to customPriceText, "Ledger Page" to ledgerPage),
+isUpdate = existing != null,
+) {
+viewModel.launchSafely(
             errorTitle = "Save Customer Failed",
             successMessage = "Saved customer $clean",
             onSuccess = { viewModel.closeStandalone() },
@@ -818,6 +823,7 @@ fun CustomerEditScreen(
               repName = existing?.repName ?: if (isRep) state.signedInDisplayName else "",
             )
           }
+}
         },
       )
     }
