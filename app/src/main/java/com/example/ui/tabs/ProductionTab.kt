@@ -421,25 +421,6 @@ viewModel.launchSafely(
         item {
          Column {
           val dayRows = SarimStoreSummary.storeDayHistory(storeEntries, selectedStoreKey, selectedDate)
-          val sColor = storeColorForKey(selectedStoreKey, palette.isDark)
-          val st = storeStats[storePeriod] ?: SarimStoreSummary.Stats()
-          SarimCard {
-            Text("${selectedStore?.name ?: "Store"} production", color = sColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            SarimToggleGroup(SarimStoreSummary.Period.entries, storePeriod, { it.label }, { storePeriod = it })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Weight", SarimFormat.formatKg(st.qty), Modifier.weight(1f), sColor)
-              SarimStatTile("Value", SarimFormat.formatRs(st.value, false, hideMoney), Modifier.weight(1f), palette.green)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Cost", SarimFormat.formatRs(st.cost, false, hideMoney), Modifier.weight(1f), palette.red)
-              SarimStatTile("Net Profit", SarimFormat.formatRs(st.profit, false, hideMoney), Modifier.weight(1f), palette.emerald)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Formula units", SarimFormat.formatQty(st.formulaUnits, 2), Modifier.weight(1f), palette.amber)
-              SarimStatTile("Formula cost", SarimFormat.formatRs(st.formulaCost, false, hideMoney), Modifier.weight(1f), palette.red)
-            }
-          }
-          Spacer(Modifier.height(10.dp))
           Text(
             "${selectedStore?.name ?: "Store"} · ${SarimFormat.formatDate(selectedDate)}",
             color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp,
@@ -463,7 +444,7 @@ viewModel.launchSafely(
       item {
         SarimCard {
           Text("All Stores Overview", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-          SarimDatePickerField("Select Date", selectedDate, onDateSelected = { selectedDate = it }, testTag = "prod_combined_date")
+          Text("Date: ${SarimFormat.formatDate(selectedDate)} (change it in Store Entry)", color = palette.textMuted, fontSize = 12.sp)
           SarimToggleGroup(SarimStoreSummary.Period.entries, combinedPeriod, { it.label }, { combinedPeriod = it })
         }
       }
@@ -511,8 +492,8 @@ viewModel.launchSafely(
       }
     }
 
-    // Analytics card (below both views)
-    if (state.isAdmin) {
+    // Analytics card (combined view only)
+    if (state.isAdmin && topView == ProdTopView.COMBINED) {
       item {
         val cutoff = SarimMetricsEngine.periodStart(analyticsPeriod)
         val filtered = state.productionEntries.filter { it.dateEpoch >= cutoff }
