@@ -450,62 +450,10 @@ viewModel.launchSafely(
       AccordionHistoryList(
         records = records,
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-        monthSummary = { items -> "${items.size} entries · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
-        daySummary = { items -> "${items.size} · ${SarimFormat.formatKg(items.sumOf { it.item.netWeightKg })}" },
-        hasDropdownDetails = true,
+        monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
+        daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         onItemClick = { rec -> sheetEntry = rec.item },
-      ) { rec ->
-        val p = rec.item
-        val photos = remember(p.photoUrisJson) { JsonCodecs.decodeStrings(p.photoUrisJson) }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (photos.isNotEmpty()) {
-            SarimSecondaryButton(
-              text = "View ${photos.size} Photo(s)",
-              onClick = { viewModel.openPhotoViewer(photos, 0) },
-              modifier = Modifier.fillMaxWidth(),
-            )
-          }
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimSecondaryButton(
-              text = "Edit",
-              icon = Icons.Rounded.Edit,
-              onClick = {
-                editingEntryId = p.id
-                selectedDate = p.dateEpoch
-                selectedStoreKey = p.storeKey
-                grossWeight = p.grossWeightKg.toString()
-                containerWeight = p.containerWeightKg.toString()
-                formulaUnits = p.formulaUnitsUsed.toString()
-                attachedPhotos = photos
-                topView = ProdTopView.STORE_ENTRY
-              },
-              modifier = Modifier.weight(1f),
-            )
-            SarimDangerButton(
-              text = "Delete",
-              icon = Icons.Rounded.Delete,
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Production Entry?",
-                    body = "Store: ${p.storeName}\nNet Weight: ${SarimFormat.formatKg(p.netWeightKg)}\nMoved to Recycle Bin for 90 days.",
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(
-                        errorTitle = "Delete Failed",
-                        successMessage = "Production entry deleted",
-                      ) {
-                        viewModel.repository.deleteProductionEntry(p.id)
-                      }
-                    },
-                  )
-                )
-              },
-              modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
+      )
     }
   }
 

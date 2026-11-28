@@ -191,34 +191,31 @@ viewModel.launchSafely(
           )
         },
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
-        monthSummary = { items -> "${items.size} transfer(s) · ${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })}" },
+        monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         emptySubtitle = "No stock transfers recorded yet.",
-      ) { rec ->
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          SarimDangerButton(
-            text = "Delete Transfer",
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Stock Transfer",
-                  body = "Reverse ${SarimFormat.formatKg(rec.item.quantityKg)} transfer and move to Recycle Bin?",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(
-                      errorTitle = "Delete Failed",
-                      successMessage = "Deleted stock transfer",
-                    ) {
-                      viewModel.repository.deleteStockTransfer(rec.item.id)
-                    }
-                  },
-                )
+        actions = HistoryRecordActions<com.example.data.local.StockTransferEntity>(
+          deleteLabel = "Delete Transfer",
+          onDelete = { t ->
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Delete Stock Transfer",
+                body = "Reverse ${SarimFormat.formatKg(t.quantityKg)} transfer and move to Recycle Bin?",
+                tone = DialogTone.PERMANENT,
+                confirmLabel = "Delete",
+                onConfirm = {
+                  viewModel.launchSafely(
+                    errorTitle = "Delete Failed",
+                    successMessage = "Deleted stock transfer",
+                  ) {
+                    viewModel.repository.deleteStockTransfer(t.id)
+                  }
+                },
               )
-            },
-          )
-        }
-      }
+            )
+          },
+        ),
+      )
     }
     Spacer(Modifier.height(24.dp))
   }
@@ -405,34 +402,31 @@ viewModel.launchSafely(
           )
         },
         yearSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
-        monthSummary = { items -> "${items.size} transfer(s)" },
-        daySummary = { items -> "${items.size} row(s)" },
+        monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
+        daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         emptySubtitle = "No payment transfers recorded yet.",
-      ) { rec ->
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          SarimDangerButton(
-            text = "Delete Transfer",
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Payment Transfer",
-                  body = "Reverse ${SarimFormat.formatRs(rec.item.amount)} transfer between entities and move to Recycle Bin?",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(
-                      errorTitle = "Delete Failed",
-                      successMessage = "Deleted payment transfer",
-                    ) {
-                      viewModel.repository.deletePaymentTransfer(rec.item.id)
-                    }
-                  },
-                )
+        actions = HistoryRecordActions<com.example.data.local.PaymentTransferEntity>(
+          deleteLabel = "Delete Transfer",
+          onDelete = { t ->
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Delete Payment Transfer",
+                body = "Reverse ${SarimFormat.formatRs(t.amount)} transfer between entities and move to Recycle Bin?",
+                tone = DialogTone.PERMANENT,
+                confirmLabel = "Delete",
+                onConfirm = {
+                  viewModel.launchSafely(
+                    errorTitle = "Delete Failed",
+                    successMessage = "Deleted payment transfer",
+                  ) {
+                    viewModel.repository.deletePaymentTransfer(t.id)
+                  }
+                },
               )
-            },
-          )
-        }
-      }
+            )
+          },
+        ),
+      )
     }
     Spacer(Modifier.height(24.dp))
   }

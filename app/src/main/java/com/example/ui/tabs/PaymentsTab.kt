@@ -394,74 +394,19 @@ viewModel.launchSafely(
         }
         AccordionHistoryList(
           records = records,
-          yearSummary = { items -> "${items.size} entries" },
+          yearSummary = { "" },
           monthSummary = { items ->
             val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
             val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
-            "${items.size} · In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
+            "In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
           },
-          daySummary = { items -> "${items.size} entries" },
-          hasDropdownDetails = true,
+          daySummary = { items ->
+            val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
+            val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
+            "In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
+          },
           onItemClick = { rec -> sheetPayment = rec.item },
-        ) { rec ->
-          val p = rec.item
-          val deleteTitle = when (p.type) {
-            "PAYMENT_IN" -> "Delete Payment IN"
-            "PAYMENT_OUT" -> "Delete Payment OUT"
-            else -> "Delete Expense"
-          }
-          val deleteTypeDesc = when (p.type) {
-            "PAYMENT_IN" -> "Payment Received (IN)"
-            "PAYMENT_OUT" -> "Payment Made (OUT)"
-            else -> "Operating Expense"
-          }
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (p.photoUri.isNotBlank()) {
-              SarimSecondaryButton(
-                text = "View Attached Photo",
-                onClick = { viewModel.openPhotoViewer(listOf(p.photoUri), 0) },
-                modifier = Modifier.fillMaxWidth(),
-              )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimSecondaryButton(
-                text = "Edit",
-                onClick = {
-                  editingTxId = p.id
-                  dateEpoch = p.dateEpoch
-                  txType = PayTxType.entries.firstOrNull { it.code == p.type } ?: PayTxType.PAYMENT_OUT
-                  nameText = p.entityOrExpenseName
-                  amountText = p.amount.toString()
-                  descriptionText = p.description
-                  photoUris = if (p.photoUri.isNotBlank()) listOf(p.photoUri) else emptyList()
-                  addToLedger = p.addToLedger
-                },
-                modifier = Modifier.weight(1f),
-              )
-              SarimDangerButton(
-                text = "Delete",
-                icon = Icons.Rounded.Delete,
-                onClick = {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = deleteTitle,
-                      body = "Delete this $deleteTypeDesc?\nEntity: ${p.entityOrExpenseName}\nDate: ${SarimFormat.dateInput(p.dateEpoch)}\nPermanent: This cannot be undone.",
-                      tone = DialogTone.PERMANENT,
-                      highlight = DialogHighlight("Amount", SarimFormat.formatRs(p.amount, false, hideMoney)),
-                      confirmLabel = "Delete",
-                      onConfirm = {
-                        viewModel.launchSafely(errorTitle = "Delete Payment Failed", successMessage = "Moved to Recycle Bin") {
-                          viewModel.repository.deletePaymentTransaction(p.id)
-                        }
-                      },
-                    )
-                  )
-                },
-                modifier = Modifier.weight(1f),
-              )
-            }
-          }
-        }
+        )
       }
     }
   }

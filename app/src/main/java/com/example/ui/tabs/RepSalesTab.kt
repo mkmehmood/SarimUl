@@ -365,53 +365,11 @@ viewModel.launchSafely(
       }
       AccordionHistoryList(
         records = records,
-        yearSummary = { "${it.size} entries" },
-        monthSummary = { "${it.size} entries" },
-        daySummary = { "${it.size} entries" },
-        hasDropdownDetails = true,
+        yearSummary = { "" },
+        monthSummary = { "" },
+        daySummary = { "" },
         onItemClick = { rec -> sheetRepSale = rec.item },
-      ) { rec ->
-        val s = rec.item
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimSecondaryButton(
-            text = "Edit",
-            onClick = {
-              editingRepTxId = s.id
-              dateEpoch = s.dateEpoch
-              customerName = s.customerName
-              if (s.mode == "COLLECTION") {
-                mode = RepTxMode.COLLECTION
-                amountReceivedText = s.amountReceived.toString()
-                expiredQtyText = if (s.expiredQtyKg > 0.0) s.expiredQtyKg.toString() else ""
-              } else {
-                mode = RepTxMode.SALE
-                quantityText = s.quantityKg.toString()
-                payType = if (s.paymentType == "CASH") RepPayType.CASH else RepPayType.CREDIT
-              }
-            },
-            modifier = Modifier.weight(1f),
-          )
-          SarimDangerButton(
-            text = "Delete",
-            onClick = {
-              val dispAmt = if (s.mode == "COLLECTION" || s.mode == "MONEY_OUT") (s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue) else s.totalValue
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Transaction?",
-                  body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(dispAmt)}\nMoves to Recycle Bin for 90 days.",
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                      viewModel.repository.deleteSale(s.id)
-                    }
-                  },
-                )
-              )
-            },
-            modifier = Modifier.weight(1f),
-          )
-        }
-      }
+      )
     }
   }
 

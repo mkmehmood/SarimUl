@@ -84,48 +84,53 @@ private fun SavedCalcCard(
     if (calcs.isEmpty()) {
       Text(emptyText, color = palette.textMuted, fontSize = 12.5.sp)
     } else {
-      calcs.forEach { calc ->
-        val rows = calcRows(calc)
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onOpen(calc) }
-            .padding(vertical = 6.dp),
-          verticalAlignment = Alignment.Top,
-        ) {
-          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(calc.name, color = palette.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-            Text(calc.summaryText, color = palette.textMuted, fontSize = 11.5.sp)
-            rows.forEach { (n, v, isFix) ->
-              Text(
-                "$n  ${if (isFix && v > 0.0) "+" else ""}${fmtAmt(v, calc.unit)} ${calc.unit}",
-                color = palette.textMuted,
-                fontSize = 11.sp,
-              )
-            }
-          }
-          IconButton(
-            onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = deleteTitle,
-                  body = "$deleteBody (${calc.name})?",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
-                      viewModel.repository.deleteMixCalc(calc.id)
-                      onDeleted(calc.id)
-                    }
-                  },
-                )
-              )
-            }
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        calcs.forEach { calc ->
+          val rows = calcRows(calc)
+          val isFix = calc.kind == SarimMixCalcRecords.KIND_FIX
+          SarimHistoryCard(
+            title = calc.name,
+            subtitle = listOf(SarimFormat.formatDate(calc.updatedAt), calc.summaryText).filter { it.isNotBlank() }.joinToString(" · "),
+            tagText = if (isFix) "Correction" else "Batch",
+            tone = if (isFix) HistoryTone.WARN else HistoryTone.INFO,
           ) {
-            Icon(Icons.Rounded.Delete, contentDescription = deleteTitle, tint = palette.red, modifier = Modifier.size(18.dp))
+            rows.forEach { (n, v, fix) ->
+              HistoryKeyValueRow(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, calc.unit)} ${calc.unit}")
+            }
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              HistorySheetButton(
+                text = "Delete",
+                kind = SheetButtonKind.DANGER,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = deleteTitle,
+                      body = "$deleteBody (${calc.name})?",
+                      tone = DialogTone.PERMANENT,
+                      confirmLabel = "Delete",
+                      onConfirm = {
+                        viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
+                          viewModel.repository.deleteMixCalc(calc.id)
+                          onDeleted(calc.id)
+                        }
+                      },
+                    )
+                  )
+                },
+              )
+              HistorySheetButton(
+                text = "Edit",
+                kind = SheetButtonKind.PRIMARY,
+                modifier = Modifier.weight(3f),
+                onClick = { onOpen(calc) },
+              )
+            }
           }
         }
-        HorizontalDivider(color = palette.border)
       }
     }
   }
