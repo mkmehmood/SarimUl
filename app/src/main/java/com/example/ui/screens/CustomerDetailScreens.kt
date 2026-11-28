@@ -84,8 +84,6 @@ fun CustomerDetailsScreen(
 
   var searchQuery by remember { mutableStateOf("") }
   var filterChip by remember { mutableStateOf("All") }
-  var selectedTxForSheet by remember { mutableStateOf<SaleTransactionEntity?>(null) }
-  var expandedTxIds by remember { mutableStateOf(setOf<String>()) }
   var menuExpanded by remember { mutableStateOf(false) }
   var showMoneyOutDialog by remember { mutableStateOf(false) }
 
@@ -104,7 +102,6 @@ fun CustomerDetailsScreen(
     }
   }
 
-  val months = remember(filtered) { filtered.map { SarimFormat.formatMonthYear(it.dateEpoch) }.distinct() }
   val totalBill = customer.oldDebit + customer.totalSaleValue
   val pctReceived = if (totalBill > 0.01) ((customer.totalReceived / totalBill) * 100).toInt().coerceIn(0, 100) else 0
 
@@ -261,214 +258,122 @@ fun CustomerDetailsScreen(
       }
     }
 
-    // Month jump chips
-    if (months.size > 1) {
-      Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        months.forEach { m ->
-          SarimChip(m, palette.cyan)
+    // History: same year > month > day ledger + entry sheet as every other history list
+    val hide = state.hideMoneyFigures
+    val records = remember(filtered, hide, palette) {
+      filtered.map { tx ->
+        val isReturn = tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN"
+        val typeLabel = when {
+          isReturn -> "Rep Return"
+          tx.mode == "COLLECTION" -> "Collection"
+          tx.mode == "MONEY_OUT" -> "Money out"
+          tx.paymentType == "CASH" -> "Cash sale"
+          else -> "Credit sale"
         }
-      }
-    }
-
-    // History grouped by month
-    val byMonth = remember(filtered) { filtered.groupBy { SarimFormat.formatMonthYear(it.dateEpoch) } }
-    if (byMonth.isEmpty()) {
-      SarimEmptyState("No customer history", "Transactions with ${customer.name} appear here.")
-    } else {
-      byMonth.forEach { (monthLabel, mList) ->
-        val mSold = mList.sumOf { it.quantityKg }
-        val mSoldVal = mList.filter { it.mode == "SALE" }.sumOf { it.totalValue }
-        val mRecVal = mList.filter { it.mode == "COLLECTION" || (it.mode == "SALE" && it.paymentType == "CASH") }.sumOf {
-          if (it.mode == "COLLECTION") (it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue) else it.totalValue
+        val toneColor = when {
+          isReturn -> palette.cyan
+          tx.mode == "COLLECTION" -> palette.green
+          tx.mode == "MONEY_OUT" -> palette.red
+          tx.paymentType == "CASH" -> palette.green
+          else -> palette.amber
         }
-        Text(
-          "$monthLabel · ${SarimFormat.formatKg(mSold)} sold · Sold ${SarimFormat.formatRs(mSoldVal, privacyHidden = state.hideMoneyFigures)} · Received ${SarimFormat.formatRs(mRecVal, privacyHidden = state.hideMoneyFigures)}",
-          color = palette.textMuted,
-          fontSize = 11.5.sp,
-          fontWeight = FontWeight.Bold,
-        )
-
-        mList.forEach { tx ->
-          val typeLabel = when {
-            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> "Rep Return"
-            tx.mode == "COLLECTION" -> "Collection"
-            tx.mode == "MONEY_OUT" -> "Money out"
-            tx.paymentType == "CASH" -> "Cash sale"
-            else -> "Credit sale"
-          }
-          val toneColor = when {
-            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> palette.cyan
-            tx.mode == "COLLECTION" -> palette.green
-            tx.mode == "MONEY_OUT" -> palette.red
-            tx.paymentType == "CASH" -> palette.green
-            else -> palette.amber
-          }
-          val displayAmount = when {
-            tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
-            tx.mode == "COLLECTION" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
-            else -> tx.totalValue
-          }
-          val isExpanded = tx.id in expandedTxIds
-          val txDetails = buildList {
-            if (tx.storeName.isNotBlank()) add("Store" to tx.storeName)
-            if (tx.repName.isNotBlank()) add("Rep" to tx.repName)
-            if (tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN") {
-              if (tx.returnedQtyKg > 0.0) add("Returned Qty" to SarimFormat.formatKg(tx.returnedQtyKg))
-              if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
-              add("Return Value" to SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures))
-            } else {
-              if (tx.quantityKg > 0.0) {
-                add("Quantity" to SarimFormat.formatKg(tx.quantityKg))
-                add("Rate / kg" to SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures))
-              }
-              if (tx.mode == "SALE") {
-                add("Total Value" to SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures))
-                add("Profit" to SarimFormat.formatRs(tx.profit, privacyHidden = state.hideMoneyFigures))
-              } else {
-                add("Amount Received" to SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures))
-                if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
-              }
-            }
-            add("Balance After" to SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures))
-          }
-          Surface(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { selectedTxForSheet = tx },
-            shape = RoundedCornerShape(20.dp),
-            color = palette.surface,
-            border = BorderStroke(1.dp, if (isExpanded) palette.green.copy(alpha = 0.55f) else palette.border),
-          ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(38.dp)) {
-                  Text(SarimFormat.formatDayNumber(tx.dateEpoch), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                  Text(SarimFormat.formatWeekday(tx.dateEpoch), color = palette.textMuted, fontSize = 10.sp)
-                }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                  Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(typeLabel, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                    SarimChip(if (tx.mode == "SALE") tx.paymentType else tx.mode, toneColor)
-                  }
-                  if (tx.quantityKg > 0.0) {
-                    Text("${SarimFormat.formatKg(tx.quantityKg)} @ ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}/kg", color = palette.textMuted, fontSize = 11.5.sp)
-                  }
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                  Text(
-                    SarimFormat.formatRs(displayAmount, privacyHidden = state.hideMoneyFigures),
-                    color = toneColor,
-                    style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
-                  )
-                  Text("Bal ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}", color = palette.textMuted, fontSize = 10.5.sp)
-                }
-                IconButton(
-                  onClick = {
-                    expandedTxIds = if (isExpanded) expandedTxIds - tx.id else expandedTxIds + tx.id
-                  },
-                  modifier = Modifier.size(48.dp).testTag("customer_history_expand_${tx.id}"),
-                ) {
-                  Icon(
-                    imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    contentDescription = if (isExpanded) "Collapse details" else "Expand details",
-                    tint = if (isExpanded) palette.green else palette.textMuted,
-                  )
-                }
-              }
-
-              AnimatedVisibility(visible = isExpanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                  HorizontalDivider(color = palette.border)
-                  txDetails.chunked(2).forEach { pair ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                      pair.forEach { (k, v) ->
-                        Surface(
-                          shape = RoundedCornerShape(10.dp),
-                          color = palette.surfaceElevated,
-                          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-                          modifier = Modifier.weight(1f),
-                        ) {
-                          Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                            Text(k, color = palette.textMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(v, color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                          }
-                        }
-                      }
-                      if (pair.size == 1) Spacer(Modifier.weight(1f))
-                    }
-                  }
-                  if (tx.mode == "SALE") {
-                    SarimSecondaryButton(
-                      text = "Invoice PDF",
-                      modifier = Modifier.fillMaxWidth(),
-                      onClick = {
-                        PdfExporter.sharePdfReport(
-                          context = context,
-                          fileNamePrefix = "invoice_${customer.name.replace(" ", "_")}",
-                          title = "Sale Invoice — ${customer.name}",
-                          subtitle = SarimFormat.formatDate(tx.dateEpoch),
-                          lines = listOf(
-                            "Store: ${tx.storeName}",
-                            "Type: ${tx.paymentType}",
-                            "Quantity: ${SarimFormat.formatKg(tx.quantityKg)}",
-                            "Price/kg: ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = state.hideMoneyFigures)}",
-                            "Total: ${SarimFormat.formatRs(tx.totalValue, privacyHidden = state.hideMoneyFigures)}",
-                            "Running Balance: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}",
-                          ),
-                        ).onFailure { err ->
-                          viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
-                        }
-                      },
-                    )
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    Spacer(Modifier.height(24.dp))
-  }
-
-  selectedTxForSheet?.let { tx ->
-    ModalBottomSheet(
-      onDismissRequest = { selectedTxForSheet = null },
-      containerColor = palette.surface,
-    ) {
-      Column(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("${tx.mode} · ${SarimFormat.formatDate(tx.dateEpoch)}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        Text("Customer: ${tx.customerName}", color = palette.textMuted, fontSize = 13.sp)
-        if (tx.quantityKg > 0.0) Text("Quantity: ${SarimFormat.formatKg(tx.quantityKg)}", color = palette.textPrimary, fontSize = 13.sp)
-        val sheetAmt = when {
-          tx.isRepReturn || tx.mode == "REP_RETURN" || tx.paymentType == "REP_RETURN" -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
+        val displayAmount = when {
+          isReturn -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
           tx.mode == "COLLECTION" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
           else -> tx.totalValue
         }
-        Text("Value: ${SarimFormat.formatRs(sheetAmt, privacyHidden = state.hideMoneyFigures)}", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        Text("Balance After: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = state.hideMoneyFigures)}", color = palette.amber, fontSize = 13.sp)
-        Spacer(Modifier.height(10.dp))
-        SarimDangerButton(
-          text = "Delete Transaction",
-          modifier = Modifier.fillMaxWidth(),
-          onClick = {
-            selectedTxForSheet = null
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Delete Transaction",
-                body = "Move this transaction to Recycle Bin?",
-                tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete",
-                onConfirm = {
-                  viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                    viewModel.repository.deleteSale(tx.id)
-                  }
-                },
-              )
-            )
-          },
+        val details = buildList {
+          if (tx.storeName.isNotBlank()) add("Store" to tx.storeName)
+          if (tx.repName.isNotBlank()) add("Rep" to tx.repName)
+          if (isReturn) {
+            if (tx.returnedQtyKg > 0.0) add("Returned Qty" to SarimFormat.formatKg(tx.returnedQtyKg))
+            if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
+            add("Return Value" to SarimFormat.formatRs(displayAmount, privacyHidden = hide))
+          } else {
+            if (tx.quantityKg > 0.0) {
+              add("Quantity" to SarimFormat.formatKg(tx.quantityKg))
+              add("Rate / kg" to SarimFormat.formatRs(tx.pricePerKg, privacyHidden = hide))
+            }
+            if (tx.mode == "SALE") {
+              add("Total Value" to SarimFormat.formatRs(tx.totalValue, privacyHidden = hide))
+              add("Profit" to SarimFormat.formatRs(tx.profit, privacyHidden = hide))
+            } else {
+              add("Amount Received" to SarimFormat.formatRs(displayAmount, privacyHidden = hide))
+              if (tx.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(tx.expiredQtyKg))
+            }
+          }
+          add("Balance After" to SarimFormat.formatRs(tx.balanceAfter, privacyHidden = hide))
+        }
+        val sub = listOfNotNull(
+          if (tx.quantityKg > 0.0) "${SarimFormat.formatKg(tx.quantityKg)} @ ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = hide)}" else null,
+          tx.storeName.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+        HistoryRecordDisplay(
+          item = tx,
+          dateEpoch = tx.dateEpoch,
+          title = typeLabel,
+          subtitle = sub,
+          amountText = SarimFormat.formatRs(displayAmount, privacyHidden = hide),
+          amountColor = toneColor,
+          chipText = if (tx.mode == "SALE") tx.paymentType else tx.mode,
+          chipColor = toneColor,
+          detailMetrics = details,
         )
-        Spacer(Modifier.height(16.dp))
       }
     }
+    AccordionHistoryList(
+      records = records,
+      yearSummary = { "" },
+      monthSummary = { list ->
+        val sold = list.sumOf { it.item.quantityKg }
+        val soldVal = list.filter { it.item.mode == "SALE" }.sumOf { it.item.totalValue }
+        val recVal = list.filter { it.item.mode == "COLLECTION" || (it.item.mode == "SALE" && it.item.paymentType == "CASH") }.sumOf {
+          if (it.item.mode == "COLLECTION") (it.item.amountReceived.takeIf { a -> a > 0.0 } ?: it.item.totalValue) else it.item.totalValue
+        }
+        "${SarimFormat.formatKg(sold)} sold · Sold ${SarimFormat.formatRs(soldVal, privacyHidden = hide)} · Received ${SarimFormat.formatRs(recVal, privacyHidden = hide)}"
+      },
+      daySummary = { "" },
+      emptyTitle = "No customer history",
+      emptySubtitle = "Transactions with ${customer.name} appear here.",
+      actions = HistoryRecordActions(
+        onDelete = { tx ->
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Delete Transaction",
+              body = "Move this transaction to Recycle Bin?",
+              tone = DialogTone.PERMANENT,
+              confirmLabel = "Delete",
+              onConfirm = {
+                viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                  viewModel.repository.deleteSale(tx.id)
+                }
+              },
+            )
+          )
+        },
+        extraLabel = { tx -> if (tx.mode == "SALE") "Invoice" else null },
+        extraIcon = Icons.Rounded.Share,
+        onExtra = { tx ->
+          PdfExporter.sharePdfReport(
+            context = context,
+            fileNamePrefix = "invoice_${customer.name.replace(" ", "_")}",
+            title = "Sale Invoice — ${customer.name}",
+            subtitle = SarimFormat.formatDate(tx.dateEpoch),
+            lines = listOf(
+              "Store: ${tx.storeName}",
+              "Type: ${tx.paymentType}",
+              "Quantity: ${SarimFormat.formatKg(tx.quantityKg)}",
+              "Price/kg: ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = hide)}",
+              "Total: ${SarimFormat.formatRs(tx.totalValue, privacyHidden = hide)}",
+              "Running Balance: ${SarimFormat.formatRs(tx.balanceAfter, privacyHidden = hide)}",
+            ),
+          ).onFailure { err ->
+            viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+          }
+        },
+      ),
+    )
+    Spacer(Modifier.height(24.dp))
   }
 
   if (showMoneyOutDialog) {
