@@ -34,11 +34,17 @@ data class AppDialogRequest(
   val onCancel: () -> Unit = {},
 )
 
+/**
+ * Web `pickTone()` equivalent for dialogs that don't pass an explicit tone: destructive wording is
+ * permanent, titles matching the web warning pattern (or a body starting with "Warning"/"Caution") are
+ * warnings, and everything else is a plain confirmation.
+ */
 fun inferDialogTone(title: String, body: String): DialogTone {
   val text = "$title $body".lowercase()
   return when {
     listOf("delete", "erase", "empty bin", "permanent", "remove").any { it in text } -> DialogTone.PERMANENT
-    listOf("insufficient", "exceed", "short", "over", "warning", "over-collection", "future").any { it in text } -> DialogTone.WARNING
+    DialogMessageParser.warnRe.containsMatchIn(title) ||
+      Regex("^\\s*(warning|caution)", RegexOption.IGNORE_CASE).containsMatchIn(body) -> DialogTone.WARNING
     listOf("error", "failed", "invalid", "required", "refused", "duplicate").any { it in text } -> DialogTone.ERROR
     listOf("saved", "success", "restored", "synced", "complete").any { it in text } -> DialogTone.SUCCESS
     else -> DialogTone.CONFIRM
