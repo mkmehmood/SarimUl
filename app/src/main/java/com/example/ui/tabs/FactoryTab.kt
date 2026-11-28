@@ -86,6 +86,15 @@ fun FactoryTab(
   var showMaterialsBreakdown by remember { mutableStateOf(false) }
   var editingBatchId by remember { mutableStateOf<String?>(null) }
   var sheetBatch by remember { mutableStateOf<FactoryBatchEntity?>(null) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      factoryDate = com.example.data.repository.SarimLinkEngine.rolloverDateIfUnedited(factoryDate, prevDayRef, newDay, editingBatchId != null)
+      prevDayRef = newDay
+    }
+  }
 
   // Only formulas selected on a store in Store Manager can be produced (matches the web Factory tab).
   val liveFormulas = state.formulas.filter { !it.isDeleted }

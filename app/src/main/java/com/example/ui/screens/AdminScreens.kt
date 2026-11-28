@@ -433,7 +433,7 @@ fun StoreManagerScreen(
                 production = state.productionEntries,
                 factoryBatches = state.factoryBatches,
                 sales = state.sales,
-                returns = emptyList(),
+                returns = state.returnLogs,
                 stockTransfers = state.stockTransfers,
               ).blockMessage(st.name)
               if (blockMsg != null) {

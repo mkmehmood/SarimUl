@@ -174,18 +174,12 @@ fun AddEntityScreen(
 
     // Edit history (only when editing)
     if (editingEntity != null) {
-      val history = remember(editingEntity) { JsonCodecs.decodeEditHistory(editingEntity.editHistoryJson) }
-      if (history.isNotEmpty()) {
-        SarimCard {
-          SarimFieldLabel("Edit History")
-          history.forEach { item ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text(item.summary, color = palette.textPrimary, fontSize = 12.5.sp)
-              Text(SarimFormat.formatDate(item.timestamp), color = palette.textMuted, fontSize = 11.sp)
-            }
-          }
-        }
-      }
+      val history = remember(editingEntity.editHistoryJson) { JsonCodecs.decodeEditHistory(editingEntity.editHistoryJson) }
+      com.example.ui.components.EditHistoryCard(
+        entries = history,
+        createdAt = editingEntity.createdAt,
+        onDeleteEntry = { idx -> viewModel.deletePaymentEntityEditHistoryEntry(editingEntity.id, idx) },
+      )
     }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

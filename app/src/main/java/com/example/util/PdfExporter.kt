@@ -298,4 +298,139 @@ object PdfExporter {
       Result.failure(e)
     }
   }
+
+  fun createUnifiedEntitiesPdf(
+    context: Context,
+    periodLabel: String,
+    generatedLabel: String,
+    entities: List<com.example.data.local.PaymentEntityRecord>,
+    materials: List<com.example.data.local.RawMaterialEntity>,
+    transactions: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): Result<File> {
+    val supplierIds = materials.filter { !it.isDeleted && !it.supplierId.isNullOrBlank() }
+      .mapNotNull { it.supplierId }.toSet()
+    val supplierBalances = mutableMapOf<String, Double>()
+    materials.filter { !it.isDeleted && !it.supplierId.isNullOrBlank() && it.paymentStatus == "pending" && it.pendingSupplierAmount > 0.0 }
+      .forEach { mat ->
+        val sid = mat.supplierId ?: return@forEach
+        supplierBalances[sid] = (supplierBalances[sid] ?: 0.0) + mat.pendingSupplierAmount
+      }
+    val mergedEntityIds = transactions
+      .filter { !it.isDeleted && !it.entityId.isNullOrBlank() && com.example.data.backup.YearCloseMerge.isMergedId(it.id) }
+      .mapNotNull { it.entityId }.toSet()
+
+    val sorted = entities.filter { !it.isDeleted && !it.isExpenseEntity }
+      .map { ent ->
+        val isSup = ent.isSupplier || ent.id in supplierIds
+        val bal = if (isSup) (supplierBalances[ent.id] ?: ent.currentBalance) else ent.currentBalance
+        Triple(ent, isSup, bal)
+      }
+      .sortedByDescending { kotlin.math.abs(it.third) }
+
+    var totPayable = 0.0
+    var totReceivable = 0.0
+    val rows = sorted.map { (ent, isSup, bal) ->
+      if (bal > 0.01) totPayable += bal else if (bal < -0.01) totReceivable += kotlin.math.abs(bal)
+      val status = when {
+        kotlin.math.abs(bal) < 0.01 -> "SETTLED"
+        bal > 0.01 -> "PAYABLE"
+        else -> "RECEIVABLE"
+      }
+      val balDisp = if (status == "SETTLED") "SETTLED" else SarimFormat.formatRs(kotlin.math.abs(bal), false, privacyHidden)
+      val role = when {
+        isSup -> "SUPPLIER"
+        ent.type.equals("payor", true) -> "PAYOR"
+        else -> "PAYEE"
+      }
+      val source = (if (ent.id in mergedEntityIds) "Year-End / " else "") + if (isSup) "Inventory" else "Transactions"
+      listOf(
+        ent.name + if (ent.id in mergedEntityIds) " ★" else "",
+        role,
+        ent.phone.ifBlank { "N/A" },
+        source,
+        balDisp,
+        status,
+      )
+    }
+    val columns = listOf(
+      PdfColumn("Name", 136f),
+      PdfColumn("Type", 64f),
+      PdfColumn("Phone", 78f),
+      PdfColumn("Source", 76f),
+      PdfColumn("Balance", 94f, right = true),
+      PdfColumn("Status", 75f, right = true),
+    )
+    val netPos = kotlin.math.abs(totReceivable - totPayable)
+    val netTag = if (totReceivable > totPayable) "IN OUR FAVOR" else "NET PAYABLE"
+    return createStatementPdf(
+      context = context,
+      fileBaseName = "Unified_Statement_entities_${periodLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      kindTitle = "Payment Entities — Balances & Ledger",
+      name = "All Active Entities (${rows.size})",
+      phone = "",
+      rangeLabel = periodLabel,
+      generatedLabel = generatedLabel,
+      columns = columns,
+      rows = rows,
+      summary = listOf(
+        "Total Payables" to SarimFormat.formatRs(totPayable, false, privacyHidden),
+        "Total Receivables" to SarimFormat.formatRs(totReceivable, false, privacyHidden),
+      ),
+      closingLabel = "Net Position ($netTag)",
+      closingValue = SarimFormat.formatRs(netPos, false, privacyHidden),
+      accent = Color.rgb(0, 150, 136),
+    )
+  }
+
+  fun createUnifiedExpensesPdf(
+    context: Context,
+    periodLabel: String,
+    generatedLabel: String,
+    expenses: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): Result<File> {
+    val operating = expenses.filter { !it.isDeleted && it.type == "EXPENSE" }.sortedBy { it.dateEpoch }
+    val byName = linkedMapOf<String, Double>()
+    operating.forEach { exp ->
+      val key = exp.entityOrExpenseName.ifBlank { "Unnamed" }
+      byName[key] = (byName[key] ?: 0.0) + exp.amount
+    }
+    val rows = operating.map { exp ->
+      val isMerged = com.example.data.backup.YearCloseMerge.isMergedId(exp.id)
+      listOf(
+        SarimFormat.dateInput(exp.dateEpoch),
+        exp.entityOrExpenseName.ifBlank { "-" } + if (isMerged) " ★" else "",
+        exp.category?.ifBlank { "operating" } ?: "operating",
+        exp.description.ifBlank { "-" },
+        SarimFormat.formatRs(exp.amount, false, privacyHidden),
+      )
+    }
+    val columns = listOf(
+      PdfColumn("Date", 68f),
+      PdfColumn("Name / Vendor", 118f),
+      PdfColumn("Category", 76f),
+      PdfColumn("Description", 165f),
+      PdfColumn("Amount", 96f, right = true),
+    )
+    val totalAmt = operating.sumOf { it.amount }
+    val summary = byName.entries.sortedByDescending { it.value }.take(8).map { (k, v) ->
+      k to SarimFormat.formatRs(v, false, privacyHidden)
+    }
+    return createStatementPdf(
+      context = context,
+      fileBaseName = "Unified_Statement_expenses_${periodLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      kindTitle = "Expenses — Transaction Records",
+      name = "Operating Expenses (${rows.size})",
+      phone = "",
+      rangeLabel = periodLabel,
+      generatedLabel = generatedLabel,
+      columns = columns,
+      rows = rows,
+      summary = summary,
+      closingLabel = "Total Operating Expenses",
+      closingValue = SarimFormat.formatRs(totalAmt, false, privacyHidden),
+      accent = Color.rgb(217, 119, 6),
+    )
+  }
 }

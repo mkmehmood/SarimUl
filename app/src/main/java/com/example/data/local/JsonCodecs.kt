@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import com.example.data.model.EditHistoryChange
 import com.example.data.model.EditHistoryEntry
 import com.example.data.model.FormulaIngredient
 import com.example.data.model.LineItemBreakdown
@@ -68,6 +69,15 @@ object JsonCodecs {
       linkedMapOf<String, Any?>(
         "timestamp" to item.timestamp,
         "summary" to item.summary,
+        "by" to item.by,
+        "changes" to item.changes.map { c ->
+          linkedMapOf<String, Any?>(
+            "f" to c.fieldKey,
+            "label" to c.label,
+            "from" to c.from,
+            "to" to c.to,
+          )
+        },
       )
     }
   )
@@ -77,9 +87,21 @@ object JsonCodecs {
     return runCatching {
       (PureJsonParser(raw).parseValue() as? List<*>).orEmpty().mapNotNull { elem ->
         val obj = elem as? Map<*, *> ?: return@mapNotNull null
+        val changesRaw = obj["changes"] as? List<*>
+        val changes = changesRaw.orEmpty().mapNotNull { ch ->
+          val cm = ch as? Map<*, *> ?: return@mapNotNull null
+          EditHistoryChange(
+            fieldKey = cm["f"]?.toString()?.ifBlank { null } ?: cm["fieldKey"]?.toString().orEmpty(),
+            label = cm["label"]?.toString().orEmpty(),
+            from = cm["from"]?.toString().orEmpty(),
+            to = cm["to"]?.toString().orEmpty(),
+          )
+        }
         EditHistoryEntry(
           timestamp = (obj["timestamp"] as? Number)?.toLong() ?: obj["timestamp"]?.toString()?.toLongOrNull() ?: 0L,
           summary = obj["summary"]?.toString().orEmpty(),
+          by = obj["by"]?.toString().orEmpty(),
+          changes = changes,
         )
       }
     }.getOrDefault(emptyList())
@@ -234,11 +256,13 @@ object JsonCodecs {
   private fun encodeArray(items: List<*>): String =
     items.joinToString(",", prefix = "[", postfix = "]") { encodeValue(it) }
 
+  fun encodeMap(map: Map<*, *>): String = encodeObject(map.filterValues { it != null })
+
   private fun encodeObject(map: Map<*, *>): String = buildString {
     append('{')
     var first = true
     for ((k, v) in map) {
-      if (k == null) continue
+      if (k == null || v == null) continue
       if (!first) append(',')
       first = false
       append('"').append(escapeJson(k.toString())).append("\":")

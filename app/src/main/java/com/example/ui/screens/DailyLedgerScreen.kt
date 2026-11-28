@@ -79,6 +79,15 @@ fun DailyLedgerScreen(
   var editingId by remember { mutableStateOf<String?>(null) }
   var entryType by remember { mutableStateOf("IN") } // IN, OUT, TRANSFER
   var dateEpoch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, editingId != null)
+      prevDayRef = newDay
+    }
+  }
   var amountText by remember { mutableStateOf("") }
   var modeText by remember { mutableStateOf("Cash") }
   var toModeText by remember { mutableStateOf("Bank Transfer") }

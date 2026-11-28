@@ -92,6 +92,15 @@ fun SalesTab(
   var showStockDetails by remember { mutableStateOf(false) }
   var editingSaleId by remember { mutableStateOf<String?>(null) }
   var sheetSale by remember { mutableStateOf<SaleTransactionEntity?>(null) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, editingSaleId != null)
+      prevDayRef = newDay
+    }
+  }
 
   var custSearchFilter by remember { mutableStateOf("") }
   var analyticsPeriod by remember { mutableStateOf(TimePeriod.WEEKLY) }
@@ -597,6 +606,7 @@ fun SalesTab(
                       returnedQtyKg = 0.0,
                       addToLedger = !isRepSelected && effPayment == PaymentChoice.CASH && saleAddToLedger,
                       isRepSale = false,
+                      actor = state.signedInDisplayName.ifBlank { "Admin" },
                     )
                   }
                 }
@@ -667,6 +677,7 @@ fun SalesTab(
                       returnedQtyKg = 0.0,
                       addToLedger = collAddToLedger,
                       isRepSale = false,
+                      actor = state.signedInDisplayName.ifBlank { "Admin" },
                     )
                   }
                 }
@@ -723,6 +734,7 @@ fun SalesTab(
                       expiredQtyKg = repExp,
                       returnedQtyKg = repRet,
                       fallbackUnitPrice = unitPriceKg,
+                      actor = state.signedInDisplayName.ifBlank { "Admin" },
                     )
                   }
                 }
@@ -753,6 +765,7 @@ fun SalesTab(
                   fileName = "All_Customers_List.pdf",
                   title = "All Customers — Complete List",
                   rows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales),
+                  privacyHidden = hideMoney,
                 ).fold(
                   onSuccess = { f ->
                     if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "All Customers — Complete List") == com.example.util.ShareOutcome.FAILED) {

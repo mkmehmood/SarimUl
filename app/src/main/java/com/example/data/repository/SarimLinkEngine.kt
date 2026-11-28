@@ -1208,4 +1208,101 @@ object SarimLinkEngine {
     "SETTLEMENT" -> 4
     else -> 5
   }
+
+  /**
+   * Port of `modules/rep-sales.js` `autoUpdateCustomerLocation`:
+   * Automatically confirms a GPS address on a rep customer when at least 3 previous rep
+   * visits with GPS lie within 150 m of the current visit, provided the customer has not
+   * already confirmed location or entered a manual non-GPS address.
+   */
+  fun evaluateAutoLocationCluster(
+    customer: CustomerEntity,
+    allSales: List<SaleTransactionEntity>,
+    currentLat: Double,
+    currentLng: Double,
+    now: Long = System.currentTimeMillis(),
+    radiusMeters: Double = com.example.util.LocationHelper.GPS_CLUSTER_RADIUS_METERS,
+  ): Pair<Double, Double>? {
+    if (customer.locationConfirmed) return null
+    val addr = customer.address.trim()
+    val isManualAddress = addr.length > 5 && !addr.startsWith("GPS:", ignoreCase = true)
+    if (isManualAddress) return null
+
+    val pastVisits = allSales
+      .filter { sale ->
+        !sale.isDeleted &&
+          sale.isRepSale &&
+          (sale.customerId == customer.id || sale.customerName.equals(customer.name, ignoreCase = true)) &&
+          sale.latitude != null &&
+          sale.longitude != null &&
+          sale.updatedAt < now - 2_000L
+      }
+      .sortedByDescending { it.updatedAt }
+
+    if (pastVisits.size < 3) return null
+
+    var clusterCount = 0
+    var clusterLat = 0.0
+    var clusterLng = 0.0
+    for (visit in pastVisits) {
+      val vLat = visit.latitude ?: continue
+      val vLng = visit.longitude ?: continue
+      if (com.example.util.LocationHelper.haversineMeters(currentLat, currentLng, vLat, vLng) <= radiusMeters) {
+        clusterCount++
+        clusterLat += vLat
+        clusterLng += vLng
+        if (clusterCount >= 3) break
+      }
+    }
+    if (clusterCount < 3) return null
+    val avgLat = (clusterLat + currentLat) / (clusterCount + 1)
+    val avgLng = (clusterLng + currentLng) / (clusterCount + 1)
+    return avgLat to avgLng
+  }
+
+  /**
+   * Port of `modules/edit-history.js` `historyDiff`:
+   * Compares `(fieldKey, label, before, after)` tuples and returns structured changes.
+   */
+  fun buildEditDiffs(
+    fields: List<QuadrupleDiff>,
+  ): List<com.example.data.model.EditHistoryChange> {
+    return fields.mapNotNull { item ->
+      val fromNorm = item.before.trim()
+      val toNorm = item.after.trim()
+      if (fromNorm == toNorm) null
+      else com.example.data.model.EditHistoryChange(
+        fieldKey = item.fieldKey,
+        label = item.label,
+        from = fromNorm.ifBlank { "—" },
+        to = toNorm.ifBlank { "—" },
+      )
+    }
+  }
+
+  data class QuadrupleDiff(
+    val fieldKey: String,
+    val label: String,
+    val before: String,
+    val after: String,
+  )
+
+  /**
+   * Port of `modules/date-rollover.js`:
+   * If the current date field is still pointing to [previousDayStartEpoch] (not manually
+   * changed by the user) and we are not editing an old record, roll it forward to [newDayEpoch].
+   */
+  fun rolloverDateIfUnedited(
+    currentFieldEpoch: Long,
+    previousDayStartEpoch: Long,
+    newDayStartEpoch: Long,
+    isEditing: Boolean,
+  ): Long {
+    if (isEditing || previousDayStartEpoch == newDayStartEpoch) return currentFieldEpoch
+    return if (SarimFormat.startOfDay(currentFieldEpoch) == previousDayStartEpoch) {
+      newDayStartEpoch
+    } else {
+      currentFieldEpoch
+    }
+  }
 }

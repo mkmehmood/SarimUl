@@ -261,17 +261,53 @@ object SarimWebSchema {
     )
 
   fun editHistoryToMaps(rawJson: String): List<Map<String, Any?>> =
-    JsonCodecs.decodeEditHistory(rawJson).map {
-      linkedMapOf("timestamp" to it.timestamp, "summary" to it.summary)
+    JsonCodecs.decodeEditHistory(rawJson).map { item ->
+      linkedMapOf<String, Any?>(
+        "timestamp" to item.timestamp,
+        "at" to isoUtc(item.timestamp),
+        "by" to item.by.ifBlank { "Admin" },
+        "summary" to item.summary,
+        "changes" to item.changes.map { ch ->
+          linkedMapOf<String, Any?>(
+            "f" to ch.fieldKey,
+            "label" to ch.label,
+            "from" to ch.from,
+            "to" to ch.to,
+          )
+        },
+      )
     }
 
   fun mapEditHistoryFromWeb(raw: Any?): String {
     val arr = raw as? List<*> ?: return "[]"
     val parsed = arr.mapNotNull { entry ->
       val m = entry as? Map<*, *> ?: return@mapNotNull null
-      val summary = str(m["summary"]).ifBlank { str(m["note"]) }
-      if (summary.isBlank()) return@mapNotNull null
-      EditHistoryEntry(timestamp = parseEpoch(m["timestamp"]), summary = summary)
+      val changesRaw = m["changes"] as? List<*>
+      val changes = changesRaw.orEmpty().mapNotNull { ch ->
+        val cm = ch as? Map<*, *> ?: return@mapNotNull null
+        com.example.data.model.EditHistoryChange(
+          fieldKey = str(cm["f"]).ifBlank { str(cm["fieldKey"]) },
+          label = str(cm["label"]).ifBlank { str(cm["f"]) },
+          from = cm["from"]?.toString().orEmpty(),
+          to = cm["to"]?.toString().orEmpty(),
+        )
+      }
+      val by = str(m["by"])
+      val fallbackSummary = if (changes.isNotEmpty()) {
+        changes.joinToString(" · ") { c ->
+          val fDisp = c.from.ifBlank { "—" }
+          val tDisp = c.to.ifBlank { "—" }
+          "${c.label.ifBlank { c.fieldKey }}: $fDisp → $tDisp"
+        }
+      } else ""
+      val summary = str(m["summary"]).ifBlank { str(m["note"]) }.ifBlank { fallbackSummary }
+      if (summary.isBlank() && changes.isEmpty()) return@mapNotNull null
+      EditHistoryEntry(
+        timestamp = parseEpoch(m["timestamp"] ?: m["at"]),
+        summary = summary,
+        by = by,
+        changes = changes,
+      )
     }
     return JsonCodecs.encodeEditHistory(parsed)
   }
@@ -599,6 +635,7 @@ object SarimWebSchema {
     "customSalePrice" to (e.customSalePrice ?: 0.0),
     "ledgerPage" to e.ledgerPage,
     "salesRep" to if (e.isRepCustomer) e.repName else null,
+    "locationConfirmed" to e.locationConfirmed,
     "currentCredit" to e.currentCredit,
     "totalQuantityKg" to e.totalQuantityKg,
     "totalSaleValue" to e.totalSaleValue,
@@ -624,6 +661,7 @@ object SarimWebSchema {
       ledgerPage = str(m["ledgerPage"]),
       isRepCustomer = isRepCustomer,
       repName = str(m["salesRep"]),
+      locationConfirmed = bool(m["locationConfirmed"], false),
       currentCredit = num(m["currentCredit"], oldDebit),
       totalQuantityKg = num(m["totalQuantityKg"]),
       totalSaleValue = num(m["totalSaleValue"]),

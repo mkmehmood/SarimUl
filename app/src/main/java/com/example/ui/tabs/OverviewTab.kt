@@ -668,9 +668,19 @@ fun OverviewTab(
     }
   }
 
-  // Fix Dialog in Checks panel (Section 6 Interactions)
+  // Fix Dialog in Checks panel (Section 6 Interactions + typed controls)
   fixingFinding?.let { finding ->
     var inputVal by remember(finding.id) { mutableStateOf(finding.currentFieldValue) }
+    var selectedDateEpoch by remember(finding.id) {
+      mutableLongStateOf(finding.currentFieldValue.toLongOrNull() ?: System.currentTimeMillis())
+    }
+    var checkedBool by remember(finding.id) {
+      mutableStateOf(finding.currentFieldValue.equals("true", ignoreCase = true))
+    }
+    val activeFormulas = remember(state.formulas) { state.formulas.filter { !it.isDeleted } }
+    val activeEntities = remember(state.paymentEntities) { state.paymentEntities.filter { !it.isDeleted } }
+    val payTypes = remember { listOf("EXPENSE", "PAYMENT_IN", "PAYMENT_OUT") }
+
     Dialog(onDismissRequest = { fixingFinding = null }) {
       Surface(
         shape = RoundedCornerShape(28.dp),
@@ -682,23 +692,123 @@ fun OverviewTab(
           Text("${finding.recordType} · ${SarimFormat.formatDate(finding.dateEpoch)}", color = palette.textMuted, fontSize = 11.5.sp)
           finding.reasons.forEach { Text("• $it", color = palette.amber, fontSize = 12.5.sp) }
           Text(finding.note, color = palette.textMuted, fontSize = 12.sp)
-          if (finding.recordType != "LINK_REPAIR") {
-            SarimTextField(
-              value = inputVal,
-              onValueChange = { inputVal = it },
-              label = "Update · ${finding.suggestedFieldLabel}",
-              keyboardType = KeyboardType.Decimal,
+
+          when (finding.fixKind) {
+            com.example.data.model.AuditFixKind.LINK_REPAIR -> Unit
+            com.example.data.model.AuditFixKind.DELETE_ONLY -> {
+              SarimCallout("Remove the duplicate record below to keep your totals accurate.", palette.red)
+            }
+            com.example.data.model.AuditFixKind.NEW_ID -> {
+              SarimCallout("Regenerate a fresh unique ID for this record so cloud sync no longer collides.", palette.cyan)
+            }
+            com.example.data.model.AuditFixKind.DATE -> {
+              SarimDatePickerField(
+                label = "Update · ${finding.suggestedFieldLabel}",
+                dateEpoch = selectedDateEpoch,
+                onDateSelected = {
+                  selectedDateEpoch = it
+                  inputVal = it.toString()
+                },
+                testTag = "audit_fix_date",
+              )
+            }
+            com.example.data.model.AuditFixKind.BOOLEAN -> {
+              SarimCheckboxRow(
+                checked = checkedBool,
+                onCheckedChange = {
+                  checkedBool = it
+                  inputVal = it.toString()
+                },
+                label = "Mark ${finding.suggestedFieldLabel} as received / settled",
+              )
+            }
+            com.example.data.model.AuditFixKind.SELECT_FORMULA -> {
+              val selectedFormula = activeFormulas.firstOrNull { it.id == inputVal } ?: activeFormulas.firstOrNull()
+              LaunchedEffect(selectedFormula?.id) {
+                if (inputVal.isBlank() && selectedFormula != null) inputVal = selectedFormula.id
+              }
+              if (activeFormulas.isEmpty()) {
+                SarimCallout("No formulas available. Add one in Formula Manager first.", palette.amber)
+              } else {
+                SarimPopoverSelector(
+                  label = "Update · ${finding.suggestedFieldLabel}",
+                  selectedText = selectedFormula?.name ?: "Select Formula",
+                  options = activeFormulas.map { it.name },
+                  onSelect = { idx, _ -> inputVal = activeFormulas[idx].id },
+                  testTag = "audit_fix_formula",
+                )
+              }
+            }
+            com.example.data.model.AuditFixKind.SELECT_ENTITY -> {
+              val selectedEntity = activeEntities.firstOrNull { it.id == inputVal } ?: activeEntities.firstOrNull()
+              LaunchedEffect(selectedEntity?.id) {
+                if (inputVal.isBlank() && selectedEntity != null) inputVal = selectedEntity.id
+              }
+              if (activeEntities.isEmpty()) {
+                SarimCallout("No entities available. Add one in Payments first.", palette.amber)
+              } else {
+                SarimPopoverSelector(
+                  label = "Update · ${finding.suggestedFieldLabel}",
+                  selectedText = selectedEntity?.name ?: "Select Entity",
+                  options = activeEntities.map { it.name },
+                  onSelect = { idx, _ -> inputVal = activeEntities[idx].id },
+                  testTag = "audit_fix_entity",
+                )
+              }
+            }
+            com.example.data.model.AuditFixKind.SELECT_PAY_TYPE -> {
+              SarimPopoverSelector(
+                label = "Update · ${finding.suggestedFieldLabel}",
+                selectedText = inputVal.ifBlank { "EXPENSE" },
+                options = payTypes,
+                onSelect = { _, opt -> inputVal = opt },
+                testTag = "audit_fix_pay_type",
+              )
+            }
+            com.example.data.model.AuditFixKind.NUMBER -> {
+              SarimTextField(
+                value = inputVal,
+                onValueChange = { inputVal = it },
+                label = "Update · ${finding.suggestedFieldLabel}",
+                keyboardType = KeyboardType.Decimal,
+                testTag = "audit_fix_number",
+              )
+            }
+          }
+
+          if (finding.deletable && finding.fixKind != com.example.data.model.AuditFixKind.DELETE_ONLY) {
+            SarimDangerButton(
+              text = "Delete Record Instead",
+              onClick = {
+                viewModel.deleteAuditFindingRecord(finding)
+                fixingFinding = null
+              },
+              modifier = Modifier.fillMaxWidth(),
+              testTag = "audit_delete_record_btn",
             )
           }
+
           Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SarimSecondaryButton("Cancel", onClick = { fixingFinding = null }, modifier = Modifier.weight(1f))
+            SarimSecondaryButton("Cancel", onClick = { fixingFinding = null }, modifier = Modifier.weight(1f), testTag = "audit_cancel_btn")
+            val primaryText = when (finding.fixKind) {
+              com.example.data.model.AuditFixKind.LINK_REPAIR -> "Repair Link"
+              com.example.data.model.AuditFixKind.DELETE_ONLY -> "Delete Duplicate"
+              com.example.data.model.AuditFixKind.NEW_ID -> "Generate New ID"
+              else -> "Save Fix"
+            }
             SarimPrimaryButton(
-              text = if (finding.recordType == "LINK_REPAIR") "Repair Link" else "Save Fix",
+              text = primaryText,
               onClick = {
-                viewModel.applyAuditFix(finding, inputVal)
+                val submittedVal = when (finding.fixKind) {
+                  com.example.data.model.AuditFixKind.DATE -> selectedDateEpoch.toString()
+                  com.example.data.model.AuditFixKind.BOOLEAN -> checkedBool.toString()
+                  else -> inputVal
+                }
+                viewModel.applyAuditFix(finding, submittedVal)
                 fixingFinding = null
               },
               modifier = Modifier.weight(1f),
+              testTag = "audit_save_fix_btn",
             )
           }
         }

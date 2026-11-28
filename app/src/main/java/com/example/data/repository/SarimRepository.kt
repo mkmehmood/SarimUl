@@ -1,11 +1,13 @@
 package com.example.data.repository
 
 import com.example.data.local.*
+import com.example.data.model.EditHistoryChange
 import com.example.data.model.EditHistoryEntry
 import com.example.data.model.FormulaIngredient
 import com.example.data.model.SarimUuid
 import com.example.data.remote.SarimWebSchema
 import com.example.data.remote.UuidSyncRegistry
+import com.example.data.repository.SarimLinkEngine.QuadrupleDiff
 import com.example.util.SarimFormat
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
@@ -42,26 +44,7 @@ class SarimRepository(
     SarimSeedHelper.ensureStructuralDefaults(dao)
   }
 
-  private fun toJsonValue(v: Any?): Any = when (v) {
-    null -> JSONObject.NULL
-    is Map<*, *> -> JSONObject().apply {
-      v.forEach { (k, innerVal) ->
-        if (k != null && innerVal != null) put(k.toString(), toJsonValue(innerVal))
-      }
-    }
-    is Iterable<*> -> JSONArray().apply {
-      v.forEach { put(toJsonValue(it)) }
-    }
-    else -> v
-  }
-
-  private fun mapToJsonString(map: Map<String, Any?>): String {
-    val obj = JSONObject()
-    map.forEach { (k, v) ->
-      if (v != null) obj.put(k, toJsonValue(v))
-    }
-    return obj.toString()
-  }
+  private fun mapToJsonString(map: Map<String, Any?>): String = JsonCodecs.encodeMap(map)
 
   private suspend fun enqueueOutboxSet(collection: String, docId: String, payloadMap: Map<String, Any?>) {
     val now = System.currentTimeMillis()
@@ -376,6 +359,7 @@ class SarimRepository(
     unitsUsed: Double,
     unitCost: Double,
     photoUris: List<String>,
+    actor: String = "Admin",
   ) {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllProductionEntries().firstOrNull { it.id == id } }
@@ -471,9 +455,21 @@ class SarimRepository(
       )
     }
 
+    val newDateStr = SarimFormat.dateInput(dateEpoch)
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) {
-      history.add(0, EditHistoryEntry(now, "Updated ${store.name}: ${SarimFormat.formatKg(netKg)}"))
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("dateStr", "Date", existing.dateStr, newDateStr),
+          QuadrupleDiff("store", "Store", existing.storeName, store.name),
+          QuadrupleDiff("formula", "Formula", existing.formulaName, formula.name),
+          QuadrupleDiff("gross", "Gross (kg)", SarimFormat.formatKg(existing.grossWeightKg), SarimFormat.formatKg(grossKg)),
+          QuadrupleDiff("container", "Container (kg)", SarimFormat.formatKg(existing.containerWeightKg), SarimFormat.formatKg(containerKg)),
+          QuadrupleDiff("net", "Net (kg)", SarimFormat.formatKg(existing.netWeightKg), SarimFormat.formatKg(netKg)),
+          QuadrupleDiff("units", "Formula Units", SarimLinkEngine.round2(existing.formulaUnitsUsed).toString(), SarimLinkEngine.round2(unitsUsed).toString()),
+        )
+      )
+      history.add(0, EditHistoryEntry(now, "Updated ${store.name}: ${SarimFormat.formatKg(netKg)}", by = actor, changes = changes))
     }
 
     val entity = (existing ?: ProductionEntryEntity(
@@ -514,7 +510,7 @@ class SarimRepository(
       dateStr = SarimFormat.dateInput(dateEpoch),
       timeStr = existing?.timeStr?.takeIf { it.isNotBlank() } ?: SarimFormat.formatTime(now),
       formulaMaterialsJson = JsonCodecs.encodeFormulaMaterialsUsed(formulaMats),
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       syncPending = true,
       updatedAt = now,
     )
@@ -1210,30 +1206,58 @@ class SarimRepository(
     photoUri: String,
     isRepCustomer: Boolean,
     repName: String,
+    actor: String = "Admin",
+    locationConfirmed: Boolean? = null,
   ): CustomerEntity {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllCustomers().firstOrNull { it.id == id } }
     val cleanName = name.trim()
+    val cleanPhone = phone.trim()
+    val cleanAddress = address.trim()
+    val cleanPage = ledgerPage.trim().take(12)
+    val cleanRep = repName.trim()
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) {
-      history.add(0, EditHistoryEntry(now, "Updated details for $cleanName"))
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("name", "Name", existing.name, cleanName),
+          QuadrupleDiff("phone", "Phone", existing.phone, cleanPhone),
+          QuadrupleDiff("address", "Address", existing.address, cleanAddress),
+          QuadrupleDiff("oldDebit", "Old Debit", existing.oldDebit.toString(), oldDebit.toString()),
+          QuadrupleDiff("customSalePrice", "Custom Rate", existing.customSalePrice?.toString() ?: "Default", customSalePrice?.toString() ?: "Default"),
+          QuadrupleDiff("ledgerPage", "Ledger Page", existing.ledgerPage, cleanPage),
+          QuadrupleDiff("repName", "Rep", existing.repName, cleanRep),
+        )
+      )
+      val summaryText = if (changes.isNotEmpty()) {
+        "Updated details for $cleanName"
+      } else {
+        "Saved profile for $cleanName"
+      }
+      history.add(0, EditHistoryEntry(now, summaryText, by = actor, changes = changes))
     }
     val deltaOldDebit = oldDebit - (existing?.oldDebit ?: 0.0)
+    val resolvedConfirmed = locationConfirmed ?: when {
+      existing == null -> false
+      cleanAddress != existing.address.trim() && !cleanAddress.startsWith("GPS:", ignoreCase = true) -> false
+      else -> existing.locationConfirmed
+    }
     val entity = (existing ?: CustomerEntity(
       id = SarimUuid.generateUUID(if (isRepCustomer) SarimUuid.PREFIX_REP_CUST else SarimUuid.PREFIX_CUST, tsMs = now),
       name = cleanName,
     )).copy(
       name = cleanName,
-      phone = phone.trim(),
-      address = address.trim(),
+      phone = cleanPhone,
+      address = cleanAddress,
       oldDebit = oldDebit,
       customSalePrice = customSalePrice,
-      ledgerPage = ledgerPage.trim().take(12),
+      ledgerPage = cleanPage,
       photoUri = photoUri,
       isRepCustomer = isRepCustomer,
-      repName = repName.trim(),
+      repName = cleanRep,
+      locationConfirmed = resolvedConfirmed,
       currentCredit = (existing?.currentCredit ?: 0.0) + deltaOldDebit,
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       syncPending = true,
       updatedAt = now,
     )
@@ -1455,6 +1479,7 @@ class SarimRepository(
     notes: String = "",
     costSource: String? = null,
     linkedLedgerId: String? = null,
+    actor: String = "Admin",
   ): SaleTransactionEntity {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllSales().firstOrNull { it.id == id } }
@@ -1648,7 +1673,21 @@ class SarimRepository(
 
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) {
-      history.add(0, EditHistoryEntry(now, "Edited $mode · $effectiveCustomerName"))
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("dateStr", "Date", existing.dateStr, dateStr),
+          QuadrupleDiff("mode", "Mode", existing.mode, mode),
+          QuadrupleDiff("customerName", "Customer", existing.customerName, effectiveCustomerName),
+          QuadrupleDiff("store", "Store", existing.storeName, store?.name ?: ""),
+          QuadrupleDiff("quantityKg", "Qty (kg)", existing.quantityKg.toString(), quantityKg.toString()),
+          QuadrupleDiff("paymentType", "Payment", existing.paymentType, effectivePaymentType),
+          QuadrupleDiff("amountReceived", "Received", existing.amountReceived.toString(), amountReceived.toString()),
+          QuadrupleDiff("expiredQtyKg", "Expired (kg)", existing.expiredQtyKg.toString(), expiredQtyKg.toString()),
+          QuadrupleDiff("returnedQtyKg", "Returned (kg)", existing.returnedQtyKg.toString(), returnedQtyKg.toString()),
+          QuadrupleDiff("notes", "Notes", existing.notes, notes.trim()),
+        )
+      )
+      history.add(0, EditHistoryEntry(now, "Edited $mode · $effectiveCustomerName", by = actor, changes = changes))
     }
 
     val saleEntity = SaleTransactionEntity(
@@ -1694,7 +1733,7 @@ class SarimRepository(
       allocationsJson = JsonCodecs.encodeAllocations(allocList),
       partialPaymentReceived = existing?.partialPaymentReceived ?: 0.0,
       collectionAllocsJson = existing?.collectionAllocsJson ?: "[]",
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       createdAt = existing?.createdAt ?: now,
       updatedAt = now,
     )
@@ -1735,6 +1774,7 @@ class SarimRepository(
     expiredQtyKg: Double,
     returnedQtyKg: Double,
     fallbackUnitPrice: Double = 400.0,
+    actor: String = "Admin",
   ): SaleTransactionEntity {
     val cleanRep = repName.trim()
     require(cleanRep.isNotBlank() && !cleanRep.equals("Direct", true)) {
@@ -1772,7 +1812,13 @@ class SarimRepository(
     val creditPlan = SarimLinkEngine.planGoodsCredit(expiredQtyKg + returnedQtyKg, repUnitPrice, repOwed)
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
     if (existing != null) {
-      history.add(0, EditHistoryEntry(now, "Edited REP_RETURN · $cleanRep"))
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("expiredQtyKg", "Expired (kg)", existing.expiredQtyKg.toString(), SarimLinkEngine.round2(expiredQtyKg).toString()),
+          QuadrupleDiff("returnedQtyKg", "Returned (kg)", existing.returnedQtyKg.toString(), SarimLinkEngine.round2(returnedQtyKg).toString()),
+        )
+      )
+      history.add(0, EditHistoryEntry(now, "Edited REP_RETURN · $cleanRep", by = actor, changes = changes))
     }
 
     val entity = SaleTransactionEntity(
@@ -1807,7 +1853,7 @@ class SarimRepository(
       isMoneyOut = false,
       isRepReturn = true,
       transactionType = "REP_RETURN",
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       createdAt = existing?.createdAt ?: now,
       updatedAt = now,
     )
@@ -1858,31 +1904,54 @@ class SarimRepository(
     address: String = "",
     category: String = "",
     notes: String = "",
+    actor: String = "Admin",
   ): PaymentEntityRecord {
     val now = System.currentTimeMillis()
     val existing = editingId?.let { id -> dao.getAllPaymentEntities().firstOrNull { it.id == id } }
+    val cleanName = name.trim()
+    val cleanPhone = phone.trim()
+    val cleanWallet = wallet.trim()
+    val cleanPage = ledgerPage.trim().take(12)
+    val resolvedAddress = address.trim().ifBlank { existing?.address ?: "" }
+    val resolvedCategory = category.trim().ifBlank { existing?.category ?: "" }
+    val resolvedNotes = notes.trim().ifBlank { existing?.notes ?: "" }
     val signedOpening = if (openingType == "CREDIT") openingAmount else -openingAmount
     val prevSigned = existing?.let { if (it.openingType == "CREDIT") it.openingAmount else -it.openingAmount } ?: 0.0
     val delta = signedOpening - prevSigned
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
-    if (existing != null) history.add(0, EditHistoryEntry(now, "Edited entity $name"))
+    if (existing != null) {
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("name", "Name", existing.name, cleanName),
+          QuadrupleDiff("phone", "Phone", existing.phone, cleanPhone),
+          QuadrupleDiff("wallet", "Wallet", existing.wallet, cleanWallet),
+          QuadrupleDiff("ledgerPage", "Ledger Page", existing.ledgerPage, cleanPage),
+          QuadrupleDiff("openingType", "Opening Type", existing.openingType, openingType),
+          QuadrupleDiff("openingAmount", "Opening Balance", existing.openingAmount.toString(), openingAmount.toString()),
+          QuadrupleDiff("address", "Address", existing.address, resolvedAddress),
+          QuadrupleDiff("category", "Category", existing.category, resolvedCategory),
+          QuadrupleDiff("notes", "Notes", existing.notes, resolvedNotes),
+        )
+      )
+      history.add(0, EditHistoryEntry(now, "Edited entity $cleanName", by = actor, changes = changes))
+    }
     val rec = (existing ?: PaymentEntityRecord(
       id = SarimUuid.generateUUID(SarimUuid.PREFIX_ENT, tsMs = now),
-      name = name.trim(),
+      name = cleanName,
       createdAt = now,
     )).copy(
-      name = name.trim(),
-      phone = phone.trim(),
-      wallet = wallet.trim(),
-      ledgerPage = ledgerPage.trim().take(12),
+      name = cleanName,
+      phone = cleanPhone,
+      wallet = cleanWallet,
+      ledgerPage = cleanPage,
       openingType = openingType,
       openingAmount = openingAmount,
       currentBalance = (existing?.currentBalance ?: 0.0) + delta,
       photoUri = photoUri,
-      address = address.trim().ifBlank { existing?.address ?: "" },
-      category = category.trim().ifBlank { existing?.category ?: "" },
-      notes = notes.trim().ifBlank { existing?.notes ?: "" },
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      address = resolvedAddress,
+      category = resolvedCategory,
+      notes = resolvedNotes,
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       type = if (openingType == "DEBIT") "payor" else "payee",
       syncPending = true,
       updatedAt = now,
@@ -2104,6 +2173,7 @@ class SarimRepository(
     addToLedger: Boolean,
     category: String? = null,
     linkedLedgerId: String? = null,
+    actor: String = "Admin",
   ): PaymentTransactionEntity {
     val now = System.currentTimeMillis()
     val cleanName = name.trim()
@@ -2242,7 +2312,20 @@ class SarimRepository(
     enqueueOutboxSet(SarimWebSchema.COL_EXPENSES, expenseRec.id, SarimWebSchema.expenseToMap(expenseRec))
 
     val history = existing?.let { JsonCodecs.decodeEditHistory(it.editHistoryJson) }?.toMutableList() ?: mutableListOf()
-    if (existing != null) history.add(0, EditHistoryEntry(now, "Edited $type · $cleanName"))
+    if (existing != null) {
+      val resolvedCat = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else ""
+      val changes = SarimLinkEngine.buildEditDiffs(
+        listOf(
+          QuadrupleDiff("dateStr", "Date", existing.dateStr, dateStr),
+          QuadrupleDiff("type", "Type", existing.type, type),
+          QuadrupleDiff("entityOrExpenseName", "Party", existing.entityOrExpenseName, cleanName),
+          QuadrupleDiff("amount", "Amount", existing.amount.toString(), amount.toString()),
+          QuadrupleDiff("category", "Category", existing.category ?: "", resolvedCat),
+          QuadrupleDiff("description", "Description", existing.description, description.trim()),
+        )
+      )
+      history.add(0, EditHistoryEntry(now, "Edited $type · $cleanName", by = actor, changes = changes))
+    }
 
     val txEntity = PaymentTransactionEntity(
       id = txId,
@@ -2266,7 +2349,7 @@ class SarimRepository(
       consumedCreditsJson = JsonCodecs.encodeConsumedCredits(consumedCredits),
       category = if (type == "EXPENSE") (category?.takeIf { it.isNotBlank() } ?: cleanName) else null,
       supplierCreditAmount = supplierCreditAmt,
-      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(25)),
+      editHistoryJson = JsonCodecs.encodeEditHistory(history.take(100)),
       createdAt = existing?.createdAt ?: now,
       updatedAt = now,
     )
@@ -3483,41 +3566,239 @@ class SarimRepository(
     return plan.updatedSales.size
   }
 
-  suspend fun applyAuditFix(recordType: String, recordId: String, valNum: Double): Boolean {
+  suspend fun deleteCustomerEditHistoryEntry(customerId: String, index: Int): Boolean {
     val now = System.currentTimeMillis()
+    val existing = dao.getAllCustomers().firstOrNull { it.id == customerId && !it.isDeleted } ?: return false
+    val history = JsonCodecs.decodeEditHistory(existing.editHistoryJson).toMutableList()
+    if (index !in history.indices) return false
+    history.removeAt(index)
+    val updated = existing.copy(
+      editHistoryJson = JsonCodecs.encodeEditHistory(history),
+      syncPending = true,
+      updatedAt = now,
+    )
+    dao.upsertCustomer(updated)
+    val col = if (updated.isRepCustomer) SarimWebSchema.COL_CLIENTS else SarimWebSchema.COL_CUSTOMERS
+    enqueueOutboxSet(col, updated.id, SarimWebSchema.customerToMap(updated))
+    return true
+  }
+
+  suspend fun deletePaymentEntityEditHistoryEntry(entityId: String, index: Int): Boolean {
+    val now = System.currentTimeMillis()
+    val existing = dao.getAllPaymentEntities().firstOrNull { it.id == entityId && !it.isDeleted } ?: return false
+    val history = JsonCodecs.decodeEditHistory(existing.editHistoryJson).toMutableList()
+    if (index !in history.indices) return false
+    history.removeAt(index)
+    val updated = existing.copy(
+      editHistoryJson = JsonCodecs.encodeEditHistory(history),
+      syncPending = true,
+      updatedAt = now,
+    )
+    dao.upsertPaymentEntity(updated)
+    enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updated.id, SarimWebSchema.entityToMap(updated))
+    return true
+  }
+
+  suspend fun patchSaleGpsAndConfirmCustomer(saleId: String, lat: Double, lng: Double): String? {
+    val now = System.currentTimeMillis()
+    val sale = dao.getAllSales().firstOrNull { it.id == saleId && !it.isDeleted } ?: return null
+    val patchedSale = if (sale.latitude == null || sale.longitude == null) {
+      val s = sale.copy(latitude = lat, longitude = lng, syncPending = true, updatedAt = now)
+      dao.upsertSale(s)
+      val saleCol = if (s.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+      enqueueOutboxSet(saleCol, s.id, SarimWebSchema.saleToMap(s))
+      s
+    } else sale
+
+    if (!patchedSale.isRepSale) return null
+    val allCusts = dao.getAllCustomers().filter { !it.isDeleted }
+    val customer = allCusts.firstOrNull {
+      (patchedSale.customerId.isNotBlank() && it.id == patchedSale.customerId) ||
+        (it.isRepCustomer && it.name.equals(patchedSale.customerName, ignoreCase = true))
+    } ?: return null
+
+    val cluster = SarimLinkEngine.evaluateAutoLocationCluster(
+      customer = customer,
+      allSales = dao.getAllSales(),
+      currentLat = lat,
+      currentLng = lng,
+      now = now,
+    ) ?: return null
+
+    val gpsAddress = String.format(java.util.Locale.US, "GPS: %.6f, %.6f", cluster.first, cluster.second)
+    val updatedCust = customer.copy(
+      address = gpsAddress,
+      locationConfirmed = true,
+      syncPending = true,
+      updatedAt = now,
+    )
+    dao.upsertCustomer(updatedCust)
+    enqueueOutboxSet(SarimWebSchema.COL_CLIENTS, updatedCust.id, SarimWebSchema.customerToMap(updatedCust))
+    return "Location confirmed for ${updatedCust.name} after 3 consistent visits."
+  }
+
+  suspend fun applyAuditFix(recordType: String, recordId: String, valNum: Double): Boolean =
+    applyAuditFix(recordType = recordType, recordId = recordId, fieldKey = "", newValue = valNum.toString())
+
+  suspend fun applyAuditFix(
+    recordType: String,
+    recordId: String,
+    fieldKey: String,
+    newValue: String,
+  ): Boolean {
+    val now = System.currentTimeMillis()
+    val numVal = SarimFormat.parseSafeDouble(newValue)
     return when (recordType) {
       "LINK_REPAIR" -> repairSaleLinks() > 0
       "SALE" -> {
         val sale = dao.getAllSales().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
-        val newTotal = SarimLinkEngine.round2(sale.quantityKg * valNum)
-        val newProfit = SarimLinkEngine.round2(newTotal - sale.totalCost)
-        val updated = sale.copy(
-          pricePerKg = valNum,
-          totalValue = newTotal,
-          profit = newProfit,
-          syncPending = true,
-          updatedAt = now,
-        )
+        val col = if (sale.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
+        if (fieldKey == "newId") {
+          val newId = SarimUuid.generateUUID(SarimUuid.PREFIX_SALE, tsMs = now)
+          val cloned = sale.copy(id = newId, syncPending = true, updatedAt = now)
+          dao.upsertSale(cloned)
+          enqueueOutboxSet(col, cloned.id, SarimWebSchema.saleToMap(cloned))
+          dao.softDeleteSale(sale.id, now)
+          enqueueOutboxDelete(
+            collection = col,
+            docId = sale.id,
+            title = "Replaced Duplicate ID: ${sale.customerName}",
+            subtitle = sale.id,
+            amountText = "Rs ${sale.totalValue}",
+            snapshotMap = SarimWebSchema.saleToMap(sale),
+          )
+          return true
+        }
+        val updated = when (fieldKey) {
+          "dateEpoch" -> {
+            val epoch = newValue.toLongOrNull() ?: return false
+            val ds = SarimFormat.dateInput(epoch)
+            sale.copy(dateEpoch = epoch, dateStr = ds, supplyDate = ds, syncPending = true, updatedAt = now)
+          }
+          "creditReceived" -> {
+            val flag = newValue.equals("true", ignoreCase = true) || newValue == "1"
+            sale.copy(creditReceived = flag, syncPending = true, updatedAt = now)
+          }
+          "quantityKg" -> {
+            val q = numVal ?: return false
+            val newTotal = SarimLinkEngine.round2(q * sale.pricePerKg)
+            val newCost = SarimLinkEngine.round2(if (sale.quantityKg > 0.0001) (sale.totalCost / sale.quantityKg) * q else sale.totalCost)
+            sale.copy(
+              quantityKg = q,
+              totalValue = newTotal,
+              totalCost = newCost,
+              profit = SarimLinkEngine.round2(newTotal - newCost),
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+          "totalValue" -> {
+            val v = numVal ?: return false
+            val p = if (sale.quantityKg > 0.0001) SarimLinkEngine.round2(v / sale.quantityKg) else sale.pricePerKg
+            sale.copy(
+              totalValue = v,
+              pricePerKg = p,
+              profit = SarimLinkEngine.round2(v - sale.totalCost),
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+          "totalCost" -> {
+            val c = numVal ?: return false
+            sale.copy(
+              totalCost = c,
+              profit = SarimLinkEngine.round2(sale.totalValue - c),
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+          "profit" -> {
+            val p = numVal ?: return false
+            sale.copy(profit = p, syncPending = true, updatedAt = now)
+          }
+          else -> {
+            val price = numVal ?: return false
+            val newTotal = SarimLinkEngine.round2(sale.quantityKg * price)
+            sale.copy(
+              pricePerKg = price,
+              totalValue = newTotal,
+              profit = SarimLinkEngine.round2(newTotal - sale.totalCost),
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+        }
         dao.upsertSale(updated)
-        val col = if (updated.isRepSale) SarimWebSchema.COL_REP else SarimWebSchema.COL_SALES
         enqueueOutboxSet(col, updated.id, SarimWebSchema.saleToMap(updated))
         true
       }
       "PRODUCTION" -> {
         val prod = dao.getAllProductionEntries().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
-        val net = (valNum - prod.containerWeightKg).coerceAtLeast(0.0)
-        val costPerKg = if (net > 0.0001) prod.totalFormulaCost / net else 0.0
-        val totalVal = net * prod.salePricePerKg
-        val updated = prod.copy(
-          grossWeightKg = valNum,
-          netWeightKg = net,
-          costPerKg = costPerKg,
-          profitPerKg = prod.salePricePerKg - costPerKg,
-          totalValue = totalVal,
-          totalProfit = totalVal - prod.totalFormulaCost,
-          syncPending = true,
-          updatedAt = now,
-        )
+        if (fieldKey == "newId") {
+          val newId = SarimUuid.generateUUID(SarimUuid.PREFIX_PROD, tsMs = now)
+          val cloned = prod.copy(id = newId, syncPending = true, updatedAt = now)
+          dao.upsertProductionEntry(cloned)
+          enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, cloned.id, SarimWebSchema.productionToMap(cloned))
+          dao.softDeleteProductionEntry(prod.id, now)
+          enqueueOutboxDelete(
+            collection = SarimWebSchema.COL_PRODUCTION,
+            docId = prod.id,
+            title = "Replaced Duplicate ID: ${prod.storeName}",
+            subtitle = prod.id,
+            amountText = "${prod.netWeightKg} kg",
+            snapshotMap = SarimWebSchema.productionToMap(prod),
+          )
+          return true
+        }
+        val updated = when (fieldKey) {
+          "dateEpoch" -> {
+            val epoch = newValue.toLongOrNull() ?: return false
+            val ds = SarimFormat.dateInput(epoch)
+            prod.copy(dateEpoch = epoch, dateStr = ds, syncPending = true, updatedAt = now)
+          }
+          "totalProfit" -> {
+            val p = numVal ?: return false
+            val perKg = if (prod.netWeightKg > 0.0001) p / prod.netWeightKg else prod.profitPerKg
+            prod.copy(totalProfit = p, profitPerKg = perKg, syncPending = true, updatedAt = now)
+          }
+          "formulaId" -> {
+            val formula = dao.getAllFormulas().firstOrNull { it.id == newValue && !it.isDeleted } ?: return false
+            val allMats = dao.getAllRawMaterials().filter { !it.isDeleted }.associateBy { it.id }
+            val allFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
+            val unitCost = FormulaCalculator.computeFormulaSummary(formula, allFormulas, allMats).totalCostPerUnit
+            val unitsUsed = prod.formulaUnitsUsed.takeIf { it > 0.0 } ?: 1.0
+            val totalFormulaCost = unitsUsed * unitCost
+            val costPerKg = if (prod.netWeightKg > 0.0001) totalFormulaCost / prod.netWeightKg else 0.0
+            prod.copy(
+              formulaId = formula.id,
+              formulaName = formula.name,
+              formulaUnitsUsed = unitsUsed,
+              formulaUnitCost = unitCost,
+              totalFormulaCost = totalFormulaCost,
+              costPerKg = costPerKg,
+              profitPerKg = prod.salePricePerKg - costPerKg,
+              totalProfit = prod.totalValue - totalFormulaCost,
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+          else -> {
+            val gross = numVal ?: return false
+            val net = (gross - prod.containerWeightKg).coerceAtLeast(0.0)
+            val costPerKg = if (net > 0.0001) prod.totalFormulaCost / net else 0.0
+            val totalVal = net * prod.salePricePerKg
+            prod.copy(
+              grossWeightKg = gross,
+              netWeightKg = net,
+              costPerKg = costPerKg,
+              profitPerKg = prod.salePricePerKg - costPerKg,
+              totalValue = totalVal,
+              totalProfit = totalVal - prod.totalFormulaCost,
+              syncPending = true,
+              updatedAt = now,
+            )
+          }
+        }
         dao.upsertProductionEntry(updated)
         enqueueOutboxSet(SarimWebSchema.COL_PRODUCTION, updated.id, SarimWebSchema.productionToMap(updated))
         if (!updated.isReturn) {
@@ -3527,45 +3808,152 @@ class SarimRepository(
       }
       "MATERIAL" -> {
         val mat = dao.getAllRawMaterials().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
-        val updated = mat.copy(stockKg = valNum, syncPending = true, updatedAt = now)
+        val valN = numVal ?: return false
+        val updated = if (fieldKey == "avgCostPerKg") {
+          mat.copy(avgCostPerKg = valN, syncPending = true, updatedAt = now)
+        } else {
+          mat.copy(stockKg = valN, syncPending = true, updatedAt = now)
+        }
         dao.upsertRawMaterial(updated)
         enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updated.id, SarimWebSchema.materialToMap(updated))
         true
       }
       "PAYMENT" -> {
         val tx = dao.getAllPaymentTransactions().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
-        savePaymentTransaction(
-          editingId = tx.id,
-          dateEpoch = tx.dateEpoch,
-          type = tx.type,
-          name = tx.entityOrExpenseName,
-          amount = valNum,
-          description = tx.description,
-          photoUri = tx.photoUri,
-          addToLedger = tx.addToLedger,
-          category = tx.category,
-        )
+        if (fieldKey == "newId") {
+          val newId = SarimUuid.generateUUID(SarimUuid.PREFIX_PAY, tsMs = now)
+          val cloned = tx.copy(id = newId, syncPending = true, updatedAt = now)
+          dao.upsertPaymentTransaction(cloned)
+          enqueueOutboxSet(SarimWebSchema.COL_TRANSACTIONS, cloned.id, SarimWebSchema.transactionToMap(cloned))
+          dao.softDeletePaymentTransaction(tx.id, now)
+          enqueueOutboxDelete(
+            collection = SarimWebSchema.COL_TRANSACTIONS,
+            docId = tx.id,
+            title = "Replaced Duplicate ID: ${tx.entityOrExpenseName}",
+            subtitle = tx.id,
+            amountText = "Rs ${tx.amount}",
+            snapshotMap = SarimWebSchema.transactionToMap(tx),
+          )
+          return true
+        }
+        when (fieldKey) {
+          "dateEpoch" -> {
+            val epoch = newValue.toLongOrNull() ?: return false
+            savePaymentTransaction(
+              editingId = tx.id,
+              dateEpoch = epoch,
+              type = tx.type,
+              name = tx.entityOrExpenseName,
+              amount = tx.amount,
+              description = tx.description,
+              photoUri = tx.photoUri,
+              addToLedger = tx.addToLedger,
+              category = tx.category,
+            )
+          }
+          "type" -> {
+            val nextType = newValue.trim().uppercase()
+            if (nextType !in setOf("EXPENSE", "PAYMENT_IN", "PAYMENT_OUT")) return false
+            savePaymentTransaction(
+              editingId = tx.id,
+              dateEpoch = tx.dateEpoch,
+              type = nextType,
+              name = tx.entityOrExpenseName,
+              amount = tx.amount,
+              description = tx.description,
+              photoUri = tx.photoUri,
+              addToLedger = tx.addToLedger,
+              category = tx.category,
+            )
+          }
+          "entityId" -> {
+            val ent = dao.getAllPaymentEntities().firstOrNull { it.id == newValue && !it.isDeleted } ?: return false
+            savePaymentTransaction(
+              editingId = tx.id,
+              dateEpoch = tx.dateEpoch,
+              type = tx.type,
+              name = ent.name,
+              amount = tx.amount,
+              description = tx.description,
+              photoUri = tx.photoUri,
+              addToLedger = tx.addToLedger,
+              category = tx.category,
+            )
+          }
+          else -> {
+            val amt = numVal ?: return false
+            savePaymentTransaction(
+              editingId = tx.id,
+              dateEpoch = tx.dateEpoch,
+              type = tx.type,
+              name = tx.entityOrExpenseName,
+              amount = amt,
+              description = tx.description,
+              photoUri = tx.photoUri,
+              addToLedger = tx.addToLedger,
+              category = tx.category,
+            )
+          }
+        }
         true
       }
       "EXPENSE" -> {
         val exp = dao.getAllExpenses().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
         val linkedTx = dao.getAllPaymentTransactions().firstOrNull { !it.isDeleted && it.expenseId == exp.id }
+        val amt = numVal ?: return false
         if (linkedTx != null) {
           savePaymentTransaction(
             editingId = linkedTx.id,
             dateEpoch = linkedTx.dateEpoch,
             type = linkedTx.type,
             name = linkedTx.entityOrExpenseName,
-            amount = valNum,
+            amount = amt,
             description = linkedTx.description,
             photoUri = linkedTx.photoUri,
             addToLedger = linkedTx.addToLedger,
             category = linkedTx.category,
           )
         } else {
-          val updated = exp.copy(amount = valNum, syncPending = true, updatedAt = now)
+          val updated = exp.copy(amount = amt, syncPending = true, updatedAt = now)
           dao.upsertExpense(updated)
           enqueueOutboxSet(SarimWebSchema.COL_EXPENSES, updated.id, SarimWebSchema.expenseToMap(updated))
+        }
+        true
+      }
+      else -> false
+    }
+  }
+
+  suspend fun deleteAuditRecord(recordType: String, recordId: String): Boolean {
+    return when (recordType) {
+      "SALE" -> {
+        deleteSale(recordId)
+        true
+      }
+      "PRODUCTION" -> {
+        deleteProductionEntry(recordId)
+        true
+      }
+      "PAYMENT" -> {
+        deletePaymentTransaction(recordId)
+        true
+      }
+      "EXPENSE" -> {
+        val linkedTx = dao.getAllPaymentTransactions().firstOrNull { !it.isDeleted && it.expenseId == recordId }
+        if (linkedTx != null) {
+          deletePaymentTransaction(linkedTx.id)
+        } else {
+          val now = System.currentTimeMillis()
+          val exp = dao.getAllExpenses().firstOrNull { it.id == recordId && !it.isDeleted } ?: return false
+          dao.softDeleteExpense(exp.id, now)
+          enqueueOutboxDelete(
+            collection = SarimWebSchema.COL_EXPENSES,
+            docId = exp.id,
+            title = exp.name,
+            subtitle = "Expense",
+            amountText = "Rs ${exp.amount}",
+            snapshotMap = SarimWebSchema.expenseToMap(exp),
+          )
         }
         true
       }

@@ -61,6 +61,15 @@ fun ProductionTab(
   var attachedPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
   var editingEntryId by remember { mutableStateOf<String?>(null) }
   var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      selectedDate = SarimLinkEngine.rolloverDateIfUnedited(selectedDate, prevDayRef, newDay, editingEntryId != null)
+      prevDayRef = newDay
+    }
+  }
 
   var combinedPeriod by remember { mutableStateOf(TimePeriod.DAILY) }
   var compareMetric by remember { mutableStateOf(CompareMetric.WEIGHT) }
@@ -345,6 +354,7 @@ viewModel.launchSafely(
                   unitsUsed = unitsNum,
                   unitCost = unitCost,
                   photoUris = attachedPhotos,
+                  actor = state.signedInDisplayName.ifBlank { "Admin" },
                 )
               }
 }

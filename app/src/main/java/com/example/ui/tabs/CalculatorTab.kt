@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
 import com.example.util.DialogTone
 import com.example.util.SarimFormat
+import com.example.viewmodel.CalcIndMetric
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
@@ -93,8 +95,23 @@ fun CalculatorTab(
   var showExpensesBreakdown by remember { mutableStateOf(false) }
   var showCommissionBreakdown by remember { mutableStateOf(false) }
   var overviewPeriod by remember { mutableStateOf(TimePeriod.ALL_TIME) }
+  var indChartPeriod by remember { mutableStateOf(TimePeriod.WEEKLY) }
+  var indChartMetric by remember { mutableStateOf(CalcIndMetric.NET_PROFIT) }
+  var calcHistSearch by remember { mutableStateOf("") }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
   var editingSettlementId by remember { mutableStateOf<String?>(null) }
   var sheetSettlement by remember { mutableStateOf<CalculatorSettlementEntity?>(null) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      toDate = SarimLinkEngine.rolloverDateIfUnedited(toDate, prevDayRef, newDay, editingSettlementId != null)
+      if (!manualFromOverride && editingSettlementId == null) {
+        fromDate = SarimLinkEngine.rolloverDateIfUnedited(fromDate, prevDayRef, newDay, false)
+      }
+      prevDayRef = newDay
+    }
+  }
 
   val isComparison = selectedRepOption == "COMPARISON"
   val otherReps = remember(reps, selectedRepOption) {
@@ -632,6 +649,50 @@ fun CalculatorTab(
         }
       }
 
+      if (!hideMoney) {
+        item {
+          val (indLabels, indValues) = remember(repSettlements, indChartPeriod, indChartMetric, state.currentLocalDayEpoch) {
+            SarimMetricsEngine.computeCalcIndChartData(
+              repSettlements = repSettlements,
+              period = indChartPeriod,
+              metric = indChartMetric,
+              referenceDateEpoch = System.currentTimeMillis(),
+            )
+          }
+          SarimCard {
+            Text("Performance Chart ($selectedRepOption)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            SarimToggleGroup(
+              options = listOf(TimePeriod.WEEKLY, TimePeriod.MONTHLY, TimePeriod.YEARLY, TimePeriod.ALL_TIME),
+              selected = indChartPeriod,
+              labelOf = { it.label },
+              onSelect = { indChartPeriod = it },
+              testTagPrefix = "calc_ind_period",
+            )
+            SarimPopoverSelector(
+              label = "Chart Metric",
+              selectedText = indChartMetric.label,
+              options = CalcIndMetric.entries.map { it.label },
+              onSelect = { idx, _ -> indChartMetric = CalcIndMetric.entries[idx] },
+              testTag = "calc_ind_metric_btn",
+            )
+            if (indLabels.isEmpty() || indValues.all { it <= 0.0 }) {
+              SarimEmptyState("No chart activity", "No recorded settlements match this period yet.")
+            } else {
+              val barColor = when (indChartMetric) {
+                CalcIndMetric.NET_PROFIT -> palette.green
+                CalcIndMetric.GROSS_REV -> palette.cyan
+                CalcIndMetric.QTY_SOLD -> palette.purple
+              }
+              ColumnBarChart(
+                labels = indLabels,
+                values = indValues,
+                colors = indLabels.map { barColor },
+              )
+            }
+          }
+        }
+      }
+
       item {
         val totalIssued = repSettlements.sumOf { it.creditIssuedValue }
         val totalRec = repSettlements.sumOf { it.recoveredCredit }
@@ -646,7 +707,26 @@ fun CalculatorTab(
       item {
         Text("Calculator History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Spacer(Modifier.height(6.dp))
-        val records = repSettlements.map { s ->
+        SarimTextField(
+          value = calcHistSearch,
+          onValueChange = { calcHistSearch = it },
+          label = "",
+          placeholder = "Search date, status, or item...",
+          leadingIcon = Icons.Rounded.Search,
+          testTag = "calc_history_search",
+        )
+        Spacer(Modifier.height(8.dp))
+        val q = calcHistSearch.trim()
+        val filteredSettlements = if (q.isBlank()) repSettlements else repSettlements.filter { s ->
+          s.repName.contains(q, ignoreCase = true) ||
+            s.status.contains(q, ignoreCase = true) ||
+            SarimFormat.dateInput(s.dateEpoch).contains(q, ignoreCase = true) ||
+            SarimFormat.formatDate(s.dateEpoch).contains(q, ignoreCase = true) ||
+            (s.returnRep?.contains(q, ignoreCase = true) == true) ||
+            s.expenseItemsJson.contains(q, ignoreCase = true) ||
+            s.commissionItemsJson.contains(q, ignoreCase = true)
+        }
+        val records = filteredSettlements.map { s ->
           val sc = when (s.status) {
             "OK" -> palette.green
             "SHORT" -> palette.red

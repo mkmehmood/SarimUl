@@ -20,6 +20,7 @@ import com.example.util.AppDialogRequest
 import com.example.util.DialogCheckbox
 import com.example.util.DialogTone
 import com.example.util.FeedbackManager
+import com.example.util.LocationHelper
 import com.example.util.SarimFormat
 import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.CancellationException
@@ -77,6 +78,8 @@ data class SarimUiState(
   val recycleBinItems: List<RecycleBinRecord> = emptyList(),
   val dbStructure: List<CollectionStats> = emptyList(),
   val dbStructureSnapshot: DatabaseStructureSnapshot? = null,
+  val returnLogs: List<ReturnLogEntity> = emptyList(),
+  val currentLocalDayEpoch: Long = SarimFormat.startOfDay(System.currentTimeMillis()),
   val activeDialog: AppDialogRequest? = null,
   val photoViewerUris: List<String> = emptyList(),
   val photoViewerIndex: Int = 0,
@@ -431,9 +434,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       repository.accounts,
       prefsManager.prefsFlow,
       _uiState.map { it.overviewRange }.distinctUntilChanged(),
-      repository.categoryAndRepKv,
-    ) { approvals, accounts, prefs, range, catKvs ->
-      Tuple5(approvals, accounts, prefs, range, catKvs)
+      combine(repository.categoryAndRepKv, repository.returns) { catKvs, rets -> catKvs to rets },
+    ) { approvals, accounts, prefs, range, catAndReturns ->
+      Tuple5(approvals, accounts, prefs, range, catAndReturns)
     }
 
     viewModelScope.launch {
@@ -441,7 +444,8 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = g4.c
         feedbackManager.updateSettings(prefs.hapticIntensity, prefs.soundIntensity)
         val storedReps = runCatching { repository.getSalesReps() }.getOrDefault(emptyList())
-        val kvMap = g4.e.associateBy { it.userKey }
+        val kvMap = g4.e.first.associateBy { it.userKey }
+        val returnLogs = g4.e.second
         val opCats = (DEFAULT_OPERATING_CATEGORIES + JsonCodecs.decodeStrings(kvMap["categories"]?.value ?: "[]"))
           .map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
         val fieldCats = (DEFAULT_FIELD_EXPENSE_CATEGORIES + JsonCodecs.decodeStrings(kvMap["field_expense_categories"]?.value ?: "[]"))
@@ -499,6 +503,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           recycleBinItems = bin,
           dbStructure = struct,
           dbStructureSnapshot = structSnap,
+          returnLogs = returnLogs,
           lastUpdatedMillis = System.currentTimeMillis(),
         )
       }
@@ -538,6 +543,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
               recycleBinItems = bundle.recycleBinItems,
               dbStructure = bundle.dbStructure,
               dbStructureSnapshot = bundle.dbStructureSnapshot,
+              returnLogs = bundle.returnLogs,
               lastUpdatedMillis = bundle.lastUpdatedMillis,
             )
           }
@@ -1779,20 +1785,90 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun checkDateRollover() {
+    val today = SarimFormat.startOfDay(System.currentTimeMillis())
+    if (_uiState.value.currentLocalDayEpoch != today) {
+      _uiState.update { it.copy(currentLocalDayEpoch = today) }
+    }
+  }
+
+  fun attachGpsAndConfirmCustomerAsync(saleId: String) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val loc = LocationHelper.getCurrentLocationOrNull(getApplication()) ?: return@launch
+      val msg = runCatching {
+        repository.patchSaleGpsAndConfirmCustomer(saleId, loc.first, loc.second)
+      }.getOrNull()
+      if (!msg.isNullOrBlank()) {
+        postStatus(msg)
+      }
+    }
+  }
+
+  fun deleteCustomerEditHistoryEntry(customerId: String, index: Int) {
+    launchSafely(errorTitle = "Delete History Entry Failed", successMessage = "Edit history entry removed") {
+      repository.deleteCustomerEditHistoryEntry(customerId, index)
+    }
+  }
+
+  fun deletePaymentEntityEditHistoryEntry(entityId: String, index: Int) {
+    launchSafely(errorTitle = "Delete History Entry Failed", successMessage = "Edit history entry removed") {
+      repository.deletePaymentEntityEditHistoryEntry(entityId, index)
+    }
+  }
+
   fun applyAuditFix(finding: AuditFinding, newValueRaw: String) {
-    if (finding.recordType == "LINK_REPAIR") {
+    if (finding.recordType == "LINK_REPAIR" || finding.fixKind == AuditFixKind.LINK_REPAIR) {
       launchSafely(errorTitle = "Link Repair Failed", successMessage = "Repaired sale & collection links") {
-        repository.applyAuditFix("LINK_REPAIR", finding.recordId, 0.0)
+        repository.applyAuditFix("LINK_REPAIR", finding.recordId, finding.fieldKey, "")
       }
       return
     }
-    val valNum = SarimFormat.parseSafeDouble(newValueRaw)
-    if (valNum == null || valNum < 0.0) {
-      showDialog(AppDialogRequest("Invalid Value", "Enter a valid non-negative number.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+    when (finding.fixKind) {
+      AuditFixKind.NUMBER -> {
+        val valNum = SarimFormat.parseSafeDouble(newValueRaw)
+        if (valNum == null || valNum < 0.0) {
+          showDialog(AppDialogRequest("Invalid Value", "Enter a valid non-negative number.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+          return
+        }
+        launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record successfully") {
+          repository.applyAuditFix(finding.recordType, finding.recordId, finding.fieldKey, valNum.toString())
+        }
+      }
+      AuditFixKind.DATE -> {
+        val epoch = newValueRaw.toLongOrNull()
+        if (epoch == null || epoch <= 0L) {
+          showDialog(AppDialogRequest("Invalid Date", "Select a valid date.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+          return
+        }
+        launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record date") {
+          repository.applyAuditFix(finding.recordType, finding.recordId, finding.fieldKey.ifBlank { "dateEpoch" }, epoch.toString())
+        }
+      }
+      AuditFixKind.BOOLEAN,
+      AuditFixKind.SELECT_FORMULA,
+      AuditFixKind.SELECT_ENTITY,
+      AuditFixKind.SELECT_PAY_TYPE,
+      AuditFixKind.NEW_ID -> {
+        if (newValueRaw.isBlank() && finding.fixKind != AuditFixKind.NEW_ID) {
+          showDialog(AppDialogRequest("Selection Required", "Please select a valid value to apply this fix.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+          return
+        }
+        launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record successfully") {
+          repository.applyAuditFix(finding.recordType, finding.recordId, finding.fieldKey, newValueRaw)
+        }
+      }
+      AuditFixKind.DELETE_ONLY -> deleteAuditFindingRecord(finding)
+      AuditFixKind.LINK_REPAIR -> Unit
+    }
+  }
+
+  fun deleteAuditFindingRecord(finding: AuditFinding) {
+    if (!finding.deletable) {
+      postStatus("This record cannot be deleted directly from audit")
       return
     }
-    launchSafely(errorTitle = "Audit Fix Failed", successMessage = "Updated record successfully") {
-      repository.applyAuditFix(finding.recordType, finding.recordId, valNum)
+    launchSafely(errorTitle = "Delete Record Failed", successMessage = "Record moved to Recycle Bin") {
+      repository.deleteAuditRecord(finding.recordType, finding.recordId)
     }
   }
 }
@@ -1826,6 +1902,7 @@ private data class ObservedDataBundle(
   val recycleBinItems: List<RecycleBinRecord>,
   val dbStructure: List<CollectionStats>,
   val dbStructureSnapshot: DatabaseStructureSnapshot?,
+  val returnLogs: List<ReturnLogEntity>,
   val lastUpdatedMillis: Long,
 )
 

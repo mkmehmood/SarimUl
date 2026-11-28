@@ -687,18 +687,12 @@ fun CustomerEditScreen(
     }
 
     if (existing != null) {
-      val hist = remember(existing) { JsonCodecs.decodeEditHistory(existing.editHistoryJson) }
-      if (hist.isNotEmpty()) {
-        SarimCard {
-          SarimFieldLabel("Edit history")
-          hist.forEach { h ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text(h.summary, color = palette.textPrimary, fontSize = 12.sp)
-              Text(SarimFormat.formatDate(h.timestamp), color = palette.textMuted, fontSize = 11.sp)
-            }
-          }
-        }
-      }
+      val hist = remember(existing.editHistoryJson) { JsonCodecs.decodeEditHistory(existing.editHistoryJson) }
+      com.example.ui.components.EditHistoryCard(
+        entries = hist,
+        createdAt = existing.createdAt,
+        onDeleteEntry = { idx -> viewModel.deleteCustomerEditHistoryEntry(existing.id, idx) },
+      )
     }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -782,29 +776,30 @@ fun CustomerEditScreen(
             return@SarimPrimaryButton
           }
           viewModel.confirmSave(
-"Customer",
-listOf("Name" to clean, "Phone" to phone, "Address" to address, "Old Debit" to oldDebitText, "Custom Price" to customPriceText, "Ledger Page" to ledgerPage),
-isUpdate = existing != null,
-) {
-viewModel.launchSafely(
-            errorTitle = "Save Customer Failed",
-            successMessage = "Saved customer $clean",
-            onSuccess = { viewModel.closeStandalone() },
+            "Customer",
+            listOf("Name" to clean, "Phone" to phone, "Address" to address, "Old Debit" to oldDebitText, "Custom Price" to customPriceText, "Ledger Page" to ledgerPage),
+            isUpdate = existing != null,
           ) {
-            viewModel.repository.saveCustomer(
-              editingId = existing?.id,
-              name = clean,
-              phone = phone,
-              address = address,
-              oldDebit = oldD,
-              customSalePrice = if (isRep) null else customP,
-              ledgerPage = ledgerPage,
-              photoUri = photoUris.firstOrNull().orEmpty(),
-              isRepCustomer = existing?.isRepCustomer ?: isRep,
-              repName = existing?.repName ?: if (isRep) state.signedInDisplayName else "",
-            )
+            viewModel.launchSafely(
+              errorTitle = "Save Customer Failed",
+              successMessage = "Saved customer $clean",
+              onSuccess = { viewModel.closeStandalone() },
+            ) {
+              viewModel.repository.saveCustomer(
+                editingId = existing?.id,
+                name = clean,
+                phone = phone,
+                address = address,
+                oldDebit = oldD,
+                customSalePrice = if (isRep) null else customP,
+                ledgerPage = ledgerPage,
+                photoUri = photoUris.firstOrNull().orEmpty(),
+                isRepCustomer = existing?.isRepCustomer ?: isRep,
+                repName = existing?.repName ?: if (isRep) state.signedInDisplayName else "",
+                actor = state.signedInDisplayName.ifBlank { "Admin" },
+              )
+            }
           }
-}
         },
       )
     }

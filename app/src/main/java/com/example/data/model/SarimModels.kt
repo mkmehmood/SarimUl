@@ -103,10 +103,31 @@ data class LineItemBreakdown(
   val amount: Double = 0.0,
 )
 
+data class EditHistoryChange(
+  val fieldKey: String = "",
+  val label: String = "",
+  val from: String = "",
+  val to: String = "",
+)
+
 data class EditHistoryEntry(
   val timestamp: Long = System.currentTimeMillis(),
   val summary: String = "",
+  val by: String = "",
+  val changes: List<EditHistoryChange> = emptyList(),
 )
+
+enum class AuditFixKind {
+  NUMBER,
+  DATE,
+  BOOLEAN,
+  SELECT_FORMULA,
+  SELECT_ENTITY,
+  SELECT_PAY_TYPE,
+  LINK_REPAIR,
+  NEW_ID,
+  DELETE_ONLY,
+}
 
 data class AuditFinding(
   val id: String,
@@ -119,6 +140,9 @@ data class AuditFinding(
   val note: String,
   val suggestedFieldLabel: String,
   val currentFieldValue: String,
+  val fixKind: AuditFixKind = AuditFixKind.NUMBER,
+  val fieldKey: String = "",
+  val deletable: Boolean = false,
 )
 
 data class ChartSeries(

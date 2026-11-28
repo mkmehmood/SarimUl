@@ -13,8 +13,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -75,6 +77,15 @@ fun PaymentsTab(
   var unifiedPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
   var editingTxId by remember { mutableStateOf<String?>(null) }
   var sheetPayment by remember { mutableStateOf<PaymentTransactionEntity?>(null) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, editingTxId != null)
+      prevDayRef = newDay
+    }
+  }
 
   val editingOriginal = editingTxId?.let { id -> state.paymentTransactions.firstOrNull { it.id == id } }
   val suggestions = remember(txType, state.operatingCategories, state.paymentEntities, state.paymentTransactions) {
@@ -152,10 +163,11 @@ fun PaymentsTab(
           onError = { msg -> viewModel.showDialog(AppDialogRequest("Photo Error", msg, tone = DialogTone.ERROR, cancelLabel = null)) },
         )
 
-        SarimFieldLabel("Transaction Type")
+        SarimFieldLabel(if (editingTxId != null) "Transaction Type (Locked while editing)" else "Transaction Type")
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
           PayTxType.entries.forEach { t ->
             val sel = t == txType
+            val lockedOut = editingOriginal != null && editingOriginal.type != t.code
             val c = when (t) {
               PayTxType.EXPENSE -> palette.red
               PayTxType.PAYMENT_IN -> palette.green
@@ -165,7 +177,11 @@ fun PaymentsTab(
               shape = RoundedCornerShape(16.dp),
               color = if (sel) c.copy(alpha = 0.16f) else palette.surfaceElevated,
               border = BorderStroke(1.dp, if (sel) c else palette.border),
-              modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { txType = t },
+              modifier = Modifier
+                .fillMaxWidth()
+                .alpha(if (lockedOut) 0.45f else 1f)
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(enabled = !lockedOut) { txType = t },
             ) {
               Text(t.label, color = if (sel) c else palette.textMuted, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
             }
@@ -249,6 +265,7 @@ fun PaymentsTab(
                   description = descriptionText,
                   photoUri = photoUris.firstOrNull() ?: "",
                   addToLedger = addToLedger,
+                  actor = state.signedInDisplayName.ifBlank { "Admin" },
                 )
               }
             }
@@ -332,10 +349,45 @@ fun PaymentsTab(
             Text("Unified Records", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             IconButton(
               onClick = {
-                val lines = state.paymentEntities.map { "${it.name} | Balance: ${SarimFormat.formatRs(it.currentBalance)}" }
-                PdfExporter.sharePdfReport(context, "payment_records", "Unified Payment Records", "${lines.size} entities", lines)
-                  .onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") }
+                val nowLabel = SarimFormat.formatDate(System.currentTimeMillis())
+                val q = unifiedSearch.trim()
+                val pdfRes = if (unifiedMode == UnifiedViewMode.ENTITIES) {
+                  val exportEntities = state.paymentEntities.filter {
+                    q.isBlank() || it.name.contains(q, ignoreCase = true)
+                  }
+                  PdfExporter.createUnifiedEntitiesPdf(
+                    context = context,
+                    periodLabel = unifiedPeriod.label,
+                    generatedLabel = nowLabel,
+                    entities = exportEntities,
+                    materials = state.rawMaterials,
+                    transactions = state.paymentTransactions,
+                    privacyHidden = hideMoney,
+                  )
+                } else {
+                  val cutoff = SarimMetricsEngine.periodStart(unifiedPeriod)
+                  val exportExpenses = state.paymentTransactions.filter {
+                    it.type == "EXPENSE" && it.dateEpoch >= cutoff && (q.isBlank() || it.entityOrExpenseName.contains(q, ignoreCase = true))
+                  }
+                  PdfExporter.createUnifiedExpensesPdf(
+                    context = context,
+                    periodLabel = unifiedPeriod.label,
+                    generatedLabel = nowLabel,
+                    expenses = exportExpenses,
+                    privacyHidden = hideMoney,
+                  )
+                }
+                pdfRes.fold(
+                  onSuccess = { f ->
+                    val subject = if (unifiedMode == UnifiedViewMode.ENTITIES) "Payment Entities Statement" else "Operating Expenses Statement"
+                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", subject) == com.example.util.ShareOutcome.FAILED) {
+                      viewModel.postStatus("Unable to share PDF report")
+                    }
+                  },
+                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
+                )
               },
+              modifier = Modifier.size(48.dp).testTag("unified_records_pdf_btn"),
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export PDF", tint = palette.cyan) }
           }
           SarimTextField(value = unifiedSearch, onValueChange = { unifiedSearch = it }, label = "", placeholder = "Search...", leadingIcon = Icons.Rounded.Search)
@@ -382,7 +434,7 @@ fun PaymentsTab(
                         Text(if (ent.currentBalance >= 0) "Payable" else "Receivable", color = palette.textMuted, fontSize = 11.sp)
                       }
                       Text(
-                        SarimFormat.formatRs(kotlin.math.abs(ent.currentBalance)),
+                        SarimFormat.formatRs(kotlin.math.abs(ent.currentBalance), false, hideMoney),
                         color = if (ent.currentBalance >= 0) palette.red else palette.green,
                         style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold),
                       )
@@ -415,7 +467,7 @@ fun PaymentsTab(
                         Text(expName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                         Text("${list.size} entries", color = palette.textMuted, fontSize = 11.sp)
                       }
-                      Text(SarimFormat.formatRs(total), color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
+                      Text(SarimFormat.formatRs(total, false, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
                     }
                   }
                 }
@@ -436,7 +488,7 @@ fun PaymentsTab(
             dateEpoch = p.dateEpoch,
             title = p.entityOrExpenseName,
             subtitle = p.description.ifBlank { p.type },
-            amountText = SarimFormat.formatRs(p.amount),
+            amountText = SarimFormat.formatRs(p.amount, false, hideMoney),
             amountColor = if (isIn) palette.green else palette.red,
             chipText = p.type.replace("_", " "),
             chipColor = if (isIn) palette.green else palette.red,
@@ -455,12 +507,12 @@ fun PaymentsTab(
           monthSummary = { items ->
             val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
             val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
-            "In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
+            "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
           },
           daySummary = { items ->
             val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
             val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
-            "In ${SarimFormat.formatRs(inTot, false)} · Out ${SarimFormat.formatRs(outTot, false)}"
+            "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
           },
           onItemClick = { rec -> sheetPayment = rec.item },
         )

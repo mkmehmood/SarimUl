@@ -42,6 +42,14 @@ fun StockTransferScreen(
   var fromIndex by remember { mutableIntStateOf(0) }
   var toIndex by remember { mutableIntStateOf(0) }
   var dateEpoch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, false)
+      prevDayRef = newDay
+    }
+  }
   var qtyText by remember { mutableStateOf("") }
   var noteText by remember { mutableStateOf("") }
 
@@ -252,6 +260,14 @@ fun PaymentTransferScreen(
   var fromQuery by remember { mutableStateOf("") }
   var toQuery by remember { mutableStateOf("") }
   var dateEpoch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, false)
+      prevDayRef = newDay
+    }
+  }
   var amountText by remember { mutableStateOf("") }
   var noteText by remember { mutableStateOf("") }
   var photoUris by remember { mutableStateOf<List<String>>(emptyList()) }

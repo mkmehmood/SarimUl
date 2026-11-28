@@ -35,7 +35,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     DeletionTombstoneEntity::class,
     PhotoRecordEntity::class,
   ],
-  version = 5,
+  version = 6,
   exportSchema = false,
 )
 abstract class SarimDatabase : RoomDatabase() {
@@ -44,7 +44,7 @@ abstract class SarimDatabase : RoomDatabase() {
   val safeReader: SafeSqliteCacheReader by lazy { SafeSqliteCacheReader(dao()) }
 
   companion object {
-    const val SCHEMA_VERSION = 5
+    const val SCHEMA_VERSION = 6
 
     val MIGRATION_3_4 = object : Migration(3, 4) {
       override fun migrate(db: SupportSQLiteDatabase) {
@@ -69,6 +69,12 @@ abstract class SarimDatabase : RoomDatabase() {
       }
     }
 
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE customers ADD COLUMN locationConfirmed INTEGER NOT NULL DEFAULT 0")
+      }
+    }
+
     @Volatile private var INSTANCE: SarimDatabase? = null
 
     fun getInstance(context: Context): SarimDatabase {
@@ -78,7 +84,7 @@ abstract class SarimDatabase : RoomDatabase() {
           SarimDatabase::class.java,
           "naswar_dealers.sqlite",
         )
-          .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+          .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
           .fallbackToDestructiveMigration(true)
           .build()
           .also { INSTANCE = it }

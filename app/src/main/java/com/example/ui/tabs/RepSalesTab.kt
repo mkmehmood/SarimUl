@@ -1,15 +1,21 @@
 package com.example.ui.tabs
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Search
@@ -20,7 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -40,11 +49,14 @@ import com.example.util.StatementKind
 import com.example.util.StatementData
 import com.example.util.DialogHighlight
 import com.example.util.DialogTone
+import com.example.util.LocationHelper
 import com.example.util.PdfExporter
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import java.util.Locale
+import kotlin.math.hypot
 import kotlinx.coroutines.launch
 
 private enum class RepTxMode(val label: String) { SALE("Sale"), COLLECTION("Collection") }
@@ -75,10 +87,38 @@ fun RepSalesTab(
   var custFilter by remember { mutableStateOf("") }
   var editingRepTxId by remember { mutableStateOf<String?>(null) }
   var sheetRepSale by remember { mutableStateOf<SaleTransactionEntity?>(null) }
+  var selectedMapPinId by remember { mutableStateOf<String?>(null) }
+  var askedLocationOnce by remember { mutableStateOf(false) }
+  var pendingSaveCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
+  var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
 
-  val repCustomers = remember(state.customers) { state.customers.filter { it.isRepCustomer } }
-  val matchedCust = remember(customerName, repCustomers) {
-    repCustomers.firstOrNull { it.name.equals(customerName.trim(), ignoreCase = true) }
+  LaunchedEffect(state.currentLocalDayEpoch) {
+    val newDay = state.currentLocalDayEpoch
+    if (newDay != prevDayRef) {
+      dateEpoch = SarimLinkEngine.rolloverDateIfUnedited(dateEpoch, prevDayRef, newDay, editingRepTxId != null)
+      adminMapDate = SarimLinkEngine.rolloverDateIfUnedited(adminMapDate, prevDayRef, newDay, false)
+      prevDayRef = newDay
+    }
+  }
+
+  val locationPermLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { _ ->
+    val run = pendingSaveCallback
+    pendingSaveCallback = null
+    run?.invoke()
+  }
+
+  val allRepCustomers = remember(state.customers) { state.customers.filter { it.isRepCustomer } }
+  val activeAdminFilterRep = if (state.showRepAdminView && adminViewRep != "—" && adminViewRep != "All Reps") {
+    adminViewRep
+  } else null
+  val repCustomers = remember(allRepCustomers, activeAdminFilterRep) {
+    if (activeAdminFilterRep == null) allRepCustomers
+    else allRepCustomers.filter { it.repName.isBlank() || it.repName.equals(activeAdminFilterRep, ignoreCase = true) }
+  }
+  val matchedCust = remember(customerName, allRepCustomers) {
+    allRepCustomers.firstOrNull { it.name.equals(customerName.trim(), ignoreCase = true) }
   }
   val isNewCust = customerName.isNotBlank() && matchedCust == null
   val defaultStore = state.stores.firstOrNull()
@@ -211,37 +251,53 @@ fun RepSalesTab(
               )
               return@SarimPrimaryButton
             }
+            val effectiveRepName = activeAdminFilterRep ?: state.signedInDisplayName
             val commitRepTx: (String?) -> Unit = { repWarn ->
-              viewModel.confirmSave(
-                "Rep Sale",
-                listOf("Date" to SarimFormat.formatDate(dateEpoch), "Customer" to customerName, "Quantity" to quantityText, "Collected" to amountReceivedText, "Expired (kg)" to expiredQtyText),
-                isUpdate = currentEditId != null,
-                warning = repWarn,
-                shareAfterSave = ShareAfterSave(StatementKind.REP, customerName, dateEpoch),
-              ) {
-                viewModel.launchSafely(
-                  errorTitle = "Save Rep Transaction Failed",
-                  successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
-                  onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
+              val launchSave = {
+                viewModel.confirmSave(
+                  "Rep Sale",
+                  listOf("Date" to SarimFormat.formatDate(dateEpoch), "Customer" to customerName, "Quantity" to quantityText, "Collected" to amountReceivedText, "Expired (kg)" to expiredQtyText),
+                  isUpdate = currentEditId != null,
+                  warning = repWarn,
+                  shareAfterSave = ShareAfterSave(StatementKind.REP, customerName, dateEpoch),
                 ) {
-                  viewModel.repository.saveSaleOrCollection(
-                    editingId = currentEditId,
-                    dateEpoch = dateEpoch,
-                    mode = mode.name,
-                    customerName = customerName,
-                    newCustomerPhone = newCustPhone,
-                    repName = state.signedInDisplayName,
-                    store = defaultStore,
-                    quantityKg = if (mode == RepTxMode.SALE) qtyNum else 0.0,
-                    costPerKg = effectiveCostPerKg,
-                    paymentType = payType.name,
-                    amountReceived = if (mode == RepTxMode.COLLECTION) amtRec else if (payType == RepPayType.CASH) effectiveTotalVal else 0.0,
-                    expiredQtyKg = expQty,
-                    returnedQtyKg = 0.0,
-                    addToLedger = false,
-                    isRepSale = true,
-                  )
+                  viewModel.launchSafely(
+                    errorTitle = "Save Rep Transaction Failed",
+                    successMessage = if (currentEditId == null) "Rep transaction saved" else "Rep transaction updated",
+                    onSuccess = { editingRepTxId = null; customerName = ""; newCustPhone = ""; quantityText = ""; amountReceivedText = ""; expiredQtyText = "" },
+                  ) {
+                    val savedTx = viewModel.repository.saveSaleOrCollection(
+                      editingId = currentEditId,
+                      dateEpoch = dateEpoch,
+                      mode = mode.name,
+                      customerName = customerName,
+                      newCustomerPhone = newCustPhone,
+                      repName = effectiveRepName,
+                      store = defaultStore,
+                      quantityKg = if (mode == RepTxMode.SALE) qtyNum else 0.0,
+                      costPerKg = effectiveCostPerKg,
+                      paymentType = payType.name,
+                      amountReceived = if (mode == RepTxMode.COLLECTION) amtRec else if (payType == RepPayType.CASH) effectiveTotalVal else 0.0,
+                      expiredQtyKg = expQty,
+                      returnedQtyKg = 0.0,
+                      addToLedger = false,
+                      isRepSale = true,
+                      lat = origRep?.latitude,
+                      lng = origRep?.longitude,
+                      actor = state.signedInDisplayName.ifBlank { "Admin" },
+                    )
+                    if (LocationHelper.hasLocationPermission(context)) {
+                      viewModel.attachGpsAndConfirmCustomerAsync(savedTx.id)
+                    }
+                  }
                 }
+              }
+              if (currentEditId == null && !LocationHelper.hasLocationPermission(context) && !askedLocationOnce) {
+                askedLocationOnce = true
+                pendingSaveCallback = launchSave
+                locationPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+              } else {
+                launchSave()
               }
             }
             if (mode == RepTxMode.COLLECTION) {
@@ -305,70 +361,188 @@ fun RepSalesTab(
       }
     }
 
-    // 2. Admin View Card (Map + Analytics)
+    // 2. Admin View Card (Coordinate Route Map + Analytics)
     if (state.showRepAdminView) {
       item {
-        val repOpts = listOf("—") + (snap?.repsList ?: emptyList())
+        val repOpts = listOf("All Reps") + (snap?.repsList ?: emptyList())
         val mapStart = SarimFormat.startOfDay(adminMapDate)
         val mapEnd = SarimFormat.endOfDay(adminMapDate)
         val dayPins = state.sales.filter {
-          it.isRepSale && it.dateEpoch in mapStart..mapEnd && (adminViewRep == "—" || it.repName.equals(adminViewRep, ignoreCase = true))
+          it.isRepSale && it.dateEpoch in mapStart..mapEnd && (activeAdminFilterRep == null || it.repName.equals(activeAdminFilterRep, ignoreCase = true))
         }
+        val mappedPins = remember(dayPins) {
+          dayPins.filter { it.latitude != null && it.longitude != null }.sortedBy { it.createdAt }
+        }
+        val selectedPin = mappedPins.firstOrNull { it.id == selectedMapPinId } ?: mappedPins.lastOrNull()
 
         SarimCard {
-          Text("Admin View", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Admin View", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            SarimChip("${mappedPins.size}/${dayPins.size} GPS", if (mappedPins.isNotEmpty()) palette.green else palette.textMuted)
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimPopoverSelector("View For:", adminViewRep, repOpts, { _, o -> adminViewRep = o }, modifier = Modifier.weight(1f))
-            SarimDatePickerField("Select Date", adminMapDate, onDateSelected = { adminMapDate = it }, modifier = Modifier.weight(1f))
+            SarimPopoverSelector("View For:", activeAdminFilterRep ?: "All Reps", repOpts, { _, o -> adminViewRep = o }, modifier = Modifier.weight(1f), testTag = "rep_admin_selector")
+            SarimDatePickerField("Select Date", adminMapDate, onDateSelected = { adminMapDate = it }, modifier = Modifier.weight(1f), testTag = "rep_admin_map_date")
           }
 
-          // Map pin plot canvas (offline-safe surface showing saved location pins)
-          Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFF0A2218), border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f))) {
-            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-              Canvas(modifier = Modifier.fillMaxSize()) {
+          Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF0A2218),
+            border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f)),
+          ) {
+            Box(modifier = Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
+              var canvasWidthPx by remember { mutableFloatStateOf(1f) }
+              var canvasHeightPx by remember { mutableFloatStateOf(1f) }
+
+              fun projectOffset(s: SaleTransactionEntity, width: Float, height: Float): Offset {
+                val lats = mappedPins.mapNotNull { it.latitude }
+                val lngs = mappedPins.mapNotNull { it.longitude }
+                val minLat = lats.minOrNull() ?: 0.0
+                val maxLat = lats.maxOrNull() ?: 0.0
+                val minLng = lngs.minOrNull() ?: 0.0
+                val maxLng = lngs.maxOrNull() ?: 0.0
+                val padX = width * 0.14f
+                val padY = height * 0.16f
+                val usableW = (width - padX * 2).coerceAtLeast(1f)
+                val usableH = (height - padY * 2).coerceAtLeast(1f)
+                val latSpan = (maxLat - minLat).takeIf { it > 1e-6 }
+                val lngSpan = (maxLng - minLng).takeIf { it > 1e-6 }
+                val nx = if (lngSpan != null) (((s.longitude ?: minLng) - minLng) / lngSpan).toFloat() else 0.5f
+                val ny = if (latSpan != null) (1.0 - (((s.latitude ?: minLat) - minLat) / latSpan)).toFloat() else 0.5f
+                return Offset(padX + nx * usableW, padY + ny * usableH)
+              }
+
+              Canvas(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .testTag("rep_route_map_canvas")
+                  .pointerInput(mappedPins) {
+                    detectTapGestures { tap ->
+                      if (mappedPins.isEmpty()) return@detectTapGestures
+                      val hit = mappedPins.minByOrNull { pin ->
+                        val p = projectOffset(pin, size.width.toFloat(), size.height.toFloat())
+                        hypot((tap.x - p.x).toDouble(), (tap.y - p.y).toDouble())
+                      }
+                      if (hit != null) {
+                        val p = projectOffset(hit, size.width.toFloat(), size.height.toFloat())
+                        val dist = hypot((tap.x - p.x).toDouble(), (tap.y - p.y).toDouble())
+                        if (dist <= 44.dp.toPx()) selectedMapPinId = hit.id
+                      }
+                    }
+                  },
+              ) {
+                canvasWidthPx = size.width
+                canvasHeightPx = size.height
                 for (i in 1..4) {
                   val y = size.height * (i / 5f)
                   drawLine(palette.green.copy(alpha = 0.12f), Offset(0f, y), Offset(size.width, y))
                   val x = size.width * (i / 5f)
                   drawLine(palette.green.copy(alpha = 0.12f), Offset(x, 0f), Offset(x, size.height))
                 }
-                dayPins.forEachIndexed { idx, s ->
-                  val px = ((idx + 1).toFloat() / (dayPins.size + 1)) * size.width
-                  val py = size.height * (0.3f + ((idx * 37) % 50) / 100f)
+                if (mappedPins.size >= 2) {
+                  val pts = mappedPins.map { projectOffset(it, canvasWidthPx, canvasHeightPx) }
+                  for (i in 0 until pts.lastIndex) {
+                    drawLine(
+                      color = palette.cyan.copy(alpha = 0.55f),
+                      start = pts[i],
+                      end = pts[i + 1],
+                      strokeWidth = 2.dp.toPx(),
+                      pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
+                    )
+                  }
+                }
+                mappedPins.forEach { s ->
+                  val pos = projectOffset(s, canvasWidthPx, canvasHeightPx)
                   val pinColor = when {
                     s.mode == "COLLECTION" -> palette.cyan
                     s.paymentType == "CASH" -> palette.green
                     else -> palette.amber
                   }
-                  drawCircle(pinColor, radius = 7.dp.toPx(), center = Offset(px, py))
+                  if (selectedPin?.id == s.id) {
+                    drawCircle(Color.White.copy(alpha = 0.85f), radius = 12.dp.toPx(), center = pos)
+                  }
+                  drawCircle(pinColor, radius = 8.dp.toPx(), center = pos)
                 }
               }
-              if (dayPins.isEmpty()) {
-                Text("No pinned field visits on ${SarimFormat.formatDate(adminMapDate)}", color = palette.green.copy(alpha = 0.7f), fontSize = 12.sp)
+              if (mappedPins.isEmpty()) {
+                Text(
+                  if (dayPins.isEmpty()) "No field visits recorded on ${SarimFormat.formatDate(adminMapDate)}"
+                  else "${dayPins.size} visit(s) on ${SarimFormat.formatDate(adminMapDate)}, none with GPS coordinates",
+                  color = palette.green.copy(alpha = 0.75f),
+                  fontSize = 12.sp,
+                )
               }
             }
           }
-          Text("Cash Sale (Green) | Collection (Cyan) | Credit Sale (Amber)", color = palette.textMuted, fontSize = 11.sp)
+          Text("Cash Sale (Green) · Collection (Cyan) · Credit Sale (Amber) · Tap pin for details", color = palette.textMuted, fontSize = 11.sp)
+
+          if (selectedPin != null) {
+            val lat = selectedPin.latitude ?: 0.0
+            val lng = selectedPin.longitude ?: 0.0
+            val dispVal = if (selectedPin.mode == "COLLECTION") (selectedPin.amountReceived.takeIf { it > 0.0 } ?: selectedPin.totalValue) else selectedPin.totalValue
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = palette.surfaceElevated,
+              border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.45f)),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                Icon(Icons.Rounded.MyLocation, contentDescription = "Selected GPS visit", tint = palette.cyan, modifier = Modifier.size(20.dp))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Text("${selectedPin.customerName} (${selectedPin.mode})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                  Text(
+                    "${selectedPin.timeStr.ifBlank { SarimFormat.formatDate(selectedPin.dateEpoch) }} · ${SarimFormat.formatKg(selectedPin.quantityKg)} · ${SarimFormat.formatRs(dispVal, false, hideMoney)}",
+                    color = palette.textMuted,
+                    fontSize = 11.5.sp,
+                  )
+                  Text(String.format(Locale.US, "%.5f, %.5f", lat, lng), color = palette.cyan, fontSize = 11.sp)
+                }
+                IconButton(
+                  onClick = {
+                    val uri = Uri.parse("geo:$lat,$lng?q=$lat,$lng(${Uri.encode(selectedPin.customerName)})")
+                    runCatching {
+                      context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }.onFailure { viewModel.postStatus("No maps app installed") }
+                  },
+                  modifier = Modifier.size(48.dp).testTag("rep_map_open_external_btn"),
+                ) {
+                  Icon(Icons.Rounded.OpenInNew, contentDescription = "Open in Maps", tint = palette.green)
+                }
+              }
+            }
+          }
         }
       }
 
-      item {
-        val cutoff = SarimMetricsEngine.periodStart(analyticsPeriod)
-        val repTxPeriod = state.sales.filter { it.isRepSale && it.dateEpoch >= cutoff }
-        val cashSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue }
-        val credSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CREDIT" }.sumOf { it.totalValue }
-        val colls = repTxPeriod.filter { it.mode == "COLLECTION" }.sumOf { it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue }
-        val moneyIn = cashSales + colls
+      if (!hideMoney) {
+        item {
+          val cutoff = SarimMetricsEngine.periodStart(analyticsPeriod)
+          val repTxPeriod = state.sales.filter {
+            it.isRepSale && it.dateEpoch >= cutoff && (activeAdminFilterRep == null || it.repName.equals(activeAdminFilterRep, ignoreCase = true))
+          }
+          val cashSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue }
+          val credSales = repTxPeriod.filter { it.mode == "SALE" && it.paymentType == "CREDIT" }.sumOf { it.totalValue }
+          val colls = repTxPeriod.filter { it.mode == "COLLECTION" }.sumOf { it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue }
+          val moneyIn = cashSales + colls
 
-        SarimCard {
-          Text("Analytics", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-          SarimToggleGroup(TimePeriod.entries, analyticsPeriod, { it.label }, { analyticsPeriod = it })
-          Text("Money in: ${SarimFormat.formatRs(moneyIn)}", color = palette.green, style = TabularNumberStyle.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold))
-          SplitRatioBar("Cash + Coll", moneyIn, palette.green, "Credit Sales", credSales, palette.amber)
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Collections", SarimFormat.formatRs(colls, false), Modifier.weight(1f), palette.cyan)
-            SarimStatTile("Cash sales", SarimFormat.formatRs(cashSales, false), Modifier.weight(1f), palette.green)
-            SarimStatTile("Credit sales", SarimFormat.formatRs(credSales, false), Modifier.weight(1f), palette.amber)
+          SarimCard {
+            Text(
+              if (activeAdminFilterRep != null) "Analytics ($activeAdminFilterRep)" else "Analytics",
+              color = palette.textPrimary,
+              fontWeight = FontWeight.Bold,
+              fontSize = 15.sp,
+            )
+            SarimToggleGroup(TimePeriod.entries, analyticsPeriod, { it.label }, { analyticsPeriod = it })
+            Text("Money in: ${SarimFormat.formatRs(moneyIn)}", color = palette.green, style = TabularNumberStyle.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold))
+            SplitRatioBar("Cash + Coll", moneyIn, palette.green, "Credit Sales", credSales, palette.amber)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimStatTile("Collections", SarimFormat.formatRs(colls, false), Modifier.weight(1f), palette.cyan)
+              SarimStatTile("Cash sales", SarimFormat.formatRs(cashSales, false), Modifier.weight(1f), palette.green)
+              SarimStatTile("Credit sales", SarimFormat.formatRs(credSales, false), Modifier.weight(1f), palette.amber)
+            }
           }
         }
       }
@@ -383,12 +557,13 @@ fun RepSalesTab(
           Row {
             IconButton(
               onClick = {
-                val repLabel = state.signedInDisplayName.ifBlank { "Rep" }
+                val repLabel = (activeAdminFilterRep ?: state.signedInDisplayName).ifBlank { "Rep" }
                 com.example.util.CustomerListPdf.create(
                   context,
                   fileName = "My_Customers_${repLabel.replace(Regex("[^A-Za-z0-9]"), "_")}.pdf",
                   title = "My Customers — $repLabel",
                   rows = com.example.util.CustomerListPdf.rowsFor(repCustomers, state.sales),
+                  privacyHidden = hideMoney,
                 ).fold(
                   onSuccess = { f ->
                     if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "My Customers — $repLabel") == com.example.util.ShareOutcome.FAILED) {
@@ -430,15 +605,15 @@ fun RepSalesTab(
               } else {
                 listOf(RecordDetail("No phone"))
               },
-              amount = SarimFormat.formatRs(c.currentCredit),
+              amount = SarimFormat.formatRs(c.currentCredit, false, hideMoney),
               amountColor = if (c.currentCredit > 1.0) palette.amber else palette.emerald,
               onClick = { viewModel.openStandalone(StandaloneScreen.RepCustomerDetails(c.id)) },
             )
           },
           stats = listOf(
-            RecordStat("Outstanding credit", SarimFormat.formatRs(repCustomers.sumOf { it.currentCredit }, false), palette.red),
-            RecordStat("Credit sales", SarimFormat.formatRs(repCustomers.sumOf { it.totalSaleValue }, false)),
-            RecordStat("Collections", SarimFormat.formatRs(repCustomers.sumOf { it.totalReceived }, false), palette.emerald),
+            RecordStat("Outstanding credit", SarimFormat.formatRs(repCustomers.sumOf { it.currentCredit }, false, hideMoney), palette.red),
+            RecordStat("Credit sales", SarimFormat.formatRs(repCustomers.sumOf { it.totalSaleValue }, false, hideMoney)),
+            RecordStat("Collections", SarimFormat.formatRs(repCustomers.sumOf { it.totalReceived }, false, hideMoney), palette.emerald),
           ),
           emptyTitle = if (custFilter.isBlank()) "No customers yet" else "No customers match your search",
           emptyHint = if (custFilter.isBlank()) "Save a rep transaction or tap + to add a rep customer." else "Try a different name.",
@@ -450,7 +625,9 @@ fun RepSalesTab(
     item {
       Text("Rep Sales History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
       Spacer(Modifier.height(6.dp))
-      val repHistory = state.sales.filter { it.isRepSale }
+      val repHistory = state.sales.filter {
+        it.isRepSale && (activeAdminFilterRep == null || it.repName.equals(activeAdminFilterRep, ignoreCase = true))
+      }
       val records = repHistory.map { s ->
         val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
         val dispAmt = if (s.mode == "COLLECTION" || s.mode == "MONEY_OUT") (s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue) else s.totalValue
@@ -459,7 +636,7 @@ fun RepSalesTab(
           dateEpoch = s.dateEpoch,
           title = s.customerName,
           subtitle = "${s.mode} · ${SarimFormat.formatKg(s.quantityKg)}",
-          amountText = SarimFormat.formatRs(dispAmt),
+          amountText = SarimFormat.formatRs(dispAmt, false, hideMoney),
           amountColor = if (isCash) palette.green else palette.amber,
           chipText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else "PENDING") else s.mode,
           chipColor = if (isCash || s.creditReceived) palette.green else palette.amber,
@@ -469,14 +646,14 @@ fun RepSalesTab(
             add("Rep" to s.repName.ifBlank { "Rep" })
             if (s.mode == "SALE") {
               add("Quantity" to SarimFormat.formatKg(s.quantityKg))
-              add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg))
-              add("Total Value" to SarimFormat.formatRs(s.totalValue))
+              add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg, false, hideMoney))
+              add("Total Value" to SarimFormat.formatRs(s.totalValue, false, hideMoney))
               add("Payment" to s.paymentType)
             } else {
-              add("Received" to SarimFormat.formatRs(s.amountReceived))
+              add("Received" to SarimFormat.formatRs(s.amountReceived, false, hideMoney))
               if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
             }
-            add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
+            add("Balance After" to SarimFormat.formatRs(s.balanceAfter, false, hideMoney))
           },
         )
       }
@@ -496,7 +673,7 @@ fun RepSalesTab(
     SarimRecordBottomSheet(
       title = s.customerName,
       subtitle = "${SarimFormat.formatDate(s.dateEpoch)}${if (s.timeStr.isNotBlank()) " · ${s.timeStr}" else ""}",
-      amountText = SarimFormat.formatRs(sheetDispAmt),
+      amountText = SarimFormat.formatRs(sheetDispAmt, false, hideMoney),
       amountColor = if (isCash) palette.green else palette.amber,
       badgeText = if (s.mode == "SALE") (if (s.paymentType == "CASH") "PAID" else if (s.creditReceived) "SETTLED" else "PENDING") else s.mode,
       badgeColor = if (isCash || s.creditReceived) palette.green else palette.amber,
@@ -505,14 +682,14 @@ fun RepSalesTab(
         add("Rep" to s.repName.ifBlank { "Rep" })
         if (s.mode == "SALE") {
           add("Quantity" to SarimFormat.formatKg(s.quantityKg))
-          add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg))
-          add("Total Value" to SarimFormat.formatRs(s.totalValue))
+          add("Rate / kg" to SarimFormat.formatRs(s.pricePerKg, false, hideMoney))
+          add("Total Value" to SarimFormat.formatRs(s.totalValue, false, hideMoney))
           add("Payment" to s.paymentType)
         } else {
-          add("Amount Received" to SarimFormat.formatRs(sheetDispAmt))
+          add("Amount Received" to SarimFormat.formatRs(sheetDispAmt, false, hideMoney))
           if (s.expiredQtyKg > 0.0) add("Expired Qty" to SarimFormat.formatKg(s.expiredQtyKg))
         }
-        add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
+        add("Balance After" to SarimFormat.formatRs(s.balanceAfter, false, hideMoney))
       },
       onDismiss = { sheetRepSale = null },
       extraActionLabel = "Invoice",

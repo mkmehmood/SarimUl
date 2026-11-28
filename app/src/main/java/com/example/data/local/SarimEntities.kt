@@ -216,6 +216,7 @@ data class CustomerEntity(
   val photoUri: String = "",
   val isRepCustomer: Boolean = false,
   @ColumnInfo(name = "salesRep") val repName: String = "",
+  val locationConfirmed: Boolean = false,
   val currentCredit: Double = 0.0,
   val totalQuantityKg: Double = 0.0,
   val totalSaleValue: Double = 0.0,

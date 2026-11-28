@@ -84,6 +84,23 @@ class MainActivity : ComponentActivity() {
         }
       }
 
+      val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+      DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+          if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+            viewModel.checkDateRollover()
+          }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+      }
+      LaunchedEffect(Unit) {
+        while (true) {
+          kotlinx.coroutines.delay(60_000L)
+          viewModel.checkDateRollover()
+        }
+      }
+
       SarimTheme(themeMode = state.prefs.themeMode) {
         when {
           state.showSplash -> {

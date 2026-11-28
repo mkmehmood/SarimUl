@@ -74,7 +74,13 @@ object CustomerListPdf {
     Col("Last Sale", 22f, Paint.Align.CENTER),
   )
 
-  fun create(context: Context, fileName: String, title: String, rows: List<CustomerListRow>): Result<File> = runCatching {
+  fun create(
+    context: Context,
+    fileName: String,
+    title: String,
+    rows: List<CustomerListRow>,
+    privacyHidden: Boolean = false,
+  ): Result<File> = runCatching {
     require(rows.isNotEmpty()) { "No customers found to export." }
     val pageW = 842
     val pageH = 595
@@ -100,21 +106,23 @@ object CustomerListPdf {
       val net = c.net
       totDebt += c.debit; totPaid += c.credit; totQty += c.qty; totNet += net
       if (net > 0.01) cntDebtors++ else cntSettled++
+      val mask = "••••"
       listOf(
         c.name,
         c.phone,
         c.address.take(35),
-        if (c.debit > 0) amt(c.debit) else "-",
-        if (c.credit > 0) amt(c.credit) else "-",
-        if (abs(net) < 0.01) "SETTLED" else if (net > 0) amt(net) else "OVERPAID\n" + amt(abs(net)),
+        if (privacyHidden) mask else if (c.debit > 0) amt(c.debit) else "-",
+        if (privacyHidden) mask else if (c.credit > 0) amt(c.credit) else "-",
+        if (privacyHidden) mask else if (abs(net) < 0.01) "SETTLED" else if (net > 0) amt(net) else "OVERPAID\n" + amt(abs(net)),
         amt(c.qty),
         c.lastSaleEpoch?.let { SarimFormat.formatDate(it) } ?: "-",
       )
     }
     val totalRow = listOf(
       "TOTAL (${rows.size} customers)", "", "",
-      amt(totDebt), amt(totPaid),
-      amt(abs(totNet)) + (if (totNet > 0) "" else if (totNet < 0) "" else "SETTLED"),
+      if (privacyHidden) "••••" else amt(totDebt),
+      if (privacyHidden) "••••" else amt(totPaid),
+      if (privacyHidden) "••••" else amt(abs(totNet)) + (if (totNet > 0) "" else if (totNet < 0) "" else "SETTLED"),
       amt(totQty), "",
     )
     val allRows = body + listOf(totalRow)
@@ -255,8 +263,9 @@ object CustomerListPdf {
       if (pi == pages.lastIndex) {
         val afterY = finalY + mm(6f)
         if (afterY < pageH - mm(25f)) {
+          val totOutstandingStr = if (privacyHidden) "••••" else amt(totNet)
           c.drawText(
-            "Customers with outstanding debt: $cntDebtors | Settled accounts: $cntSettled | Total outstanding: ${amt(totNet)}",
+            "Customers with outstanding debt: $cntDebtors | Settled accounts: $cntSettled | Total outstanding: $totOutstandingStr",
             mm(14f), afterY, paint(8f, GRAY),
           )
         }
