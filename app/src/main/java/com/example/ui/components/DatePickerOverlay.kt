@@ -105,13 +105,15 @@ fun CustomCalendarDialog(
   val monthFmt = remember { SimpleDateFormat("MMMM yyyy", Locale.US) }
   val monthShortNames = remember { listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec") }
 
+  // Web `.cdp-popover`: compact 14dp-radius panel with 10dp padding.
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(28.dp),
+      modifier = Modifier.widthIn(max = 300.dp),
+      shape = RoundedCornerShape(14.dp),
       color = palette.surface,
       border = BorderStroke(1.dp, palette.border),
     ) {
-      Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Header
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -203,7 +205,7 @@ fun CustomCalendarDialog(
                         modifier = Modifier
                           .weight(1f)
                           .height(38.dp)
-                          .clip(CircleShape)
+                          .clip(if (isSelected) CircleShape else RoundedCornerShape(8.dp))
                           .background(if (isSelected) palette.green else Color.Transparent)
                           .clickable { onSelect(c.timeInMillis) },
                         contentAlignment = Alignment.Center,
@@ -211,7 +213,7 @@ fun CustomCalendarDialog(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                           Text(
                             text = dayNum.toString(),
-                            color = if (isSelected) Color(0xFF022112) else palette.textPrimary,
+                            color = if (isSelected) Color(0xFF03170B) else palette.textPrimary,
                             fontSize = 13.sp,
                             fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
                           )
