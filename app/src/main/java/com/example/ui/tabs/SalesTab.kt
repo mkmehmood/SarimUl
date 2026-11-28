@@ -699,9 +699,7 @@ viewModel.launchSafely(
                       }.onFailure { viewModel.postStatus("No dialer app available") }
                     },
                     onLongClick = {
-                      runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${c.phone.filter { it.isDigit() || it == '+' }}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                      }.onFailure { viewModel.postStatus("WhatsApp or browser unavailable") }
+                      if (!com.example.util.DirectShare.openWhatsAppChat(context, c.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
                     },
                   ),
                 )

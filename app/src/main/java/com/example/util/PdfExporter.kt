@@ -10,13 +10,14 @@ import java.io.File
 import java.io.FileOutputStream
 
 object PdfExporter {
-  fun sharePdfReport(
+  /** Build the report PDF in the app cache and return it. */
+  fun createPdfFile(
     context: Context,
     fileNamePrefix: String,
     title: String,
     subtitle: String,
     lines: List<String>,
-  ): Result<Unit> {
+  ): Result<File> {
     return try {
       val doc = PdfDocument()
       val pageWidth = 595
@@ -74,7 +75,53 @@ object PdfExporter {
       val file = File(dir, "${fileNamePrefix}_${System.currentTimeMillis()}.pdf")
       FileOutputStream(file).use { out -> doc.writeTo(out) }
       doc.close()
+      Result.success(file)
+    } catch (e: Exception) {
+      Result.failure(e)
+    }
+  }
 
+  /**
+   * Port of the web `renderJsPdfToCanvases` + `_exportDocAsImageAndOpenWhatsApp`: rasterise each PDF
+   * page to a JPEG (scale 3 like the web) so the statement can be sent as pictures.
+   */
+  fun pdfToJpegs(context: Context, pdf: File, baseName: String, scale: Float = 3f): Result<List<File>> {
+    return try {
+      val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+      val out = mutableListOf<File>()
+      android.os.ParcelFileDescriptor.open(pdf, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+        android.graphics.pdf.PdfRenderer(fd).use { renderer ->
+          for (i in 0 until renderer.pageCount) {
+            renderer.openPage(i).use { page ->
+              val bmp = android.graphics.Bitmap.createBitmap(
+                (page.width * scale).toInt(), (page.height * scale).toInt(), android.graphics.Bitmap.Config.ARGB_8888,
+              )
+              bmp.eraseColor(Color.WHITE)
+              page.render(bmp, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+              val suffix = if (renderer.pageCount > 1) "-page${i + 1}" else ""
+              val f = File(dir, "$baseName$suffix.jpg")
+              FileOutputStream(f).use { os -> bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, os) }
+              bmp.recycle()
+              out += f
+            }
+          }
+        }
+      }
+      if (out.isEmpty()) Result.failure(IllegalStateException("Nothing to export.")) else Result.success(out)
+    } catch (e: Exception) {
+      Result.failure(e)
+    }
+  }
+
+  fun sharePdfReport(
+    context: Context,
+    fileNamePrefix: String,
+    title: String,
+    subtitle: String,
+    lines: List<String>,
+  ): Result<Unit> {
+    val file = createPdfFile(context, fileNamePrefix, title, subtitle, lines).getOrElse { return Result.failure(it) }
+    return try {
       val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
       val shareIntent = Intent(Intent.ACTION_SEND).apply {
         type = "application/pdf"
