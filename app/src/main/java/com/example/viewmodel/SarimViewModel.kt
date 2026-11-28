@@ -76,6 +76,10 @@ data class SarimUiState(
   val lastUpdatedMillis: Long = System.currentTimeMillis(),
 ) {
   val isAdmin: Boolean get() = UserRole.ADMIN in activeRoles
+  /** Non-admin accounts only get the entry card of their tabs plus Settings (Rep tab keeps its own layout). */
+  val isEntryOnly: Boolean get() = !isAdmin
+  /** Rep mode: the account is a rep (not an admin) and must never see the admin view. */
+  val isRepMode: Boolean get() = !isAdmin && UserRole.REP in activeRoles
 
   /** True when the account is a pure Rep session (mode "rep"): Rep screens stay as-is, admin view is hidden. */
   val isRepMode: Boolean
@@ -1325,6 +1329,12 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun openStandalone(screen: StandaloneScreen) {
+    val st = _uiState.value
+    // Lock: non-admin accounts can only reach Settings (reps keep their own detail screens).
+    if (st.isEntryOnly && !st.isRepMode && screen !is StandaloneScreen.Settings) {
+      postStatus("Not available for your account")
+      return
+    }
     val missingId = when (screen) {
       is StandaloneScreen.CustomerDetails -> screen.customerId.isBlank()
       is StandaloneScreen.RepCustomerDetails -> screen.customerId.isBlank()
