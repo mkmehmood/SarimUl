@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -159,9 +160,14 @@ fun BatchingScreen(
   var valueText by remember { mutableStateOf("") }
   var saveName by remember { mutableStateOf("") }
 
+  val scrollState = rememberScrollState()
+  val scope = rememberCoroutineScope()
+
   fun openSaved(calc: SavedMixCalcEntity) {
     val d = SarimMixCalcRecords.details(calc)
     editingCalcId = calc.id
+    // Web scrolls the form back into view when a saved calculation is opened for editing.
+    scope.launch { scrollState.animateScrollTo(0) }
     val fIdx = formulas.indexOfFirst { it.id == calc.formulaId }
     if (fIdx >= 0) selectedFormulaIndex = fIdx + 1
     unit = if (calc.unit == "g") "g" else "kg"
@@ -194,7 +200,7 @@ fun BatchingScreen(
   Column(
     modifier = Modifier
       .fillMaxSize()
-      .verticalScroll(rememberScrollState())
+      .verticalScroll(scrollState)
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
@@ -420,9 +426,14 @@ fun BatchCorrectionScreen(
 
   fun resetManual() { manualMode = ""; manualId = ""; manualText = "" }
 
+  val scrollState = rememberScrollState()
+  val scope = rememberCoroutineScope()
+
   fun openSaved(calc: SavedMixCalcEntity) {
     val d = SarimMixCalcRecords.details(calc)
     editingCalcId = calc.id
+    // Web scrolls the form back into view when a saved calculation is opened for editing.
+    scope.launch { scrollState.animateScrollTo(0) }
     val fIdx = formulas.indexOfFirst { it.id == calc.formulaId }
     if (fIdx >= 0) selectedFormulaIndex = fIdx + 1
     unit = if (calc.unit == "kg") "kg" else "g"
@@ -487,7 +498,7 @@ fun BatchCorrectionScreen(
   Column(
     modifier = Modifier
       .fillMaxSize()
-      .verticalScroll(rememberScrollState())
+      .verticalScroll(scrollState)
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
