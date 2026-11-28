@@ -316,7 +316,7 @@ fun DailyLedgerScreen(
           value = toModeText,
           onValueChange = { toModeText = it },
           label = "To Channel (Destination)",
-          placeholder = "e.g. Bank Transfer, Cash...",
+          placeholder = "e.g. Bank Transfer, Easypaisa...",
           suggestions = knownChannels,
           onSuggestionSelected = { toModeText = it },
           testTag = "dl_to_mode",

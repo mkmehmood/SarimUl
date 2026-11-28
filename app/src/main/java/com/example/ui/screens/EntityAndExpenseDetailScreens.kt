@@ -72,12 +72,17 @@ fun EntityDetailsScreen(
     }
   }
 
-  val filtered = remember(txs, searchQuery, filter) {
+  // Transfers between entities are stored as a pair of payment documents (web "Transfers" filter).
+  val transferDocIds = remember(state.paymentTransfers) {
+    state.paymentTransfers.filter { !it.isDeleted }.flatMap { listOf(it.outDocId, it.inDocId) }.toSet()
+  }
+  val filtered = remember(txs, searchQuery, filter, transferDocIds) {
     val q = searchQuery.trim().lowercase()
     txs.filter { tx ->
       val fOk = when (filter) {
-        "Payment In" -> tx.type == "PAYMENT_IN"
-        "Payment Out" -> tx.type == "PAYMENT_OUT"
+        "Payment In" -> tx.type == "PAYMENT_IN" && tx.id !in transferDocIds
+        "Payment Out" -> tx.type == "PAYMENT_OUT" && tx.id !in transferDocIds
+        "Transfers" -> tx.id in transferDocIds
         else -> true
       }
       val qOk = q.isEmpty() || tx.description.lowercase().contains(q) || tx.amount.toString().contains(q)
@@ -198,7 +203,7 @@ fun EntityDetailsScreen(
     )
 
     SarimToggleGroup(
-      options = listOf("All", "Payment In", "Payment Out"),
+      options = listOf("All", "Payment In", "Payment Out", "Transfers"),
       selected = filter,
       labelOf = { it },
       onSelect = { filter = it },
