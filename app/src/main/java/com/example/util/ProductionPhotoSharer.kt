@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Port of web `modules/prod-photos.js`: renders a statement-green metadata caption footer onto each
- * production photo (Date, Store, Gross/Container/Net weight, and Value/Cost/Profit unless redacted),
+ * production photo (Date, Store, Gross/Container/Net weight, and Value unless redacted; never cost or profit),
  * saves JPEG files into cache, copies summary text to the clipboard, and shares multi-file intents.
  */
 object ProductionPhotoSharer {
@@ -36,9 +36,7 @@ object ProductionPhotoSharer {
         "Gross: ${SarimFormat.formatKg(entry.grossWeightKg)} | Container: ${SarimFormat.formatKg(entry.containerWeightKg)} | Net: ${SarimFormat.formatKg(entry.netWeightKg)}",
       )
       if (!privacyHidden) {
-        add(
-          "Value: ${SarimFormat.formatRs(entry.totalValue, false, false)} | Cost: ${SarimFormat.formatRs(entry.totalFormulaCost, false, false)} | Profit: ${SarimFormat.formatRs(entry.totalProfit, false, false)}",
-        )
+        add("Value: ${SarimFormat.formatRs(entry.totalValue, false, false)}")
       }
     }
   }
@@ -58,8 +56,6 @@ object ProductionPhotoSharer {
         add(listOf("Net Weight", SarimFormat.formatKg(entry.netWeightKg)))
         if (!privacyHidden) {
           add(listOf("Total Value", SarimFormat.formatRs(entry.totalValue, false, false)))
-          add(listOf("Formula Cost", SarimFormat.formatRs(entry.totalFormulaCost, false, false)))
-          add(listOf("Net Profit", SarimFormat.formatRs(entry.totalProfit, false, false)))
         }
       }
       StatementShare.buildReportText(

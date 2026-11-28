@@ -200,13 +200,15 @@ fun PhotoAttachmentBar(
     }
   }
 
+  val launchGalleryRef = remember { mutableStateOf<() -> Unit>({}) }
   val cameraPermissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission(),
   ) { granted ->
     if (granted) {
       showInAppCamera = true
     } else {
-      reportError("Camera permission denied. Use Gallery to attach a photo.")
+      reportError("Camera permission denied. Opening your photo library instead.")
+      launchGalleryRef.value()
     }
   }
 
@@ -219,6 +221,7 @@ fun PhotoAttachmentBar(
     }
   }
 
+  launchGalleryRef.value = launchGallery
   val scheme = MaterialTheme.colorScheme
   Row(
     modifier = modifier.fillMaxWidth(),
@@ -264,25 +267,6 @@ fun PhotoAttachmentBar(
           fontSize = 12.5.sp,
           fontWeight = FontWeight.Medium,
         )
-      }
-    }
-
-    Surface(
-      shape = RoundedCornerShape(20.dp),
-      color = scheme.surfaceContainerHigh,
-      modifier = Modifier
-        .defaultMinSize(minHeight = 48.dp)
-        .clip(RoundedCornerShape(20.dp))
-        .testTag("photo_gallery_btn")
-        .clickable { launchGallery() },
-    ) {
-      Row(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Pick from gallery", tint = palette.cyan, modifier = Modifier.size(18.dp))
-        Text("Gallery", color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
       }
     }
 
