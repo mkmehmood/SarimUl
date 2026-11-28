@@ -838,95 +838,11 @@ viewModel.launchSafely(
         monthSummary = { items ->
           "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
         },
-        daySummary = { items -> "${items.size} entries" },
-        hasDropdownDetails = true,
+        daySummary = { items ->
+          "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
+        },
         onItemClick = { rec -> sheetSale = rec.item },
-      ) { rec ->
-        val s = rec.item
-        val isReconciledRet = s.isRepReturn && s.id in reconciledReturns
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (!s.isRepReturn) {
-            SarimSecondaryButton(
-              text = "Invoice PDF",
-              icon = Icons.Rounded.Share,
-              onClick = {
-                PdfExporter.sharePdfReport(
-                  context,
-                  "invoice_${s.id.take(6)}",
-                  "Sales Invoice · ${s.customerName}",
-                  SarimFormat.formatDate(s.dateEpoch),
-                  listOf(
-                    "Customer: ${s.customerName}",
-                    "Store: ${s.storeName}",
-                    "Quantity: ${SarimFormat.formatKg(s.quantityKg)}",
-                    "Rate: ${SarimFormat.formatRs(s.pricePerKg)}/kg",
-                    "Payment: ${s.paymentType}",
-                    "Total Value: ${SarimFormat.formatRs(displaySaleAmount(s))}",
-                  ),
-                ).onFailure { err ->
-                  viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
-                }
-              },
-              modifier = Modifier.fillMaxWidth(),
-            )
-          }
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimSecondaryButton(
-              text = "Edit",
-              onClick = {
-                if (isReconciledRet) {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Return Reconciled",
-                      body = "This return is already reconciled in the Calculator. Delete the Calculator settlement first to edit it.",
-                      confirmLabel = "OK",
-                      cancelLabel = null,
-                    )
-                  )
-                } else {
-                  loadSaleIntoEditor(
-                    s = s,
-                    onSetEditing = { editingSaleId = it },
-                    onSetDate = { dateEpoch = it },
-                    onSetCustomer = { customerName = it },
-                    onSetRep = { selectedRep = it },
-                    onSetMode = { mode = it },
-                    onSetQty = { quantityText = it },
-                    onSetStore = { selectedStoreKey = it },
-                    onSetPay = { paymentChoice = it },
-                    onSetSaleLedger = { saleAddToLedger = it },
-                    onSetAmtRec = { amountReceivedText = it },
-                    onSetCollExp = { expiredQtyText = it },
-                    onSetCollLedger = { collAddToLedger = it },
-                    onSetRepExp = { repExpiredQtyText = it },
-                    onSetRepRet = { repReturnedQtyText = it },
-                  )
-                }
-              },
-              modifier = Modifier.weight(1f),
-            )
-            SarimDangerButton(
-              text = "Delete",
-              icon = Icons.Rounded.Delete,
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Transaction?",
-                    body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(displaySaleAmount(s))}\nMoves to Recycle Bin for 90 days.",
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                        viewModel.repository.deleteSale(s.id)
-                      }
-                    },
-                  )
-                )
-              },
-              modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
+      )
     }
     }  // end admin-only block
   }

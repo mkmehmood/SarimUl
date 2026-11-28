@@ -502,106 +502,20 @@ fun DailyLedgerScreen(
             detailNote = if (e.note.isNotBlank()) "Note: ${e.note}" else "",
           )
         },
-        yearSummary = { items -> "${items.size} entries" },
+        yearSummary = { "" },
         monthSummary = { items ->
           val mIn = items.filter { it.item.type == "IN" }.sumOf { it.item.amount }
           val mOut = items.filter { it.item.type == "OUT" }.sumOf { it.item.amount }
           "In ${SarimFormat.formatRs(mIn, privacyHidden = state.hideMoneyFigures)} · Out ${SarimFormat.formatRs(mOut, privacyHidden = state.hideMoneyFigures)}"
         },
-        daySummary = { items -> "${items.size} row(s)" },
+        daySummary = { items ->
+          val dIn = items.filter { it.item.type == "IN" }.sumOf { it.item.amount }
+          val dOut = items.filter { it.item.type == "OUT" }.sumOf { it.item.amount }
+          "In ${SarimFormat.formatRs(dIn, privacyHidden = state.hideMoneyFigures)} · Out ${SarimFormat.formatRs(dOut, privacyHidden = state.hideMoneyFigures)}"
+        },
         emptySubtitle = "No cashbook entries match your search.",
-        hasDropdownDetails = true,
         onItemClick = { rec -> sheetEntry = rec.item },
-      ) { rec ->
-        val entry = rec.item
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          SarimSecondaryButton(
-            text = "Copy Voucher",
-            icon = Icons.Rounded.ContentCopy,
-            onClick = {
-              val voucher = buildString {
-                appendLine("=== CASHBOOK TRANSACTION STATEMENT VOUCHER ===")
-                appendLine("Date: ${SarimFormat.dateInput(entry.dateEpoch)}")
-                appendLine("Type: ${entry.type}")
-                appendLine("Amount: ${SarimFormat.formatRs(entry.amount)}")
-                appendLine("Channel: ${entry.mode}${if (entry.type == "TRANSFER" && entry.toMode.isNotBlank()) " -> ${entry.toMode}" else ""}")
-                if (entry.category.isNotBlank()) appendLine("Category: ${entry.category}")
-                if (entry.party.isNotBlank()) appendLine("Party: ${entry.party}")
-                if (entry.refNo.isNotBlank()) appendLine("Ref #: ${entry.refNo}")
-                if (entry.note.isNotBlank()) appendLine("Note: ${entry.note}")
-                append("Business: GULL AND ZUBAIR")
-              }
-              clipboardManager.setText(AnnotatedString(voucher))
-              viewModel.postStatus("Voucher copied")
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
-          val isTabOwned = SarimLinkEngine.isTabOwnedLedgerRow(entry)
-          if (isTabOwned) {
-            SarimCallout(SarimLinkEngine.tabEntryNotice(entry), palette.cyan)
-          }
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimSecondaryButton(
-              text = "Edit",
-              onClick = {
-                if (isTabOwned) {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Tab-Linked Entry",
-                      body = SarimLinkEngine.tabEntryNotice(entry),
-                      tone = DialogTone.WARNING,
-                      confirmLabel = "OK",
-                      cancelLabel = null,
-                    )
-                  )
-                  return@SarimSecondaryButton
-                }
-                editingId = entry.id
-                entryType = entry.type
-                dateEpoch = entry.dateEpoch
-                amountText = entry.amount.toString()
-                modeText = entry.mode
-                toModeText = entry.toMode
-                partyText = entry.party
-                refText = entry.refNo
-                noteText = entry.note
-                selectedCategory = entry.category
-                selectedScope = entry.scope.ifBlank { "Business" }
-              },
-              modifier = Modifier.weight(1f),
-            )
-            SarimDangerButton(
-              text = "Delete",
-              onClick = {
-                if (isTabOwned) {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Tab-Linked Entry",
-                      body = SarimLinkEngine.tabEntryNotice(entry),
-                      tone = DialogTone.WARNING,
-                      confirmLabel = "OK",
-                      cancelLabel = null,
-                    )
-                  )
-                  return@SarimDangerButton
-                }
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Ledger Entry",
-                    body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
-                    tone = DialogTone.PERMANENT,
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      ledgerViewModel.deleteEntry(entry.id)
-                    },
-                  )
-                )
-              },
-              modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
+      )
     }
         Spacer(Modifier.height(24.dp))
       }

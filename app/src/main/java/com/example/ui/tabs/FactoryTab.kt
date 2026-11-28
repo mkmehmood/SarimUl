@@ -393,64 +393,11 @@ viewModel.launchSafely(
         }
         AccordionHistoryList(
           records = records,
-          yearSummary = { items -> "${items.size} entries" },
-          monthSummary = { items -> "${items.size} entries · Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
-          daySummary = { items -> "${items.size} batches" },
-          hasDropdownDetails = true,
+          yearSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+          monthSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+          daySummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
           onItemClick = { rec -> sheetBatch = rec.item },
-        ) { rec ->
-          val b = rec.item
-          val usedMats = remember(b.materialsUsedJson) { JsonCodecs.decodeFormulaMaterialsUsed(b.materialsUsedJson) }
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (usedMats.isNotEmpty()) {
-              SarimCollapsibleDropdownSection(
-                title = "MATERIALS BREAKDOWN",
-                accentColor = palette.cyan,
-                countText = "${usedMats.size}",
-              ) {
-                usedMats.forEach { mat ->
-                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(SarimDisplayNames.materialName(mat.id, mat.name, state.rawMaterials, state.formulas), color = palette.textMuted, fontSize = 12.sp)
-                    Text(SarimFormat.formatKg(mat.quantity), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
-                  }
-                }
-              }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimSecondaryButton(
-                text = "Edit",
-                onClick = {
-                  editingBatchId = b.id
-                  factoryDate = b.dateEpoch
-                  selectedFormulaId = b.formulaId
-                  unitsText = b.unitsProduced.toInt().coerceAtLeast(1).toString()
-                },
-                modifier = Modifier.weight(1f),
-              )
-              SarimDangerButton(
-                text = "Delete & Restore",
-                onClick = {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Delete Factory Batch",
-                      body = "Restore raw materials and move this ${b.formulaName} batch to Recycle Bin?",
-                      confirmLabel = "Delete",
-                      onConfirm = {
-                        viewModel.launchSafely(
-                          errorTitle = "Delete Failed",
-                          successMessage = "Deleted factory batch",
-                        ) {
-                          viewModel.repository.deleteFactoryBatch(b.id)
-                        }
-                      },
-                    )
-                  )
-                },
-                modifier = Modifier.weight(1f),
-              )
-            }
-          }
-        }
+        )
       }
     }
   }

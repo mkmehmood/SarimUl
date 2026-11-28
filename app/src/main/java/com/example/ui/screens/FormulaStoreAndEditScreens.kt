@@ -80,76 +80,64 @@ fun FormulaStoreScreen(
           }
           fun rs(v: Double) = SarimFormat.formatRs(v, privacyHidden = state.hideMoneyFigures)
 
-          Surface(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(24.dp))
-              .clickable { viewModel.openStandalone(StandaloneScreen.FormulaEdit(formula.id)) },
-            shape = RoundedCornerShape(24.dp),
-            color = palette.surface,
-            border = BorderStroke(1.dp, palette.border),
+          SarimHistoryCard(
+            title = "${formula.name.ifBlank { "Untitled" }} (1 Unit)",
+            avatarName = formula.name.ifBlank { "Untitled" },
+            tagText = "${SarimFormat.formatQty(formula.unitsAvailable, 1)} avail",
+            tone = if (desc.problems.isNotEmpty()) HistoryTone.BAD else HistoryTone.GOOD,
+            collapsible = false,
+            onClick = { viewModel.openStandalone(StandaloneScreen.FormulaEdit(formula.id)) },
           ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Text("${formula.name.ifBlank { "Untitled" }} (1 UNIT)", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
-                SarimChip("${SarimFormat.formatQty(formula.unitsAvailable, 1)} avail", palette.cyan)
-              }
-
-              if (ingredients.isEmpty()) {
-                Text("No ingredients.", color = palette.textMuted, fontSize = 12.5.sp)
-              }
-              ingredients.forEach { ing ->
-                if (ing.refType.equals("FORMULA", ignoreCase = true)) {
-                  val sub = engFormulas[ing.refId]
-                  if (sub == null) {
-                    CardLine("${ing.refName} · sub formula (removed)", "—", palette.red, valueColor = palette.red)
-                  } else {
-                    val sd = SarimFormulaEngine.describe(sub, engFormulas, engMaterials)
-                    val q = ing.qtyKg
-                    val scale = if (sd.weight > 0.0) q / sd.weight else 0.0
-                    CardLine("${sub.name.ifBlank { "Untitled" }} · sub formula (${SarimFormat.formatKg(q)})", rs(scale * sd.perUnit), palette.textPrimary, bold = true)
-                    sd.items.forEach { m ->
-                      CardLine("  ↳ ${m.name} (${SarimFormat.formatKg(m.quantity * scale)})", rs(m.costPerKg * m.quantity * scale), palette.textMuted, small = true)
-                    }
-                    if (sd.additionalCost > 0.0) {
-                      CardLine("  ↳ Additional cost", rs(sd.additionalCost * scale), palette.textMuted, small = true)
-                    }
-                  }
-                } else {
-                  val mat = engMaterials[ing.refId]
-                    ?: engMaterials.values.firstOrNull { ing.refName.isNotBlank() && it.name.trim().equals(ing.refName.trim(), ignoreCase = true) }
-                  val label = (mat?.name ?: ing.refName).ifBlank { "Untitled" }
-                  CardLine("$label (${SarimFormat.formatKg(ing.qtyKg)})", rs((mat?.costPerKg ?: 0.0) * ing.qtyKg), palette.textMuted)
-                }
-              }
-
-              if (desc.ownAdditionalCost > 0.0) {
-                CardLine("Additional Cost (${rs(desc.ownAdditionalCost)} per unit)", rs(desc.ownAdditionalCost), palette.red, valueColor = palette.red)
-              }
-              if (desc.problems.isNotEmpty()) {
-                val names = desc.problems.map { "${it.name} (${if (it.type == "cycle") "circular" else "removed"})" }.distinct().joinToString(", ")
-                Text("Check linked formulas: $names", color = palette.red, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-              }
-
-              HorizontalDivider(color = palette.border)
-
-              SummaryLine("Unit Weight", SarimFormat.formatKg(desc.weight))
-              SummaryLine("Raw Material Cost per Unit", rs(desc.raw))
-              if (desc.extraCost > 0.0) SummaryLine("Additional cost from linked formulas", rs(desc.extraCost))
-              SummaryLine("Total Cost per Unit", rs(desc.perUnit), bold = true, valueColor = palette.green)
-              SummaryLine("Cost per kg (Sales/Calc)", rs(desc.perKg))
-
-              val footerParts = buildList {
-                if (usedByStores.isNotEmpty()) add("Used by ${usedByStores.joinToString(", ")}")
-                if (linkedInFormulas.isNotEmpty()) add("Linked in ${linkedInFormulas.joinToString(", ")}")
-                add("Tap to edit")
-              }
-              Text(footerParts.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
+            if (ingredients.isEmpty()) {
+              Text("No ingredients.", color = palette.textMuted, fontSize = 12.5.sp)
             }
+            ingredients.forEach { ing ->
+              if (ing.refType.equals("FORMULA", ignoreCase = true)) {
+                val sub = engFormulas[ing.refId]
+                if (sub == null) {
+                  CardLine("${ing.refName} · sub formula (removed)", "—", palette.red, valueColor = palette.red)
+                } else {
+                  val sd = SarimFormulaEngine.describe(sub, engFormulas, engMaterials)
+                  val q = ing.qtyKg
+                  val scale = if (sd.weight > 0.0) q / sd.weight else 0.0
+                  CardLine("${sub.name.ifBlank { "Untitled" }} · sub formula (${SarimFormat.formatKg(q)})", rs(scale * sd.perUnit), palette.textPrimary, bold = true)
+                  sd.items.forEach { m ->
+                    CardLine("  ↳ ${m.name} (${SarimFormat.formatKg(m.quantity * scale)})", rs(m.costPerKg * m.quantity * scale), palette.textMuted, small = true)
+                  }
+                  if (sd.additionalCost > 0.0) {
+                    CardLine("  ↳ Additional cost", rs(sd.additionalCost * scale), palette.textMuted, small = true)
+                  }
+                }
+              } else {
+                val mat = engMaterials[ing.refId]
+                  ?: engMaterials.values.firstOrNull { ing.refName.isNotBlank() && it.name.trim().equals(ing.refName.trim(), ignoreCase = true) }
+                val label = (mat?.name ?: ing.refName).ifBlank { "Untitled" }
+                CardLine("$label (${SarimFormat.formatKg(ing.qtyKg)})", rs((mat?.costPerKg ?: 0.0) * ing.qtyKg), palette.textMuted)
+              }
+            }
+
+            if (desc.ownAdditionalCost > 0.0) {
+              CardLine("Additional Cost (${rs(desc.ownAdditionalCost)} per unit)", rs(desc.ownAdditionalCost), palette.red, valueColor = palette.red)
+            }
+            if (desc.problems.isNotEmpty()) {
+              val names = desc.problems.map { "${it.name} (${if (it.type == "cycle") "circular" else "removed"})" }.distinct().joinToString(", ")
+              Text("Check linked formulas: $names", color = palette.red, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+
+            HorizontalDivider(color = palette.border)
+
+            SummaryLine("Unit Weight", SarimFormat.formatKg(desc.weight))
+            SummaryLine("Raw Material Cost per Unit", rs(desc.raw))
+            if (desc.extraCost > 0.0) SummaryLine("Additional cost from linked formulas", rs(desc.extraCost))
+            SummaryLine("Total Cost per Unit", rs(desc.perUnit), bold = true, valueColor = palette.green)
+            SummaryLine("Cost per kg (Sales/Calc)", rs(desc.perKg))
+
+            val footerParts = buildList {
+              if (usedByStores.isNotEmpty()) add("Used by ${usedByStores.joinToString(", ")}")
+              if (linkedInFormulas.isNotEmpty()) add("Linked in ${linkedInFormulas.joinToString(", ")}")
+              add("Tap to edit")
+            }
+            Text(footerParts.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
           }
         }
       }

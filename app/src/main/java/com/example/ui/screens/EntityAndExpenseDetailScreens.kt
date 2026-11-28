@@ -142,19 +142,15 @@ fun EntityDetailsScreen(
             detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
           )
         },
-        yearSummary = { items -> "${items.size} tx" },
-        monthSummary = { items -> "${items.size} entry" },
-        daySummary = { items -> "${items.size} row" },
+        yearSummary = { "" },
+        monthSummary = { "" },
+        daySummary = { "" },
         emptySubtitle = "No payment history found for ${entity.name}.",
-      ) { rec ->
-        if (rec.item.photoUri.isNotBlank()) {
-          SarimSecondaryButton(
-            text = "View Attached Photo",
-            onClick = { viewModel.openPhotoViewer(listOf(rec.item.photoUri), 0) },
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-      }
+        actions = HistoryRecordActions<com.example.data.local.PaymentTransactionEntity>(
+          extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
+          onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
+        ),
+      )
     }
     Spacer(Modifier.height(24.dp))
   }
@@ -300,18 +296,14 @@ viewModel.launchSafely(
           )
         },
         yearSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
-        monthSummary = { items -> "${items.size} entries" },
-        daySummary = { items -> "${items.size} row" },
+        monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
+        daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         emptySubtitle = "No expense records for $expenseName in this range.",
-      ) { rec ->
-        if (rec.item.photoUri.isNotBlank()) {
-          SarimSecondaryButton(
-            text = "View Attached Photo",
-            onClick = { viewModel.openPhotoViewer(listOf(rec.item.photoUri), 0) },
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-      }
+        actions = HistoryRecordActions<com.example.data.local.PaymentTransactionEntity>(
+          extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
+          onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
+        ),
+      )
     }
 
     if (txs.isNotEmpty()) {

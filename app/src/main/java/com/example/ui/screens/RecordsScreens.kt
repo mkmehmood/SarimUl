@@ -611,36 +611,32 @@ viewModel.launchSafely(
               ),
             )
           },
-          yearSummary = { items -> "${items.size} entries · Purchased ${SarimFormat.formatRs(items.sumOf { it.item.totalAmount }, showSymbol = false, privacyHidden = state.hideMoneyFigures)}" },
-          monthSummary = { items -> "${items.size} purchase(s)" },
+          yearSummary = { items -> "Purchased ${SarimFormat.formatRs(items.sumOf { it.item.totalAmount }, showSymbol = false, privacyHidden = state.hideMoneyFigures)}" },
+          monthSummary = { items -> "${SarimFormat.formatKg(items.sumOf { it.item.totalKg })} · ${SarimFormat.formatRs(items.sumOf { it.item.totalAmount }, showSymbol = false, privacyHidden = state.hideMoneyFigures)}" },
           daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.totalKg }) },
           emptySubtitle = "No purchases recorded yet.",
-        ) { rec ->
-          val p = rec.item
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            SarimDangerButton(
-              text = "Delete Purchase",
-              onClick = {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Purchase Lot",
-                    body = "Deduct ${SarimFormat.formatKg(p.totalKg)} from ${p.materialName} and move this purchase to Recycle Bin?",
-                    tone = DialogTone.PERMANENT,
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(
-                        errorTitle = "Delete Purchase Failed",
-                        successMessage = "Deleted purchase lot",
-                      ) {
-                        viewModel.repository.deletePurchaseLot(p.id)
-                      }
-                    },
-                  )
+          actions = HistoryRecordActions<com.example.data.local.RawMaterialPurchaseEntity>(
+            deleteLabel = "Delete Purchase",
+            onDelete = { p ->
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Purchase Lot",
+                  body = "Deduct ${SarimFormat.formatKg(p.totalKg)} from ${p.materialName} and move this purchase to Recycle Bin?",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Delete Purchase Failed",
+                      successMessage = "Deleted purchase lot",
+                    ) {
+                      viewModel.repository.deletePurchaseLot(p.id)
+                    }
+                  },
                 )
-              },
-            )
-          }
-        }
+              )
+            },
+          ),
+        )
       }
     }
   }
