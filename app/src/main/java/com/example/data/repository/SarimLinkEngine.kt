@@ -985,8 +985,10 @@ object SarimLinkEngine {
     payments: List<PaymentTransactionEntity>,
     factoryBatches: List<FactoryBatchEntity> = emptyList(),
     cutoffEpoch: Long = 0L,
+    endEpoch: Long = Long.MAX_VALUE,
   ): CashInHandBreakdown {
-    val activeSales = sales.filter { !it.isDeleted && !it.isRepSale && it.dateEpoch >= cutoffEpoch }
+    fun inRange(epoch: Long) = epoch >= cutoffEpoch && epoch <= endEpoch
+    val activeSales = sales.filter { !it.isDeleted && !it.isRepSale && inRange(it.dateEpoch) }
     val salesCash = round2(activeSales.filter { it.mode == "SALE" && it.paymentType == "CASH" }.sumOf { it.totalValue })
     val collectionsCash = round2(
       activeSales.filter { it.mode == "COLLECTION" || it.isCollection }.sumOf { s ->
@@ -998,12 +1000,12 @@ object SarimLinkEngine {
         s.collectedAmount.takeIf { it > 0.0 } ?: s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue
       }
     )
-    val calcCash = round2(settlements.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }.sumOf { it.receivedCash })
-    val activePay = payments.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }
+    val calcCash = round2(settlements.filter { !it.isDeleted && inRange(it.dateEpoch) }.sumOf { it.receivedCash })
+    val activePay = payments.filter { !it.isDeleted && inRange(it.dateEpoch) }
     val paymentInCash = round2(activePay.filter { it.type == "PAYMENT_IN" && !it.isPayable }.sumOf { it.amount })
     val paymentOutCash = round2(activePay.filter { it.type == "PAYMENT_OUT" }.sumOf { it.amount })
     val expensesCash = round2(activePay.filter { it.type == "EXPENSE" }.sumOf { it.amount })
-    val factoryAddCost = round2(factoryBatches.filter { !it.isDeleted && it.dateEpoch >= cutoffEpoch }.sumOf { it.additionalCost })
+    val factoryAddCost = round2(factoryBatches.filter { !it.isDeleted && inRange(it.dateEpoch) }.sumOf { it.additionalCost })
     val net = round2(salesCash + collectionsCash - moneyOutCash + calcCash + paymentInCash - paymentOutCash - expensesCash - factoryAddCost)
     return CashInHandBreakdown(
       salesCash = salesCash,
@@ -1016,6 +1018,37 @@ object SarimLinkEngine {
       factoryAdditionalCost = factoryAddCost,
       netCash = net,
     )
+  }
+
+  /** Web `calculateCashTracker` "TOTAL OUTSTANDING CREDITS" card for one date window. */
+  data class OutstandingCredits(
+    val salesTabCredits: Double,
+    val calculatorCredits: Double,
+  ) {
+    val total: Double get() = salesTabCredits + calculatorCredits
+  }
+
+  fun computeOutstandingCredits(
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    cutoffEpoch: Long = 0L,
+    endEpoch: Long = Long.MAX_VALUE,
+  ): OutstandingCredits {
+    fun inRange(epoch: Long) = epoch >= cutoffEpoch && epoch <= endEpoch
+    var salesCredits = 0.0
+    sales.filter { !it.isDeleted && !it.isRepSale && inRange(it.dateEpoch) }.forEach { s ->
+      val value = s.collectedAmount.takeIf { it > 0.0 } ?: s.amountReceived.takeIf { it > 0.0 } ?: s.totalValue
+      when {
+        s.mode == "COLLECTION" || s.isCollection -> salesCredits -= value
+        s.mode == "MONEY_OUT" || s.isMoneyOut -> salesCredits += value
+        s.paymentType == "PARTIAL_PAYMENT" -> salesCredits -= value
+        s.mode == "SALE" && s.paymentType == "CREDIT" && !s.creditReceived ->
+          salesCredits += (s.totalValue - s.partialPaymentReceived).coerceAtLeast(0.0)
+      }
+    }
+    val calc = settlements.filter { !it.isDeleted && inRange(it.dateEpoch) }
+      .sumOf { it.creditIssuedValue - it.recoveredCredit }
+    return OutstandingCredits(round2(salesCredits), round2(calc))
   }
 
   // =====================================================================
