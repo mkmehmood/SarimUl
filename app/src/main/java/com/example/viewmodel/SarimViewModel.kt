@@ -356,6 +356,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   init {
+    startAutoSync()
     syncManager.onQuotaEvent = { reads, writes ->
       viewModelScope.launch {
         if (reads > 0) uuidRegistry.trackFirestoreRead(reads)
@@ -392,6 +393,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
 
   override fun onCleared() {
     super.onCleared()
+    stopAutoSync()
     pingPullJob?.cancel()
     syncManager.stopRealtimeListeners()
     feedbackManager.release()
@@ -1039,6 +1041,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
 
   fun onAppResumed() {
     checkDateRollover()
+    autoSyncPending()
     val suppressed = com.example.util.AppLockGuard.consumeIfSuppressed()
     val st = _uiState.value
     if (suppressed) {
@@ -1786,6 +1789,78 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       } finally {
         _uiState.update { it.copy(isSyncing = false) }
       }
+    }
+  }
+
+
+  // ---- Automatic background sync of pending local changes (silent: no dialogs) ----
+  private val autoSyncMutex = kotlinx.coroutines.sync.Mutex()
+  private var autoSyncJob: Job? = null
+  private var autoSyncNetCallback: ConnectivityManager.NetworkCallback? = null
+
+  /** Pushes pending local changes when signed in and online. Never shows dialogs; failures retry on the next tick. */
+  private fun autoSyncPending() {
+    val st0 = _uiState.value
+    if (!st0.isAuthenticated || st0.isOfflineSession || st0.showSplash || st0.isSyncing) return
+    if (!isNetworkConnected()) return
+    if (!autoSyncMutex.tryLock()) return
+    viewModelScope.launch {
+      try {
+        val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
+        if (pending <= 0) {
+          _uiState.update { if (it.pendingSyncCount != 0) it.copy(pendingSyncCount = 0) else it }
+          return@launch
+        }
+        val st = _uiState.value
+        val result = syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
+        if (result.isSuccess) {
+          runCatching { repository.syncLedgerFromTabs() }
+        }
+        refreshDiagnostics()
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        // retried automatically on the next tick / network change / resume
+      } finally {
+        autoSyncMutex.unlock()
+      }
+    }
+  }
+
+  private fun startAutoSync() {
+    autoSyncJob?.cancel()
+    autoSyncJob = viewModelScope.launch {
+      // Re-check every 20s: covers changes saved while online and retries after failures.
+      while (true) {
+        delay(20_000L)
+        if (_uiState.value.pendingSyncCount > 0) autoSyncPending()
+      }
+    }
+    // Sync right away when pending changes appear or the connection returns.
+    viewModelScope.launch {
+      _uiState
+        .map { it.pendingSyncCount > 0 && it.isAuthenticated && !it.isOfflineSession }
+        .distinctUntilChanged()
+        .filter { it }
+        .collect { delay(1_500L); autoSyncPending() }
+    }
+    runCatching {
+      val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+      val cb = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) {
+          viewModelScope.launch { delay(1_500L); autoSyncPending() }
+        }
+      }
+      cm?.registerDefaultNetworkCallback(cb)
+      autoSyncNetCallback = cb
+    }
+  }
+
+  private fun stopAutoSync() {
+    autoSyncJob?.cancel()
+    runCatching {
+      val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+      autoSyncNetCallback?.let { cm?.unregisterNetworkCallback(it) }
     }
   }
 
