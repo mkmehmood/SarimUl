@@ -1,6 +1,10 @@
 package com.example
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -9,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.remote.SarimPush
 import com.example.data.remote.authStateFlow
 import com.example.ui.components.FullScreenPhotoViewer
 import com.example.ui.components.GlassAlertDialog
@@ -17,9 +22,27 @@ import com.example.ui.theme.SarimTheme
 import com.example.viewmodel.SarimViewModel
 
 class MainActivity : ComponentActivity() {
+  /** Set when the user taps an approval alert; consumed once the admin session is ready. */
+  private var approvalTap by mutableStateOf(false)
+
+  private fun readPushTap(intent: Intent?) {
+    if (intent?.getStringExtra(SarimPush.EXTRA_TYPE) == SarimPush.TYPE_APPROVAL) {
+      approvalTap = true
+      intent.removeExtra(SarimPush.EXTRA_TYPE)
+    }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    readPushTap(intent)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    SarimPush.ensureChannel(applicationContext)
+    if (savedInstanceState == null) readPushTap(intent)
     setContent {
       val viewModel: SarimViewModel = viewModel()
       val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -39,6 +62,24 @@ class MainActivity : ComponentActivity() {
 
       LaunchedEffect(firebaseUser?.uid) {
         viewModel.onFirebaseAuthChanged(firebaseUser)
+      }
+
+      val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.registerPush()
+      }
+      LaunchedEffect(state.isAuthenticated, state.isAdmin, state.isOfflineSession) {
+        if (state.isAuthenticated && state.isAdmin && !state.isOfflineSession) {
+          if (SarimPush.canPostNotifications(context)) viewModel.registerPush()
+          else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+          }
+        }
+      }
+      LaunchedEffect(approvalTap, state.isAuthenticated, state.isAdmin, state.isLockedByFingerprint, state.showSplash) {
+        if (approvalTap && state.isAuthenticated && !state.showSplash && !state.isLockedByFingerprint) {
+          viewModel.openApprovalsFromPush()
+          approvalTap = false
+        }
       }
 
       SarimTheme(themeMode = state.prefs.themeMode) {

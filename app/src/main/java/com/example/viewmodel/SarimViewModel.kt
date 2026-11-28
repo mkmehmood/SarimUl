@@ -819,6 +819,18 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  /** Admin devices register for approval alerts once notifications are allowed (web `registerAdminPush`). */
+  fun registerPush() {
+    val st = _uiState.value
+    if (!st.isAuthenticated || !st.isAdmin || st.isOfflineSession || !isNetworkConnected()) return
+    viewModelScope.launch { runCatching { syncManager.registerPushToken() } }
+  }
+
+  /** Tap on an approval alert (web `openApprovalFromPush`). */
+  fun openApprovalsFromPush() {
+    if (_uiState.value.isAdmin) openStandalone(StandaloneScreen.Approvals)
+  }
+
   fun unlockFingerprint() {
     _uiState.update { it.copy(isLockedByFingerprint = false) }
   }
@@ -853,6 +865,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           confirmLabel = "Logout",
           onConfirm = {
             viewModelScope.launch {
+              withTimeoutOrNull(2_500L) { runCatching { syncManager.removePushToken() } }
               pingPullJob?.cancel()
               syncManager.stopRealtimeListeners()
               syncManager.clearCachedWorkspace()

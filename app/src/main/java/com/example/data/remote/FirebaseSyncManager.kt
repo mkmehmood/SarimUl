@@ -36,6 +36,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -891,6 +894,51 @@ class FirebaseSyncManager(
     }
   }
 
+  private val pushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+  /** Admin devices only (web `registerAdminPush`): store this device's FCM token for the workspace. */
+  suspend fun registerPushToken(): Result<Unit> {
+    val ctx = appContext ?: return Result.failure(IllegalStateException("No context"))
+    return try {
+      val user = _auth?.currentUser ?: return Result.failure(IllegalStateException("Not signed in"))
+      val rootUid = resolveWorkspaceRootUid()
+      val token = FirebaseMessaging.getInstance().token.await()
+      val docId = SarimPush.pushDocId(user.uid, SarimPush.deviceId(ctx))
+      db.collection("users").document(rootUid).collection(SarimPush.COL_FCM_TOKENS).document(docId)
+        .set(SarimPush.tokenDocMap(user.uid, token)).await()
+      SarimPush.rememberTokenRoot(ctx, rootUid)
+      Result.success(Unit)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.w("Push", "Could not register push token: ${e.message}")
+      Result.failure(e)
+    }
+  }
+
+  /** Web `removePushToken`: call before signing out so a signed-out device stops getting alerts. */
+  suspend fun removePushToken() {
+    val ctx = appContext ?: return
+    val root = SarimPush.tokenRoot(ctx) ?: return
+    val uid = _auth?.currentUser?.uid
+    if (uid != null) {
+      runCatching {
+        db.collection("users").document(root).collection(SarimPush.COL_FCM_TOKENS)
+          .document(SarimPush.pushDocId(uid, SarimPush.deviceId(ctx))).delete().await()
+      }
+    }
+    SarimPush.rememberTokenRoot(ctx, null)
+    runCatching { FirebaseMessaging.getInstance().deleteToken().await() }
+  }
+
+  private fun notifyAdminsInBackground(pendingId: String) {
+    pushScope.launch {
+      runCatching {
+        SarimPush.notifyAdmins({ _auth?.currentUser?.getIdToken(false)?.await()?.token }, pendingId)
+      }
+    }
+  }
+
   suspend fun submitPendingBatch(
     items: List<PendingSubmitItem>,
     whoUid: String,
@@ -928,6 +976,7 @@ class FirebaseSyncManager(
         batch.commit().await()
       }
       recordQuota(writes = count)
+      if (count > 0) notifyAdminsInBackground(SarimWebSchema.pendingId(items.first().collection, items.first().docId))
       Result.success(count)
     } catch (e: CancellationException) {
       throw e
