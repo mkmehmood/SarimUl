@@ -152,8 +152,6 @@ fun EntityDetailsScreen(
   val realTxs = txs.filter { it.type != "EXPENSE" }
   val totalIn = realTxs.filter { it.type == "PAYMENT_IN" }.sumOf { it.amount }
   val totalOut = realTxs.filter { it.type == "PAYMENT_OUT" }.sumOf { it.amount }
-  // Web "comfortable" mode: with 6 or fewer entries the search box and filter chips are hidden.
-  val comfortable = txs.size <= 6
 
   fun balanceText(b: Double): String =
     if (b < -0.005) "${SarimFormat.formatRs(-b, false, hide)} REC" else SarimFormat.formatRs(b.coerceAtLeast(0.0), false, hide)
@@ -168,7 +166,7 @@ fun EntityDetailsScreen(
     // Header: avatar + ledger page badge, name, ⋮ menu, phone · wallet (web `#manageEntityTitle`)
     SarimCard {
       Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        InitialsAvatar(entity.name, avatarColorForName(entity.name), sizeDp = 48.dp, badgeText = entity.ledgerPage)
+        InitialsAvatar(entity.name, avatarColorForName(entity.name), sizeDp = 50.dp, badgeText = entity.ledgerPage)
         Column(modifier = Modifier.weight(1f)) {
           Text(entity.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
           if (entity.phone.isNotBlank() || entity.wallet.isNotBlank()) {
@@ -177,8 +175,7 @@ fun EntityDetailsScreen(
                 Text(
                   entity.phone,
                   color = palette.cyan,
-                  fontSize = 12.5.sp,
-                  fontWeight = FontWeight.Medium,
+                  fontSize = 13.sp,
                   modifier = Modifier.testTag("manageEntityStats").combinedClickable(
                     onClick = {
                       runCatching {
@@ -193,12 +190,15 @@ fun EntityDetailsScreen(
                 )
               }
               if (entity.phone.isNotBlank() && entity.wallet.isNotBlank()) {
-                Text(" · ", color = palette.textMuted, fontSize = 12.5.sp)
+                Text(" · ", color = palette.textMuted, fontSize = 13.sp)
               }
               if (entity.wallet.isNotBlank()) {
-                Text(entity.wallet, color = palette.textMuted, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                Text(entity.wallet, color = palette.textMuted, fontSize = 13.sp)
               }
             }
+          }
+          if (entity.address.isNotBlank()) {
+            Text(entity.address, color = palette.textMuted, fontSize = 11.5.sp)
           }
         }
         Box {
@@ -228,7 +228,7 @@ fun EntityDetailsScreen(
             DropdownMenuItem(
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("entity_menu_pdf"),
               leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
-              text = { Text("Statement PDF", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
+              text = { Text("Share statement", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
               onClick = {
                 menuExpanded = false
                 showStatementFlow = true
@@ -293,13 +293,13 @@ fun EntityDetailsScreen(
       val bal = entity.currentBalance
       val settled = kotlin.math.abs(bal) < 0.005
       val label = when {
-        bal > 0.005 -> "Payable"
-        bal < -0.005 -> "Receivable"
-        else -> "Balance"
+        bal > 0.005 -> "PAYABLE"
+        bal < -0.005 -> "RECEIVABLE"
+        else -> "BALANCE"
       }
       val tone = if (bal > 0.005) palette.red else palette.green
       SarimCard(tonalAccent = tone) {
-        Text(label, color = palette.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Text(
           if (settled) "Settled" else SarimFormat.formatRs(kotlin.math.abs(bal), privacyHidden = hide),
           color = tone,
@@ -307,31 +307,29 @@ fun EntityDetailsScreen(
         )
         if (txs.isNotEmpty()) {
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Total In", SarimFormat.formatRs(totalIn, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.green)
-            SarimStatTile("Total Out", SarimFormat.formatRs(totalOut, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.red)
+            SarimStatTile("TOTAL IN", SarimFormat.formatRs(totalIn, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.green)
+            SarimStatTile("TOTAL OUT", SarimFormat.formatRs(totalOut, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.red)
           }
         }
       }
     }
 
-    if (!comfortable) {
-      SarimTextField(
-        value = searchQuery,
-        onValueChange = { searchQuery = it },
-        label = "",
-        placeholder = "Search history...",
-        leadingIcon = Icons.Rounded.Search,
-        testTag = "entity-trans-search",
-      )
+    SarimTextField(
+      value = searchQuery,
+      onValueChange = { searchQuery = it },
+      label = "",
+      placeholder = "Search history...",
+      leadingIcon = Icons.Rounded.Search,
+      testTag = "entity-trans-search",
+    )
 
-      SarimToggleGroup(
-        options = listOf("All", "Payment In", "Payment Out", "Transfers"),
-        selected = filter,
-        labelOf = { it },
-        onSelect = { filter = it },
-        testTagPrefix = "entity_filter",
-      )
-    }
+    SarimToggleGroup(
+      options = listOf("All", "Payment In", "Payment Out", "Transfers"),
+      selected = filter,
+      labelOf = { it },
+      onSelect = { filter = it },
+      testTagPrefix = "entity_filter",
+    )
 
     if (txs.isEmpty()) {
       // Web empty ledger: "No payments yet" + "Record first payment".
@@ -352,7 +350,7 @@ fun EntityDetailsScreen(
         }
       }
     } else {
-      SarimCard {
+      run {
         val outLabel = "Out"
         val inLabel = "In"
         AccordionHistoryList(
@@ -383,13 +381,7 @@ fun EntityDetailsScreen(
             val got = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
             "$outLabel ${SarimFormat.formatRs(out, false, hide)} · $inLabel ${SarimFormat.formatRs(got, false, hide)}"
           },
-          daySummary = { items ->
-            if (items.size <= 1) "" else {
-              val out = items.filter { it.item.type == "PAYMENT_OUT" }.sumOf { it.item.amount }
-              val got = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
-              "$outLabel ${SarimFormat.formatRs(out, false, hide)} · $inLabel ${SarimFormat.formatRs(got, false, hide)}"
-            }
-          },
+          daySummary = { "" },
           emptyTitle = "No matching history",
           emptySubtitle = "No matching history. Clear the search or pick All.",
           itemKey = { it.id },
