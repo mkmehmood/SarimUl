@@ -10,13 +10,21 @@ import java.io.File
 import java.io.FileOutputStream
 
 /** One column of the statement table: header text, width in PDF points, and alignment. */
-data class PdfColumn(val title: String, val width: Float, val right: Boolean = false)
+data class PdfColumn(
+  val title: String,
+  val width: Float,
+  val right: Boolean = false,
+  val center: Boolean = false,
+  val bold: Boolean = false,
+  val color: Int? = null,
+  /** Per-cell text colour (web `didParseCell`), e.g. type / balance columns. */
+  val colorFor: ((String) -> Int?)? = null,
+)
 
 object PdfExporter {
   /**
-   * Port of the web statement PDFs (`exportEntityToPDF` / `exportCustomerToPDF` / rep statement):
-   * branded header, a grid table with a coloured header row and zebra rows, a summary box, and a
-   * "Generated on … | GULL AND ZUBAIR NASWAR DEALERS" + "Page i of n" footer on every page.
+   * Generic report in the web statement look (banner, info block, grid table, summary box, footer).
+   * Account statements build a [StatementPdfSpec] directly; every other report comes through here.
    */
   fun createStatementPdf(
     context: Context,
@@ -32,144 +40,29 @@ object PdfExporter {
     closingLabel: String,
     closingValue: String,
     accent: Int = Color.rgb(6, 78, 59),
-  ): Result<File> {
-    return try {
-      val pageW = 595
-      val pageH = 842
-      val m = 36f
-      val rowH = 18f
-      val footerReserve = 56f
-      val firstStart = 128f
-      val nextStart = 48f
-      val summaryH = 26f + summary.size * 15f + 30f
-
-      // Pass 1: decide which rows land on which page (and whether the summary needs its own page).
-      val pages = mutableListOf<IntRange>()
-      var idx = 0
-      var first = true
-      while (true) {
-        val start = if (first) firstStart else nextStart
-        val cap = (((pageH - footerReserve - start) - rowH) / rowH).toInt().coerceAtLeast(1)
-        val end = minOf(rows.size, idx + cap)
-        pages.add(idx until end)
-        idx = end
-        first = false
-        if (idx >= rows.size) break
-      }
-      run {
-        val lastStart = if (pages.size == 1) firstStart else nextStart
-        val usedRows = if (rows.isEmpty()) 1 else pages.last().count()
-        val endY = lastStart + rowH * (1 + usedRows) + 12f
-        if (endY + summaryH > pageH - footerReserve) pages.add(IntRange.EMPTY)
-      }
-
-      val doc = PdfDocument()
-      fun paint(size: Float, color: Int = Color.BLACK, bold: Boolean = false) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = size
-        this.color = color
-        isFakeBoldText = bold
-      }
-      fun fit(text: String, p: Paint, maxW: Float): String {
-        if (p.measureText(text) <= maxW) return text
-        var t = text
-        while (t.length > 1 && p.measureText("$t…") > maxW) t = t.dropLast(1)
-        return "$t…"
-      }
-      val tableW = columns.sumOf { it.width.toDouble() }.toFloat()
-      val grid = Paint().apply { color = Color.rgb(180, 180, 180); strokeWidth = 0.6f; style = Paint.Style.STROKE }
-      val zebra = Paint().apply { color = Color.rgb(246, 247, 249); style = Paint.Style.FILL }
-      val headFill = Paint().apply { color = accent; style = Paint.Style.FILL }
-
-      pages.forEachIndexed { pi, range ->
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pi + 1).create())
-        val c = page.canvas
-        var y: Float
-        if (pi == 0) {
-          c.drawText("GULL AND ZUBAIR NASWAR DEALERS", m, 44f, paint(17f, accent, true))
-          c.drawText(kindTitle, m, 64f, paint(12.5f, Color.rgb(40, 40, 40), true))
-          c.drawText(fit(name, paint(11f, Color.BLACK, true), pageW - 2 * m), m, 82f, paint(11f, Color.BLACK, true))
-          val meta = buildString {
-            if (phone.isNotBlank() && phone != "N/A") append("Phone: $phone   ")
-            append("Period: $rangeLabel   Date: $generatedLabel")
-          }
-          c.drawText(fit(meta, paint(9f, Color.DKGRAY), pageW - 2 * m), m, 98f, paint(9f, Color.DKGRAY))
-          c.drawLine(m, 108f, pageW - m, 108f, Paint().apply { color = accent; strokeWidth = 1.2f })
-          y = firstStart
-        } else {
-          y = nextStart
-        }
-
-        if (range.count() > 0 || rows.isEmpty()) {
-          // header row
-          c.drawRect(m, y, m + tableW, y + rowH, headFill)
-          var x = m
-          val hp = paint(8f, Color.WHITE, true)
-          columns.forEach { col ->
-            val t = fit(col.title, hp, col.width - 8f)
-            val tx = if (col.right) x + col.width - 4f - hp.measureText(t) else x + 4f
-            c.drawText(t, tx, y + 12.2f, hp)
-            x += col.width
-          }
-          y += rowH
-          if (rows.isEmpty()) {
-            c.drawText("No transactions recorded for this period.", m + 4f, y + 16f, paint(10f, Color.GRAY))
-            y += rowH
-          }
-          val bp = paint(7.6f)
-          range.forEachIndexed { n, ri ->
-            val row = rows[ri]
-            if (n % 2 == 1) c.drawRect(m, y, m + tableW, y + rowH, zebra)
-            var cx = m
-            columns.forEachIndexed { ci, col ->
-              val t = fit(row.getOrElse(ci) { "" }, bp, col.width - 8f)
-              val tx = if (col.right) cx + col.width - 4f - bp.measureText(t) else cx + 4f
-              c.drawText(t, tx, y + 12f, bp)
-              cx += col.width
-            }
-            y += rowH
-          }
-          c.drawRect(m, y - rowH * (range.count() + (if (rows.isEmpty()) 1 else 0) + 1), m + tableW, y, grid)
-        }
-
-        // summary box on the last page
-        if (pi == pages.lastIndex) {
-          val top = y + 12f
-          val box = Paint().apply { color = Color.rgb(245, 247, 250); style = Paint.Style.FILL }
-          val edge = Paint().apply { color = accent; style = Paint.Style.STROKE; strokeWidth = 0.8f }
-          c.drawRoundRect(m, top, m + tableW, top + summaryH, 6f, 6f, box)
-          c.drawRoundRect(m, top, m + tableW, top + summaryH, 6f, 6f, edge)
-          var sy = top + 18f
-          val lp = paint(8.5f, Color.DKGRAY)
-          val vp = paint(8.5f, Color.BLACK, true)
-          summary.forEach { (k, v) ->
-            c.drawText(k, m + 10f, sy, lp)
-            c.drawText(v, m + tableW - 10f - vp.measureText(v), sy, vp)
-            sy += 15f
-          }
-          val cp = paint(10f, accent, true)
-          c.drawText(closingLabel, m + 10f, sy + 8f, cp)
-          c.drawText(closingValue, m + tableW - 10f - cp.measureText(closingValue), sy + 8f, cp)
-        }
-
-        // footer
-        val fp = paint(7f, Color.rgb(160, 160, 160))
-        val pageText = "Page ${pi + 1} of ${pages.size}"
-        c.drawText(pageText, (pageW - fp.measureText(pageText)) / 2f, pageH - 30f, fp)
-        val gen = "Generated on $generatedLabel | GULL AND ZUBAIR NASWAR DEALERS"
-        c.drawText(gen, (pageW - fp.measureText(gen)) / 2f, pageH - 18f, fp)
-        doc.finishPage(page)
-      }
-
-      val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-      val safe = fileBaseName.replace(Regex("[^A-Za-z0-9_.\\-]"), "_")
-      val file = File(dir, "$safe.pdf")
-      FileOutputStream(file).use { out -> doc.writeTo(out) }
-      doc.close()
-      Result.success(file)
-    } catch (e: Exception) {
-      Result.failure(e)
-    }
-  }
+  ): Result<File> = StatementPdf.create(
+    context,
+    StatementPdfSpec(
+      fileBaseName = fileBaseName,
+      title = kindTitle,
+      rangeLabel = rangeLabel,
+      accent = accent,
+      infoLeft = buildList {
+        add("Name" to name)
+        if (phone.isNotBlank() && phone != "N/A") add("Phone" to phone)
+      },
+      generated = generatedLabel.substringBefore(" at "),
+      footerStamp = generatedLabel,
+      columns = columns.map { if (it.right) it.copy(bold = true) else it },
+      rows = rows,
+      totals = StatementTotals(
+        fill = Color.rgb(245, 247, 250),
+        kv = summary.filter { it.second.isNotBlank() },
+        closingKv = if (closingLabel.isNotBlank() || closingValue.isNotBlank()) closingLabel to closingValue else null,
+      ),
+      emptyText = "No records for this period.",
+    ),
+  )
 
   /** Statement-style PDF for any [ReportSpec]. */
   fun createReportPdf(context: Context, spec: ReportSpec, generatedLabel: String): Result<File> =

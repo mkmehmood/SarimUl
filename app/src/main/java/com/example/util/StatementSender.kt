@@ -16,6 +16,14 @@ data class StatementSpec(
   val closingValue: String,
   /** Text for the "Total balance" line of the WhatsApp / SMS message. */
   val closingForText: String,
+  /** Header info block (label to value), left and right of the web statement header. */
+  val infoLeft: List<Pair<String, String>> = emptyList(),
+  val infoRight: List<Pair<String, String>> = emptyList(),
+  /** An opening ("Prior") row leads the table. */
+  val hasPrior: Boolean = false,
+  val totals: StatementTotals? = null,
+  /** Banner / rule colour; defaults per [StatementKind]. */
+  val accent: Int? = null,
 )
 
 object StatementFormat {
@@ -33,9 +41,95 @@ object StatementFormat {
  */
 object StatementSender {
   private fun accent(kind: StatementKind): Int = when (kind) {
-    StatementKind.CUSTOMER -> Color.rgb(5, 122, 85)
-    StatementKind.REP -> Color.rgb(109, 40, 217)
-    StatementKind.ENTITY -> Color.rgb(30, 64, 175)
+    StatementKind.CUSTOMER -> Color.rgb(40, 167, 69)
+    StatementKind.REP -> Color.rgb(79, 70, 229)
+    StatementKind.ENTITY -> Color.rgb(0, 122, 200)
+  }
+
+  private val ORANGE = Color.rgb(200, 100, 0)
+  private val RED = Color.rgb(220, 53, 69)
+  private val GREEN = Color.rgb(40, 167, 69)
+  private val GRAY = Color.rgb(100, 100, 100)
+
+  /** Web `styleStatementRow` type column colours (later matches win, like the web). */
+  private fun typeColor(t: String): Int? {
+    var c: Int? = null
+    if (t.contains("CASH")) c = GREEN
+    if (t.contains("CREDIT")) c = ORANGE
+    if (t.contains("COLLECTION")) c = GREEN
+    if (t.contains("PARTIAL")) c = ORANGE
+    if (t.contains("OLD DEBT")) c = RED
+    if (t.contains("MONEY OUT")) c = RED
+    return c
+  }
+
+  private fun saleBalanceColor(t: String): Int? = when {
+    t == "SETTLED" -> GRAY
+    t.contains("OVERPAID") -> GREEN
+    else -> RED
+  }
+
+  private fun entityTypeColor(t: String): Int? = when (t) {
+    "OUT" -> RED
+    "CR" -> ORANGE
+    else -> GREEN
+  }
+
+  private fun entityBalanceColor(t: String): Int? = when {
+    t.contains("SETTLED") -> GRAY
+    t.contains("OWE") -> RED
+    else -> GREEN
+  }
+
+  private fun mm(v: Float) = v * 72f / 25.4f
+
+  /** Builds the web-layout statement PDF for [spec]. */
+  fun createPdf(context: Context, spec: StatementSpec, fileBase: String, now: Long): Result<java.io.File> {
+    val isEntity = spec.kind == StatementKind.ENTITY
+    val isRep = spec.kind == StatementKind.REP
+    val columns = if (isEntity) listOf(
+      PdfColumn("Date", mm(22f), center = true),
+      PdfColumn("Description", mm(55f)),
+      PdfColumn("Type", mm(13f), center = true, bold = true, colorFor = { entityTypeColor(it) }),
+      PdfColumn("Payment OUT", mm(28f), right = true, bold = true, color = RED),
+      PdfColumn("Payment IN", mm(28f), right = true, bold = true, color = GREEN),
+      PdfColumn("Running Balance", mm(30f), center = true, bold = true, colorFor = { entityBalanceColor(it) }),
+    ) else listOf(
+      PdfColumn("Date", mm(22f), center = true),
+      PdfColumn("Type", mm(22f), center = true, bold = true, colorFor = { typeColor(it) }),
+      PdfColumn("Details", mm(if (isRep) 52f else 62f)),
+      PdfColumn("Debit (Sale)", mm(if (isRep) 27f else 24f), right = true, bold = true, color = RED),
+      PdfColumn("Credit (Rcvd)", mm(if (isRep) 27f else 24f), right = true, bold = true, color = GREEN),
+      PdfColumn("Balance", mm(if (isRep) 26f else 24f), center = true, bold = true, colorFor = { saleBalanceColor(it) }),
+    )
+    val rows = spec.lines.map { l ->
+      val opening = l.type == "OPENING"
+      if (isEntity) {
+        val type = when (l.type) { "PAYMENT_IN" -> "IN"; "PAYMENT_OUT" -> "OUT"; "OPENING" -> "—"; else -> l.type }
+        listOf(l.date, l.details, type, l.debit, l.credit, l.balance)
+      } else {
+        listOf(l.date, if (opening) "—" else l.type, l.details, l.debit, l.credit, l.balance)
+      }
+    }
+    return StatementPdf.create(
+      context,
+      StatementPdfSpec(
+        fileBaseName = fileBase,
+        title = spec.kind.pdfTitle,
+        rangeLabel = spec.rangeLabel,
+        accent = spec.accent ?: accent(spec.kind),
+        infoLeft = spec.infoLeft.ifEmpty { listOf("Name" to spec.name, "Phone" to spec.phone.ifBlank { "N/A" }) },
+        infoRight = spec.infoRight,
+        generated = SarimFormat.formatDate(now),
+        footerStamp = "${SarimFormat.formatDate(now)} at ${SarimFormat.formatClock(now)}",
+        sectionLabel = if (isEntity) "PAYMENT TRANSACTIONS" else "INDIVIDUAL TRANSACTIONS",
+        columns = columns,
+        rows = rows,
+        openingRow = spec.hasPrior,
+        totals = spec.totals,
+        emptyText = if (isEntity) "No payment transactions recorded for this period." else "No sales recorded for this period.",
+      ),
+    )
   }
 
   fun send(context: Context, spec: StatementSpec, format: String): String? {
@@ -59,28 +153,8 @@ object StatementSender {
       return if (outcome == ShareOutcome.NOT_INSTALLED || outcome == ShareOutcome.FAILED) "No app available to send the message." else null
     }
 
-    val isEntity = spec.kind == StatementKind.ENTITY
-    val columns = listOf(
-      PdfColumn("Date", 62f),
-      PdfColumn("Type", 62f),
-      PdfColumn("Details", 147f),
-      PdfColumn(if (isEntity) "Payment Out" else "Debit (Sale)", 84f, right = true),
-      PdfColumn(if (isEntity) "Payment In" else "Credit (Rcvd)", 84f, right = true),
-      PdfColumn("Balance", 84f, right = true),
-    )
-    val report = ReportSpec(
-      fileBase = base,
-      title = spec.kind.pdfTitle,
-      name = spec.name,
-      rangeLabel = spec.rangeLabel,
-      columns = columns,
-      rows = spec.lines.map { listOf(it.date, it.type.replace('_', ' '), it.details, it.debit, it.credit, it.balance) },
-      summary = spec.summary,
-      closingLabel = spec.closingLabel,
-      closingValue = spec.closingValue,
-      accent = accent(spec.kind),
-      phone = spec.phone,
-    )
-    return ReportSender.sendFile(context, report, format, generated)
+    val pdf = createPdf(context, spec, base, now).getOrElse { return it.localizedMessage ?: "Unable to create the statement." }
+    return ReportSender.sendRendered(context, pdf, spec.kind.pdfTitle, spec.phone, base, format)
+      ?.replace("report", "statement")
   }
 }

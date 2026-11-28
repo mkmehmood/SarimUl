@@ -64,17 +64,83 @@ object StatementData {
     else -> t.mode
   }
 
-  private fun saleDetails(t: SaleTransactionEntity, hide: Boolean): String = when {
-    t.mode == "SALE" && t.quantityKg > 0.0 -> "${SarimFormat.formatKg(t.quantityKg)} @ ${rs(t.pricePerKg, hide)}"
-    t.expiredQtyKg > 0.0 && t.mode == "COLLECTION" -> "Expired ${SarimFormat.formatKg(t.expiredQtyKg)}"
-    else -> ""
+  /** Web `buildSaleRow` type label (two-line labels use a line break). */
+  private fun typeLabel(t: SaleTransactionEntity): String {
+    val key = saleType(t)
+    return when {
+      t.transactionType == "OLD_DEBT" -> "OLD DEBT"
+      key == "REP_RETURN" -> "REP RETURN"
+      key == "CASH" -> "CASH"
+      key == "CREDIT" -> when {
+        t.creditReceived -> "CREDIT\n(PAID)"
+        t.partialPaymentReceived > 0.0 -> "CREDIT\n(PARTIAL)"
+        else -> "CREDIT"
+      }
+      key == "PARTIAL_PAYMENT" -> "PARTIAL\nPAYMENT"
+      key == "MONEY_OUT" -> "MONEY OUT"
+      else -> key.replace('_', ' ')
+    }
   }
 
-  private fun dueWords(bal: Double, hide: Boolean): String = when {
-    abs(bal) < 0.01 -> "SETTLED"
-    bal > 0 -> "Outstanding Due: ${rs(bal, hide)}"
-    else -> "Overpaid by: ${rs(-bal, hide)}"
+  private fun fmtAmt(v: Double) = SarimFormat.formatSouthAsian(v, 2, true)
+
+  /** Web `buildSaleRow` details column. */
+  private fun saleDetails(t: SaleTransactionEntity, hide: Boolean): String {
+    val key = saleType(t)
+    fun at(price: Double) = if (price > 0.0) " @${amt(price, hide)}" else ""
+    val qty = "${fmtAmt(t.quantityKg)} kg × ${amt(t.pricePerKg, hide)}"
+    return when {
+      t.transactionType == "OLD_DEBT" -> t.notes.ifBlank { "Previous balance" }.take(55)
+      key == "CASH" -> qty + (if (t.storeName.isNotBlank()) "\n${t.storeName}" else "")
+      key == "CREDIT" -> qty + when {
+        t.creditReceived -> "\nSettled by collection"
+        t.partialPaymentReceived > 0.0 ->
+          "\nPaid: ${amt(t.partialPaymentReceived, hide)} | Due: ${amt(t.totalValue - t.partialPaymentReceived, hide)}"
+        else -> ""
+      }
+      key == "REP_RETURN" -> {
+        val e = t.expiredQtyKg
+        val r = t.returnedQtyKg
+        val base = if (e > 0.0) "Return ${fmtAmt(r)} kg | Expired credit ${fmtAmt(e)} kg${at(t.returnUnitPrice)}"
+        else "Return ${fmtAmt(r)} kg${at(t.returnUnitPrice)}"
+        base + if (t.returnValue > 0.0) " = ${amt(t.returnValue, hide)}" else ""
+      }
+      key == "COLLECTION" -> {
+        val pay = t.amountReceived.takeIf { it > 0.0 } ?: t.collectedAmount.takeIf { it > 0.0 } ?: 0.0
+        val expV = t.expiredValue.takeIf { it > 0.0 } ?: (t.expiredQtyKg * t.expiredUnitPrice)
+        val hasExp = expV > 0.0 || t.expiredQtyKg > 0.0
+        val hasPay = pay > 0.0 || t.expiredQtyKg <= 0.0
+        listOfNotNull(
+          if (hasPay) "Payment ${amt(pay.takeIf { it > 0.0 } ?: t.totalValue, hide)}" else null,
+          if (hasExp) {
+            "Expired credit " + (if (t.expiredQtyKg > 0.0) "${fmtAmt(t.expiredQtyKg)} kg" else amt(expV, hide)) +
+              at(t.expiredUnitPrice) + (if (t.expiredQtyKg > 0.0) " = ${amt(expV, hide)}" else "")
+          } else null,
+        ).joinToString(" | ")
+      }
+      key == "PARTIAL_PAYMENT" -> "Partial payment received"
+      key == "MONEY_OUT" -> "Cash paid out" + if (t.notes.isNotBlank()) "\n${t.notes}" else ""
+      else -> ""
+    }
   }
+
+  /** Web balance cell: SETTLED / amount / "OVERPAID" over the amount. */
+  private fun balDisplay(b: Double, hide: Boolean) = when {
+    abs(b) < 0.01 -> "SETTLED"
+    b > 0 -> amt(b, hide)
+    else -> "OVERPAID\n${amt(-b, hide)}"
+  }
+
+  private fun dueWords(bal: Double, hide: Boolean, prefix: String = ""): String = when {
+    abs(bal) < 0.01 -> "SETTLED"
+    bal > 0 -> "Outstanding Due: $prefix${amt(bal, hide)}"
+    else -> "Overpaid by: $prefix${amt(-bal, hide)}"
+  }
+
+  private val RED = android.graphics.Color.rgb(220, 53, 69)
+  private val GREEN = android.graphics.Color.rgb(40, 167, 69)
+  private val GRAY = android.graphics.Color.rgb(100, 100, 100)
+  private val BLUE = android.graphics.Color.rgb(30, 80, 160)
 
   /** Customer / rep-customer statement for the From–To range. [allSales] must already be this customer's non-deleted sales. */
   fun salesStatement(
@@ -93,8 +159,8 @@ object StatementData {
     var totDebit = 0.0
     var totCredit = 0.0
     val lines = buildList {
-      if (hasPrior && abs(opening) >= 0.01) {
-        add(StatementShare.StatementLine(SarimFormat.formatDate(from), "OPENING", "Opening Balance", "", "", rs(opening, hide)))
+      if (hasPrior) {
+        add(StatementShare.StatementLine("Prior", "OPENING", "Opening Balance", "", "", if (abs(opening) < 0.01) "SETTLED" else amt(abs(opening), hide)))
       }
       inside.forEach { t ->
         val (d, c) = saleDebitCredit(t)
@@ -103,34 +169,48 @@ object StatementData {
         add(
           StatementShare.StatementLine(
             date = SarimFormat.formatDate(t.dateEpoch),
-            type = saleType(t),
+            type = typeLabel(t),
             details = saleDetails(t, hide),
-            debit = if (d > 0.0) rs(d, hide) else "",
-            credit = if (c > 0.0) rs(c, hide) else "",
-            balance = rs(t.balanceAfter, hide),
+            debit = if (d > 0.0) amt(d, hide) else "-",
+            credit = if (c > 0.0) amt(c, hide) else "-",
+            balance = balDisplay(t.balanceAfter, hide),
           )
         )
       }
     }
     val finalBal = inside.lastOrNull()?.balanceAfter ?: opening
-    val summary = if (hasPrior && abs(opening) >= 0.01) listOf(
-      "Opening Balance" to (if (opening > 0) "+" else "-") + rs(abs(opening), hide),
-      "Period Debit" to rs(totDebit, hide),
-      "Period Credit" to rs(totCredit, hide),
-    ) else listOf(
-      "Total Debit (Sales)" to rs(totDebit, hide),
-      "Total Credit (Rcvd)" to rs(totCredit, hide),
+    val showOpening = hasPrior && abs(opening) >= 0.01
+    val pre = if (kind == StatementKind.REP) "Rs " else ""
+    val closingColor = when {
+      abs(finalBal) < 0.01 -> GRAY
+      finalBal > 0 -> RED
+      else -> GREEN
+    }
+    val totals = StatementTotals(
+      fill = if (kind == StatementKind.REP) android.graphics.Color.rgb(240, 235, 255) else android.graphics.Color.rgb(245, 255, 245),
+      top = if (showOpening) SummaryText("Opening Balance: ${if (opening > 0) "+" else "-"}$pre${amt(abs(opening), hide)}", BLUE) else null,
+      left = SummaryText((if (showOpening) "Period Debit: " else "Total Debit (Sales): ") + pre + amt(totDebit, hide), RED),
+      right = SummaryText((if (showOpening) "Period Credit: " else "Total Credit (Rcvd): ") + pre + amt(totCredit, hide), GREEN),
+      closing = SummaryText(dueWords(finalBal, hide, pre), closingColor),
     )
+    val isRep = kind == StatementKind.REP
     return StatementSpec(
       kind = kind,
       name = customer.name,
       phone = customer.phone,
       rangeLabel = rangeLabel(from, to),
       lines = lines,
-      summary = summary,
+      summary = emptyList(),
       closingLabel = dueWords(finalBal, hide),
       closingValue = "",
-      closingForText = rs(finalBal, hide),
+      closingForText = balDisplay(finalBal, hide).replace('\n', ' '),
+      infoLeft = listOf(
+        "Customer" to customer.name,
+        "Phone" to customer.phone.ifBlank { "N/A" },
+        (if (isRep) "Sales Rep" to customer.repName.ifBlank { "N/A" } else "Address" to customer.address.ifBlank { "N/A" }.take(60)),
+      ),
+      hasPrior = hasPrior,
+      totals = totals,
     )
   }
 
@@ -147,7 +227,11 @@ object StatementData {
     return out
   }
 
-  private fun entityBalText(b: Double, hide: Boolean) = if (b < -0.005) "${rs(-b, hide)} REC" else rs(b, hide)
+  private fun entityBalText(b: Double, hide: Boolean) = when {
+    abs(b) < 0.01 -> "SETTLED"
+    b < -0.005 -> "${amt(-b, hide)} REC"
+    else -> amt(b, hide)
+  }
 
   fun entityStatement(
     entity: PaymentEntityRecord,
@@ -163,8 +247,8 @@ object StatementData {
     var totOut = 0.0
     var totIn = 0.0
     val lines = buildList {
-      if (prior != null && abs(opening) >= 0.01) {
-        add(StatementShare.StatementLine(SarimFormat.formatDate(from), "OPENING", "Opening Balance", "", "", entityBalText(opening, hide)))
+      if (prior != null) {
+        add(StatementShare.StatementLine("Prior", "OPENING", "Opening Balance", "", "", if (abs(opening) < 0.01) "SETTLED" else amt(abs(opening), hide)))
       }
       inside.forEach { (t, b) ->
         val isIn = t.type == "PAYMENT_IN"
@@ -173,9 +257,9 @@ object StatementData {
           StatementShare.StatementLine(
             date = SarimFormat.formatDate(t.dateEpoch),
             type = t.type,
-            details = t.description,
-            debit = if (!isIn) rs(t.amount, hide) else "",
-            credit = if (isIn) rs(t.amount, hide) else "",
+            details = t.description.ifBlank { "-" }.take(35),
+            debit = if (!isIn) amt(t.amount, hide) else "-",
+            credit = if (isIn) amt(t.amount, hide) else "-",
             balance = entityBalText(b, hide),
           )
         )
@@ -183,16 +267,37 @@ object StatementData {
     }
     val finalBal = inside.lastOrNull()?.second ?: opening
     val closing = entityBalText(finalBal, hide)
+    val showOpening = prior != null && abs(opening) >= 0.01
+    val isPayee = entity.type.equals("payee", true)
+    val totals = StatementTotals(
+      fill = android.graphics.Color.rgb(245, 245, 245),
+      top = if (showOpening) SummaryText("Opening Bal: ${if (opening > 0) "+" else "-"}${amt(abs(opening), hide)}", BLUE) else null,
+      left = SummaryText((if (showOpening) "Period OUT: " else "Total OUT: ") + amt(totOut, hide), RED),
+      right = SummaryText((if (showOpening) "Period IN: " else "Cash IN: ") + amt(totIn, hide), GREEN),
+      closing = SummaryText(
+        "Net Balance: $closing",
+        when {
+          abs(finalBal) < 0.01 -> GRAY
+          finalBal < 0 -> RED
+          else -> GREEN
+        },
+      ),
+    )
     return StatementSpec(
       kind = StatementKind.ENTITY,
       name = entity.name,
       phone = entity.phone,
       rangeLabel = rangeLabel(from, to),
       lines = lines,
-      summary = listOf("Total Payment Out" to rs(totOut, hide), "Total Payment In" to rs(totIn, hide)),
-      closingLabel = if (finalBal < -0.005) "Receivable: $closing" else "Balance: $closing",
+      summary = emptyList(),
+      closingLabel = "Net Balance: $closing",
       closingValue = "",
       closingForText = closing,
+      infoLeft = listOf("Name" to entity.name, "Phone" to entity.phone.ifBlank { "N/A" }),
+      infoRight = if (entity.wallet.isNotBlank()) listOf("Wallet/Account" to entity.wallet) else emptyList(),
+      hasPrior = prior != null,
+      totals = totals,
+      accent = if (isPayee) android.graphics.Color.rgb(230, 100, 20) else android.graphics.Color.rgb(0, 122, 200),
     )
   }
 

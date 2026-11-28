@@ -37,7 +37,7 @@ object ReportSender {
       rangeLabel = spec.rangeLabel,
       generatedLabel = generated,
       columns = spec.columns,
-      rows = spec.rows.map { r -> r.map { it.replace('\n', ' ') } },
+      rows = spec.rows,
       summary = spec.summary,
       closingLabel = spec.closingLabel,
       closingValue = spec.closingValue,
@@ -47,15 +47,20 @@ object ReportSender {
   /** PDF, PDF to WhatsApp or image to WhatsApp. Returns an error message, or null when the share sheet opened. */
   fun sendFile(context: Context, spec: ReportSpec, format: String, generated: String): String? {
     val pdf = createPdf(context, spec, generated).getOrElse { return it.localizedMessage ?: "Unable to create the report." }
+    return sendRendered(context, pdf, spec.title, spec.phone, spec.fileBase, format)
+  }
+
+  /** Sends an already rendered PDF as PDF, PDF to WhatsApp, or page images to WhatsApp. */
+  fun sendRendered(context: Context, pdf: java.io.File, title: String, phone: String, fileBase: String, format: String): String? {
     return when (format) {
       StatementFormat.PDF ->
-        if (DirectShare.shareViaChooser(context, pdf, "application/pdf", spec.title) == ShareOutcome.FAILED) "Unable to share the report." else null
+        if (DirectShare.shareViaChooser(context, pdf, "application/pdf", title) == ShareOutcome.FAILED) "Unable to share the report." else null
       StatementFormat.PDF_WHATSAPP ->
-        if (DirectShare.shareFiles(context, listOf(pdf), "application/pdf", spec.phone, title = spec.title) == ShareOutcome.FAILED) "Unable to share the report." else null
+        if (DirectShare.shareFiles(context, listOf(pdf), "application/pdf", phone, title = title) == ShareOutcome.FAILED) "Unable to share the report." else null
       else -> {
-        val imgs = PdfExporter.pdfToJpegs(context, pdf, spec.fileBase.replace(Regex("[^A-Za-z0-9_.\\-]"), "_"))
+        val imgs = PdfExporter.pdfToJpegs(context, pdf, fileBase.replace(Regex("[^A-Za-z0-9_.\\-]"), "_"))
           .getOrElse { return it.localizedMessage ?: "Unable to create the report image." }
-        if (DirectShare.shareFiles(context, imgs, "image/jpeg", spec.phone, title = spec.title) == ShareOutcome.FAILED) "Unable to share the report." else null
+        if (DirectShare.shareFiles(context, imgs, "image/jpeg", phone, title = title) == ShareOutcome.FAILED) "Unable to share the report." else null
       }
     }
   }
