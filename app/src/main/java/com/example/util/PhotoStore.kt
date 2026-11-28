@@ -7,6 +7,11 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
 /**
@@ -73,3 +78,26 @@ fun photoModel(raw: String): Any {
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: raw
   }.getOrDefault(raw)
 }
+
+/**
+ * Off-main-thread, down-sampled version of [photoModel]. Decoding a multi-megabyte base64 photo inside
+ * composition blocked the UI thread (app "not responding"); this decodes on Dispatchers.Default instead
+ * and shows nothing until the bitmap is ready.
+ */
+@Composable
+fun rememberPhotoModel(raw: String, maxDim: Int = 2048): State<Any?> =
+  produceState<Any?>(initialValue = if (raw.startsWith("data:", ignoreCase = true)) null else raw, raw) {
+    if (!raw.startsWith("data:", ignoreCase = true)) { value = raw; return@produceState }
+    value = withContext(Dispatchers.Default) {
+      val comma = raw.indexOf(',')
+      if (comma < 0) return@withContext null
+      runCatching {
+        val bytes = Base64.decode(raw.substring(comma + 1), Base64.DEFAULT)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxDim && bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+      }.getOrNull()
+    }
+  }

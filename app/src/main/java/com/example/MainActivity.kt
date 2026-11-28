@@ -124,6 +124,9 @@ class MainActivity : ComponentActivity() {
         }
       }
 
+      androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.foundation.LocalOverscrollFactory provides null,
+      ) {
       SarimTheme(themeMode = state.prefs.themeMode) {
         when {
           state.showSplash -> {
@@ -181,6 +184,7 @@ class MainActivity : ComponentActivity() {
             onClose = { viewModel.closePhotoViewer() },
           )
         }
+      }
       }
     }
   }
