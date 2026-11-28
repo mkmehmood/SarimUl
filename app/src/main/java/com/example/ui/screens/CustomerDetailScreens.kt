@@ -594,7 +594,7 @@ fun CustomerEditScreen(
           contentAlignment = Alignment.Center,
         ) {
           if (!curPhoto.isNullOrBlank()) {
-            AsyncImage(model = androidx.compose.runtime.remember(curPhoto) { com.example.util.photoModel(curPhoto.orEmpty()) }, contentDescription = "Customer photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(model = com.example.util.rememberPhotoModel(curPhoto.orEmpty(), 1024).value, contentDescription = "Customer photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
           } else {
             Text(SarimFormat.initials(name.ifBlank { "CU" }), color = palette.green, fontWeight = FontWeight.Bold, fontSize = 20.sp)
           }
