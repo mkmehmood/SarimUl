@@ -234,55 +234,6 @@ fun EntityDetailsScreen(
                 showStatementFlow = true
               },
             )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            DropdownMenuItem(
-              modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("entity_menu_delete"),
-              leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = palette.red, modifier = Modifier.size(18.dp)) },
-              text = { Text("Delete entity", color = palette.red, fontWeight = FontWeight.Medium) },
-              onClick = {
-                menuExpanded = false
-                val blockMsg = SarimLinkEngine.getEntityDeleteBlockReason(
-                  entity = entity,
-                  allTxs = state.paymentTransactions,
-                  sales = state.sales,
-                  settlements = state.settlements,
-                  factoryBatches = state.factoryBatches,
-                )
-                if (blockMsg != null) {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Cannot Delete Entity",
-                      body = blockMsg,
-                      tone = DialogTone.ERROR,
-                      confirmLabel = "OK",
-                      cancelLabel = null,
-                    )
-                  )
-                } else {
-                  val bal = entity.currentBalance
-                  val balNote = if (kotlin.math.abs(bal) > 0.01) {
-                    "\nCurrent ${if (bal >= 0) "Payable" else "Receivable"}: ${viewModel.redactMoney(SarimFormat.formatRs(kotlin.math.abs(bal)))}"
-                  } else ""
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = "Delete Entity",
-                      body = "Move ${entity.name} and ${txs.size} linked transaction(s) to Recycle Bin?$balNote",
-                      tone = DialogTone.PERMANENT,
-                      confirmLabel = "Delete",
-                      onConfirm = {
-                        viewModel.launchSafely(
-                          errorTitle = "Delete Failed",
-                          successMessage = "Deleted ${entity.name}",
-                          onSuccess = { viewModel.closeStandalone() },
-                        ) {
-                          viewModel.repository.deletePaymentEntity(entity.id)
-                        }
-                      },
-                    )
-                  )
-                }
-              },
-            )
           }
         }
       }

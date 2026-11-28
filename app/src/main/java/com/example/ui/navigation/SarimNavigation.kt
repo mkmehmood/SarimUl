@@ -142,7 +142,7 @@ sealed class SarimRoute(
     }
   }
 
-  data class EntityDetails(val entityId: String) : SarimRoute(ROUTE, "ENTITY DETAILS") {
+  data class EntityDetails(val entityId: String) : SarimRoute(ROUTE, "") {
     companion object {
       const val ARG = "entityId"
       const val ROUTE = "entity_details/{$ARG}"
@@ -243,7 +243,6 @@ sealed class SarimRoute(
       route == StoreManager.route -> "STORE MANAGER"
       route == CloseFinancialYear.route || isCloseFinYear -> "CLOSE FINANCIAL YEAR"
       route?.startsWith("customer_edit") == true -> "CUSTOMER DETAILS"
-      route?.startsWith("entity_details") == true -> "ENTITY DETAILS"
       route?.startsWith("expense_details") == true -> "EXPENSE DETAILS"
       else -> null
     }
