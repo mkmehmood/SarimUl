@@ -790,7 +790,17 @@ class SarimRepository(
     ingredients: List<FormulaIngredient>,
   ) {
     val now = System.currentTimeMillis()
+    val liveFormulas = dao.getAllFormulas().filter { !it.isDeleted }.associateBy { it.id }
     val existing = editingId?.let { id -> dao.getAllFormulas().firstOrNull { it.id == id } }
+    val engineFormulas = FormulaCalculator.engineFormulas(liveFormulas)
+    ingredients.filter { it.refType.equals("FORMULA", ignoreCase = true) }.forEach { link ->
+      if (liveFormulas[link.refId] == null) {
+        throw IllegalStateException("Linked formula ${link.refName.ifBlank { "(unknown)" }} no longer exists.")
+      }
+      if (existing != null && !SarimFormulaEngine.canLink(engineFormulas, existing.id, link.refId)) {
+        throw IllegalStateException("Cannot link ${link.refName}: it already uses this formula, which would create a loop.")
+      }
+    }
     dao.upsertFormula(
       (existing ?: FormulaEntity(name = name.trim())).copy(
         name = name.trim().uppercase(),
