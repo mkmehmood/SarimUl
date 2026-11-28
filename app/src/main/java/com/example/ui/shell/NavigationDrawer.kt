@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -42,9 +43,11 @@ fun SarimNavigationDrawerContent(
   val visibleTabs = state.visibleTabs()
   val pendingApprovals = state.approvals.count { it.status == "PENDING" }
 
+  val scheme = MaterialTheme.colorScheme
   ModalDrawerSheet(
-    drawerContainerColor = palette.surface,
+    drawerContainerColor = scheme.surfaceContainerLow,
     drawerContentColor = palette.textPrimary,
+    drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
     modifier = Modifier.widthIn(max = 310.dp),
   ) {
     Column(
@@ -71,7 +74,7 @@ fun SarimNavigationDrawerContent(
           fontSize = 11.5.sp,
         )
       }
-      HorizontalDivider(color = palette.border)
+      HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.45f))
       Spacer(Modifier.height(4.dp))
 
       DrawerGroupHeader("NAVIGATION")
@@ -155,7 +158,7 @@ fun SarimNavigationDrawerContent(
       }
 
       Spacer(Modifier.weight(1f))
-      HorizontalDivider(color = palette.border)
+      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
       Spacer(Modifier.height(4.dp))
 
       DrawerItemRow(
@@ -202,24 +205,24 @@ private fun DrawerItemRow(
   testTag: String = "drawer_item",
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   val fg = tint ?: if (selected) palette.green else palette.textPrimary
   Surface(
     modifier = modifier
       .fillMaxWidth()
-      .defaultMinSize(minHeight = 46.dp)
+      .defaultMinSize(minHeight = 48.dp)
       .clip(RoundedCornerShape(50))
       .testTag(testTag)
       .clickable(onClick = onClick),
     shape = RoundedCornerShape(50),
-    color = if (selected) palette.green.copy(alpha = 0.16f) else Color.Transparent,
-    border = if (selected) BorderStroke(1.dp, palette.green.copy(alpha = 0.5f)) else null,
+    color = if (selected) lerp(scheme.surfaceContainerHigh, palette.green, 0.22f) else Color.Transparent,
   ) {
     Row(
       modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(19.dp))
+      Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(20.dp))
       Text(
         text = label,
         color = fg,

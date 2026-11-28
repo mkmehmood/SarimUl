@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -204,7 +205,7 @@ fun GlassAlertDialog(
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.88f).dp
     val chipWidthDp = with(density) { chipSize.width.toDp() }
     val chipHeightDp = with(density) { chipSize.height.toDp() }
-    val shape = NotchedCardShape(26.dp, chipWidthDp + 10.dp, chipHeightDp + 10.dp, 18.dp)
+    val shape = NotchedCardShape(28.dp, chipWidthDp + 10.dp, chipHeightDp + 10.dp, 20.dp)
     val line = palette.textPrimary.copy(alpha = 0.12f)
     val faint = palette.textMuted.copy(alpha = 0.85f)
 
@@ -281,21 +282,22 @@ fun GlassAlertDialog(
 
             if (request.choices.isNotEmpty()) {
               Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                val scheme = androidx.compose.material3.MaterialTheme.colorScheme
                 request.choices.forEach { choice ->
                   Surface(
                     modifier = Modifier
                       .fillMaxWidth()
-                      .clip(RoundedCornerShape(16.dp))
+                      .defaultMinSize(minHeight = 52.dp)
+                      .clip(RoundedCornerShape(20.dp))
                       .clickable {
                         request.onChoiceSelected(choice.id)
                         onDismiss()
                       },
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.textPrimary.copy(alpha = 0.04f),
-                    border = BorderStroke(1.dp, palette.textPrimary.copy(alpha = 0.16f)),
+                    shape = RoundedCornerShape(20.dp),
+                    color = scheme.surfaceContainerHigh,
                   ) {
                     Row(
-                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                       verticalAlignment = Alignment.CenterVertically,
                       horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -501,10 +503,9 @@ private fun DialogBlockView(block: DialogBlock, style: DlgTone, palette: SarimPa
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .clip(RoundedCornerShape(14.dp))
-          .background(tint.copy(alpha = 0.08f))
-          .border(1.dp, tint.copy(alpha = 0.28f), RoundedCornerShape(14.dp))
-          .padding(horizontal = 13.dp, vertical = 11.dp),
+          .clip(RoundedCornerShape(18.dp))
+          .background(tint.copy(alpha = 0.12f))
+          .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         Text(block.label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -514,7 +515,7 @@ private fun DialogBlockView(block: DialogBlock, style: DlgTone, palette: SarimPa
   }
 }
 
-/** Web `.dlg-btn`: 48dp pill; ghost = faint fill + hairline border, solid = tone gradient with ink text. */
+/** Web `.dlg-btn`: 48dp pill; ghost = secondary tonal pill, solid = tone gradient with ink text. */
 @Composable
 private fun DlgButton(
   text: String,
@@ -524,11 +525,14 @@ private fun DlgButton(
   modifier: Modifier = Modifier,
   testTag: String = "",
 ) {
-  val palette = LocalSarimPalette.current
-  val shape = CircleShape
+  val scheme = androidx.compose.material3.MaterialTheme.colorScheme
+  val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 14.dp)
+  val shape = RoundedCornerShape(corner)
   Box(
     modifier = modifier
       .height(48.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
       .testTag(testTag)
       .then(
         if (solid) {
@@ -539,16 +543,15 @@ private fun DlgButton(
         } else {
           Modifier
             .clip(shape)
-            .background(palette.textPrimary.copy(alpha = 0.06f))
-            .border(1.dp, palette.textPrimary.copy(alpha = 0.16f), shape)
+            .background(scheme.secondaryContainer)
         },
       )
-      .clickable(onClick = onClick),
+      .clickable(interactionSource = source, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick),
     contentAlignment = Alignment.Center,
   ) {
     Text(
       text,
-      color = if (solid) DlgInk else palette.textPrimary,
+      color = if (solid) DlgInk else scheme.onSecondaryContainer,
       fontSize = 15.sp,
       fontWeight = FontWeight.Bold,
       maxLines = 1,

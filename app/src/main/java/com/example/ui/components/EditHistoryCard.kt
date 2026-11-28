@@ -1,12 +1,13 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material3.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,19 +65,27 @@ fun EditHistoryCard(
         fontSize = 12.sp,
       )
     } else {
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val scheme = MaterialTheme.colorScheme
         entries.forEachIndexed { idx, entry ->
           Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = palette.surfaceElevated,
-            border = BorderStroke(1.dp, palette.border),
+            shape = RoundedCornerShape(20.dp),
+            color = scheme.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth(),
           ) {
             Row(
-              modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+              modifier = Modifier.padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
               verticalAlignment = Alignment.Top,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+              Box(
+                modifier = Modifier
+                  .padding(top = 4.dp)
+                  .width(3.dp)
+                  .height(26.dp)
+                  .clip(RoundedCornerShape(50))
+                  .background(palette.cyan.copy(alpha = 0.75f)),
+              )
               Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -104,7 +113,7 @@ fun EditHistoryCard(
                     Text(
                       text = "${ch.label}: $fromTxt → $toTxt",
                       color = palette.textPrimary,
-                      fontSize = 12.sp,
+                      fontSize = 12.5.sp,
                       fontWeight = FontWeight.Medium,
                     )
                   }
@@ -112,7 +121,7 @@ fun EditHistoryCard(
                   Text(
                     text = entry.summary,
                     color = palette.textPrimary,
-                    fontSize = 12.sp,
+                    fontSize = 12.5.sp,
                   )
                 }
               }
@@ -136,7 +145,7 @@ fun EditHistoryCard(
     }
 
     if (createdAt != null && createdAt > 0L) {
-      HorizontalDivider(color = palette.border)
+      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
       Text(
         text = "Added · ${dateTimeFmt.format(Date(createdAt))}",
         color = palette.textMuted,
@@ -149,7 +158,8 @@ fun EditHistoryCard(
   confirmDeleteIndex?.let { targetIdx ->
     AlertDialog(
       onDismissRequest = { confirmDeleteIndex = null },
-      containerColor = palette.surface,
+      shape = RoundedCornerShape(32.dp),
+      containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
       title = { Text("Delete Edit Entry", color = palette.textPrimary, fontWeight = FontWeight.Bold) },
       text = {
         Text(

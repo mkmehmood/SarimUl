@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -85,8 +83,7 @@ fun AddEntityScreen(
           modifier = Modifier
             .size(68.dp)
             .clip(CircleShape)
-            .background(palette.surfaceElevated)
-            .border(1.5.dp, palette.green.copy(alpha = 0.6f), CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .testTag("entity_photo_preview")
             .clickable {
               if (!currentPhoto.isNullOrBlank()) viewModel.openPhotoViewer(listOf(currentPhoto), 0)
@@ -363,8 +360,8 @@ fun AddRawMaterialScreen(
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     bottomBar = {
       Surface(
-        color = palette.surface,
-        border = BorderStroke(1.dp, palette.border),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 3.dp,
       ) {
         Row(
           modifier = Modifier

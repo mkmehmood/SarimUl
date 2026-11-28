@@ -120,7 +120,7 @@ fun LedgerSkeletonContent(
     )
 
     // Hero Cash In Hand Card Skeleton
-    SarimCard(borderColor = palette.green.copy(alpha = 0.35f)) {
+    SarimCard(tonalAccent = palette.green) {
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -133,12 +133,12 @@ fun LedgerSkeletonContent(
         ShimmerPlaceholder(Modifier.size(44.dp), shape = RoundedCornerShape(16.dp))
       }
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val scheme = androidx.compose.material3.MaterialTheme.colorScheme
         repeat(3) {
           Surface(
             modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(20.dp),
-            color = palette.surfaceElevated,
-            border = BorderStroke(1.dp, palette.border),
+            shape = RoundedCornerShape(22.dp),
+            color = scheme.surfaceContainerHigh,
           ) {
             Column(
               modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
@@ -154,15 +154,15 @@ fun LedgerSkeletonContent(
 
     // Summary Tiles Row Skeleton
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      val scheme = androidx.compose.material3.MaterialTheme.colorScheme
       repeat(3) {
         Surface(
           modifier = Modifier.weight(1f),
-          shape = RoundedCornerShape(20.dp),
-          color = palette.surfaceElevated,
-          border = BorderStroke(1.dp, palette.border),
+          shape = RoundedCornerShape(24.dp),
+          color = scheme.surfaceContainerHigh,
         ) {
           Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
           ) {
             ShimmerPlaceholder(Modifier.width(64.dp).height(10.dp))

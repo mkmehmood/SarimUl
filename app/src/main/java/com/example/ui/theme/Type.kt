@@ -61,12 +61,30 @@ val SarimTypography = Typography(
     fontSize = 26.sp,
     lineHeight = 32.sp,
   ),
+  displaySmall = TextStyle(
+    fontFamily = PlayfairDisplayFontFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 22.sp,
+    lineHeight = 28.sp,
+  ),
+  headlineLarge = TextStyle(
+    fontFamily = PlusJakartaFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 24.sp,
+    lineHeight = 30.sp,
+  ),
   headlineMedium = TextStyle(
     fontFamily = CinzelFontFamily,
     fontWeight = FontWeight.SemiBold,
     fontSize = 20.sp,
     lineHeight = 26.sp,
     letterSpacing = 1.2.sp,
+  ),
+  headlineSmall = TextStyle(
+    fontFamily = PlusJakartaFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 19.sp,
+    lineHeight = 24.sp,
   ),
   titleLarge = TextStyle(
     fontFamily = PlusJakartaFontFamily,
@@ -80,6 +98,12 @@ val SarimTypography = Typography(
     fontSize = 15.sp,
     lineHeight = 20.sp,
   ),
+  titleSmall = TextStyle(
+    fontFamily = PlusJakartaFontFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 13.5.sp,
+    lineHeight = 18.sp,
+  ),
   bodyLarge = TextStyle(
     fontFamily = PlusJakartaFontFamily,
     fontWeight = FontWeight.Normal,
@@ -92,11 +116,24 @@ val SarimTypography = Typography(
     fontSize = 13.sp,
     lineHeight = 18.sp,
   ),
+  bodySmall = TextStyle(
+    fontFamily = PlusJakartaFontFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 11.5.sp,
+    lineHeight = 16.sp,
+  ),
   labelLarge = TextStyle(
     fontFamily = PlusJakartaFontFamily,
     fontWeight = FontWeight.SemiBold,
     fontSize = 13.sp,
     lineHeight = 18.sp,
+  ),
+  labelMedium = TextStyle(
+    fontFamily = PlusJakartaFontFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 11.5.sp,
+    lineHeight = 16.sp,
+    letterSpacing = 0.4.sp,
   ),
   labelSmall = TextStyle(
     fontFamily = PlusJakartaFontFamily,

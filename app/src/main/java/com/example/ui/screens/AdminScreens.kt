@@ -3,7 +3,6 @@ package com.example.ui.screens
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -186,80 +185,85 @@ fun AppAccountsScreen(
           val isOwner = targetUid == wsRootUid
           val isSelf = targetUid == state.currentUid
           val acctRoles = RolesHelper.parseRolesCsv(acct.rolesCsv)
-          Column(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+          Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
           ) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(14.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                  Text(acct.name.ifBlank { acct.email }, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
-                  if (isOwner) SarimChip("Owner", palette.green)
-                  if (isSelf) SarimChip("You", palette.cyan)
-                  if (!acct.approved) SarimChip("Suspended", palette.red)
-                }
-                Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
-                Text(
-                  text = "Roles: ${RolesHelper.roleNames(acctRoles)}",
-                  color = palette.cyan,
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.Medium,
-                )
-              }
-              if (!isOwner && !isSelf) {
-                IconButton(
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.toggleAccountSuspension(acct) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_suspend_$targetUid"),
-                ) {
-                  Icon(
-                    imageVector = if (acct.approved) Icons.Rounded.Block else Icons.Rounded.CheckCircle,
-                    contentDescription = if (acct.approved) "Suspend account" else "Reinstate account",
-                    tint = if (acct.approved) palette.amber else palette.green,
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  ) {
+                    Text(acct.name.ifBlank { acct.email }, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                    if (isOwner) SarimChip("Owner", palette.green)
+                    if (isSelf) SarimChip("You", palette.cyan)
+                    if (!acct.approved) SarimChip("Suspended", palette.red)
+                  }
+                  Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
+                  Text(
+                    text = "Roles: ${RolesHelper.roleNames(acctRoles)}",
+                    color = palette.cyan,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
                   )
                 }
-                IconButton(
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.removeAccount(acct) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_remove_$targetUid"),
-                ) {
-                  Icon(Icons.Rounded.Delete, contentDescription = "Remove account", tint = palette.red)
+                if (!isOwner && !isSelf) {
+                  IconButton(
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.toggleAccountSuspension(acct) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_suspend_$targetUid"),
+                  ) {
+                    Icon(
+                      imageVector = if (acct.approved) Icons.Rounded.Block else Icons.Rounded.CheckCircle,
+                      contentDescription = if (acct.approved) "Suspend account" else "Reinstate account",
+                      tint = if (acct.approved) palette.amber else palette.green,
+                    )
+                  }
+                  IconButton(
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.removeAccount(acct) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_remove_$targetUid"),
+                  ) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "Remove account", tint = palette.red)
+                  }
                 }
               }
-            }
 
-            @OptIn(ExperimentalLayoutApi::class)
-            FlowRow(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              RolesHelper.ROLE_KEYS.forEach { roleKey ->
-                val active = roleKey in acctRoles
-                FilterChip(
-                  selected = active,
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.toggleAccountRole(acct, roleKey) },
-                  label = { Text(RolesHelper.ROLE_LABELS[roleKey] ?: roleKey, fontSize = 11.5.sp) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_chip_${targetUid}_$roleKey"),
-                )
+              @OptIn(ExperimentalLayoutApi::class)
+              FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                RolesHelper.ROLE_KEYS.forEach { roleKey ->
+                  val active = roleKey in acctRoles
+                  FilterChip(
+                    selected = active,
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.toggleAccountRole(acct, roleKey) },
+                    label = { Text(RolesHelper.ROLE_LABELS[roleKey] ?: roleKey, fontSize = 11.5.sp) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_chip_${targetUid}_$roleKey"),
+                  )
+                }
               }
             }
           }
-          HorizontalDivider(color = palette.border)
         }
       }
     }
@@ -407,58 +411,65 @@ fun StoreManagerScreen(
       Text("Existing Stores (${stores.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
       stores.forEach { st ->
         val formulaName = formulas.firstOrNull { it.id == st.formulaId }?.name ?: "Unlinked"
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-          verticalAlignment = Alignment.CenterVertically,
+        Surface(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(20.dp),
+          color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text("${st.name} (${st.storeKey})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Text("Formula: $formulaName · Price: ${SarimFormat.formatRs(st.salePricePerKg)}/kg", color = palette.textMuted, fontSize = 12.sp)
-          }
-          IconButton(
-            onClick = {
-              editingStoreKey = st.storeKey
-              storeName = st.name
-              val fIdx = formulas.indexOfFirst { it.id == st.formulaId }
-              formulaIndex = if (fIdx >= 0) fIdx + 1 else 0
-              salePriceText = st.salePricePerKg.toString()
-            },
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            Icon(Icons.Rounded.Edit, contentDescription = "Edit store", tint = palette.cyan)
-          }
-          IconButton(
-            onClick = {
-              val blockMsg = SarimLinkEngine.storeUsage(
-                storeKey = st.storeKey,
-                production = state.productionEntries,
-                factoryBatches = state.factoryBatches,
-                sales = state.sales,
-                returns = state.returnLogs,
-                stockTransfers = state.stockTransfers,
-              ).blockMessage(st.name)
-              if (blockMsg != null) {
-                viewModel.showDialog(AppDialogRequest("Cannot Delete Store", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
-              } else {
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Delete Store",
-                    body = "Delete store ${st.name}? It will no longer appear in Production or Sales.",
-                    tone = DialogTone.PERMANENT,
-                    confirmLabel = "Delete",
-                    onConfirm = {
-                      viewModel.launchSafely(errorTitle = "Delete Store Failed", successMessage = "Deleted store ${st.name}") {
-                        viewModel.repository.deleteStore(st.storeKey)
-                      }
-                    },
+            Column(modifier = Modifier.weight(1f)) {
+              Text("${st.name} (${st.storeKey})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+              Text("Formula: $formulaName · Price: ${SarimFormat.formatRs(st.salePricePerKg)}/kg", color = palette.textMuted, fontSize = 12.sp)
+            }
+            IconButton(
+              modifier = Modifier.minimumInteractiveComponentSize(),
+              onClick = {
+                editingStoreKey = st.storeKey
+                storeName = st.name
+                val fIdx = formulas.indexOfFirst { it.id == st.formulaId }
+                formulaIndex = if (fIdx >= 0) fIdx + 1 else 0
+                salePriceText = st.salePricePerKg.toString()
+              },
+            ) {
+              Icon(Icons.Rounded.Edit, contentDescription = "Edit store", tint = palette.cyan)
+            }
+            IconButton(
+              modifier = Modifier.minimumInteractiveComponentSize(),
+              onClick = {
+                val blockMsg = SarimLinkEngine.storeUsage(
+                  storeKey = st.storeKey,
+                  production = state.productionEntries,
+                  factoryBatches = state.factoryBatches,
+                  sales = state.sales,
+                  returns = state.returnLogs,
+                  stockTransfers = state.stockTransfers,
+                ).blockMessage(st.name)
+                if (blockMsg != null) {
+                  viewModel.showDialog(AppDialogRequest("Cannot Delete Store", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                } else {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Delete Store",
+                      body = "Delete store ${st.name}? It will no longer appear in Production or Sales.",
+                      tone = DialogTone.PERMANENT,
+                      confirmLabel = "Delete",
+                      onConfirm = {
+                        viewModel.launchSafely(errorTitle = "Delete Store Failed", successMessage = "Deleted store ${st.name}") {
+                          viewModel.repository.deleteStore(st.storeKey)
+                        }
+                      },
+                    )
                   )
-                )
-              }
-            },
-          ) {
-            Icon(Icons.Rounded.Delete, contentDescription = "Delete store", tint = palette.red)
+                }
+              },
+            ) {
+              Icon(Icons.Rounded.Delete, contentDescription = "Delete store", tint = palette.red)
+            }
           }
         }
-        HorizontalDivider(color = palette.border)
       }
     }
     Spacer(Modifier.height(24.dp))
@@ -507,7 +518,7 @@ fun CloseFinancialYearScreen(
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
     // Header band
-    SarimCard(borderColor = palette.red.copy(alpha = 0.6f)) {
+    SarimCard(tonalAccent = palette.red) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(Icons.Rounded.Warning, contentDescription = null, tint = palette.red, modifier = Modifier.size(28.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -629,12 +640,17 @@ fun CloseFinancialYearScreen(
     if (isProcessing) {
       SarimCard {
         Text("Processing: $stageText (${(progress * 100).toInt()}%)", color = palette.amber, fontWeight = FontWeight.Bold)
-        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(), color = palette.red)
+        LinearProgressIndicator(
+          progress = { progress },
+          modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
+          color = palette.red,
+          trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
       }
     }
 
     if (isComplete) {
-      SarimCard(borderColor = palette.green.copy(alpha = 0.6f)) {
+      SarimCard(tonalAccent = palette.green) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
           Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = palette.green, modifier = Modifier.size(28.dp))
           Column {

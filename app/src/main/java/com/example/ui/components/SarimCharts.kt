@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,20 +94,24 @@ fun MultiLineTrendChart(
       seriesList.forEach { s ->
         val enabled = s.label !in hiddenSeries
         val c = Color(s.colorHex)
+        val scheme = MaterialTheme.colorScheme
         Surface(
           shape = RoundedCornerShape(50),
-          color = if (enabled) c.copy(alpha = 0.18f) else palette.surfaceElevated,
-          modifier = Modifier.clickable {
-            hiddenSeries = if (enabled) hiddenSeries + s.label else hiddenSeries - s.label
-          },
+          color = if (enabled) lerp(scheme.surfaceContainerHigh, c, 0.22f) else scheme.surfaceContainerHigh,
+          modifier = Modifier
+            .defaultMinSize(minHeight = 36.dp)
+            .clip(RoundedCornerShape(50))
+            .clickable {
+              hiddenSeries = if (enabled) hiddenSeries + s.label else hiddenSeries - s.label
+            },
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            Box(Modifier.size(7.dp).clip(CircleShape).background(if (enabled) c else palette.textMuted))
-            Text(s.label, fontSize = 10.sp, color = if (enabled) palette.textPrimary else palette.textMuted, maxLines = 1)
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (enabled) c else palette.textMuted))
+            Text(s.label, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) palette.textPrimary else palette.textMuted, maxLines = 1)
           }
         }
       }
@@ -171,10 +177,10 @@ fun MultiLineTrendChart(
     selectedIndex?.let { idx ->
       if (idx in labels.indices) {
         Surface(
-          shape = RoundedCornerShape(14.dp),
-          color = palette.surfaceElevated,
+          shape = RoundedCornerShape(18.dp),
+          color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
-          Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(labels[idx], color = palette.green, fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
             activeSeries.forEach { s ->
               val v = s.values.getOrNull(idx) ?: 0.0
@@ -297,9 +303,9 @@ fun RankedHorizontalBars(
         Box(
           modifier = Modifier
             .fillMaxWidth()
-            .height(7.dp)
+            .height(8.dp)
             .clip(RoundedCornerShape(50))
-            .background(palette.surfaceElevated),
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         ) {
           Box(
             modifier = Modifier
@@ -406,9 +412,9 @@ fun SplitRatioBar(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .height(8.dp)
+        .height(9.dp)
         .clip(RoundedCornerShape(50))
-        .background(palette.surfaceElevated),
+        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
       if (leftRatio > 0f) {
         Box(Modifier.weight(leftRatio.coerceAtLeast(0.01f)).fillMaxHeight().background(leftColor))

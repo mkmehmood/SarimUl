@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -125,7 +124,7 @@ fun FormulaStoreScreen(
               Text("Check linked formulas: $names", color = palette.red, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
 
-            HorizontalDivider(color = palette.border)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
             SummaryLine("Unit Weight", SarimFormat.formatKg(desc.weight))
             SummaryLine("Raw Material Cost per Unit", rs(desc.raw))
@@ -193,12 +192,11 @@ private fun SmallFabRow(
   val palette = LocalSarimPalette.current
   Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     Surface(
-      shape = RoundedCornerShape(14.dp),
-      color = palette.surfaceElevated,
-      border = BorderStroke(1.dp, palette.border),
-      modifier = Modifier.clickable(onClick = onClick),
+      shape = RoundedCornerShape(16.dp),
+      color = MaterialTheme.colorScheme.surfaceContainerHighest,
+      modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
     ) {
-      Text(label, color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+      Text(label, color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
     }
     SmallFloatingActionButton(
       onClick = onClick,
@@ -404,12 +402,12 @@ fun FormulaEditScreen(
             )
             IconButton(
               onClick = { if (idx in rows.indices) rows.removeAt(idx) },
-              modifier = Modifier.size(36.dp),
+              modifier = Modifier.size(48.dp),
             ) {
               Icon(Icons.Rounded.Delete, contentDescription = "Remove row", tint = palette.red, modifier = Modifier.size(18.dp))
             }
           }
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
         }
       }
 
@@ -425,7 +423,7 @@ fun FormulaEditScreen(
       )
     }
 
-    SarimCard {
+    SarimCard(tonalAccent = palette.green) {
       SummaryLine("Unit Weight", SarimFormat.formatKg(liveSummary.unitWeightKg))
       SummaryLine("Raw Material Cost per Unit", SarimFormat.formatRs(liveSummary.rawMaterialCostPerUnit, privacyHidden = state.hideMoneyFigures))
       if (liveSummary.linkedAdditionalCost > 0.0) {

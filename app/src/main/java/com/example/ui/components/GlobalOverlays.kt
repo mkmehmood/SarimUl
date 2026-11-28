@@ -204,18 +204,18 @@ fun PhotoAttachmentBar(
     }
   }
 
+  val scheme = MaterialTheme.colorScheme
   Row(
     modifier = modifier.fillMaxWidth(),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = palette.surfaceElevated,
-      border = BorderStroke(1.dp, if (photoUris.isNotEmpty()) palette.green else palette.border),
+      shape = RoundedCornerShape(20.dp),
+      color = if (photoUris.isNotEmpty()) androidx.compose.ui.graphics.lerp(scheme.surfaceContainerHigh, palette.green, 0.16f) else scheme.surfaceContainerHigh,
       modifier = Modifier
-        .defaultMinSize(minHeight = 46.dp)
-        .clip(RoundedCornerShape(16.dp))
+        .defaultMinSize(minHeight = 48.dp)
+        .clip(RoundedCornerShape(20.dp))
         .clickable {
           runCatching {
             val uri = createTempCameraUri(context)
@@ -227,7 +227,7 @@ fun PhotoAttachmentBar(
         },
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
@@ -253,12 +253,11 @@ fun PhotoAttachmentBar(
     }
 
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = palette.surfaceElevated,
-      border = BorderStroke(1.dp, palette.border),
+      shape = RoundedCornerShape(20.dp),
+      color = scheme.surfaceContainerHigh,
       modifier = Modifier
-        .defaultMinSize(minHeight = 46.dp)
-        .clip(RoundedCornerShape(16.dp))
+        .defaultMinSize(minHeight = 48.dp)
+        .clip(RoundedCornerShape(20.dp))
         .clickable {
           runCatching {
             galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -268,20 +267,23 @@ fun PhotoAttachmentBar(
         },
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Pick from gallery", tint = palette.cyan, modifier = Modifier.size(18.dp))
-        Text("Gallery", color = palette.textPrimary, fontSize = 12.5.sp)
+        Text("Gallery", color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
       }
     }
 
     if (photoUris.isNotEmpty()) {
-      TextButton(onClick = { onViewPhotos(0) }) {
-        Text("View", color = palette.green, fontSize = 12.5.sp)
+      TextButton(
+        onClick = { onViewPhotos(0) },
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+      ) {
+        Text("View", color = palette.green, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
       }
-      IconButton(onClick = onClearAll, modifier = Modifier.size(36.dp)) {
+      IconButton(onClick = onClearAll, modifier = Modifier.size(48.dp)) {
         Icon(Icons.Rounded.Close, contentDescription = "Remove attached photos", tint = palette.red, modifier = Modifier.size(18.dp))
       }
     }

@@ -1,6 +1,5 @@
 package com.example.ui.tabs
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -240,8 +240,9 @@ fun ProductionTab(
           )
 
           // Formula cost panel (web: prod-formula-cost-block)
-          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.red.copy(alpha = 0.35f))) {
-            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          val scheme = MaterialTheme.colorScheme
+          Surface(shape = MaterialTheme.shapes.large, color = lerp(scheme.surfaceContainerHigh, palette.red, 0.10f)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Formula Unit Cost:", color = palette.textMuted, fontSize = 12.sp)
                 Text(SarimFormat.formatRs(unitCost, true, hideMoney) + "/unit", color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
@@ -258,7 +259,7 @@ fun ProductionTab(
           }
 
           // Result box (web: prod-profit-block)
-          SarimCard {
+          SarimCard(containerColor = lerp(scheme.surfaceContainerHigh, palette.emerald, 0.09f)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
               Text("Dynamic Cost Price:", color = palette.textMuted, fontSize = 12.5.sp)
               Text(SarimFormat.formatRs(costPerKg, true, hideMoney) + "/kg", color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold))
@@ -374,9 +375,10 @@ viewModel.launchSafely(
             state.stores.forEach { store ->
               val items = filteredProd.filter { it.storeKey == store.storeKey }
               val sColor = storeColorForKey(store.storeKey, palette.isDark)
-              Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, sColor.copy(alpha = 0.5f))) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                  Text(store.name, color = sColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+              val scheme = MaterialTheme.colorScheme
+              Surface(shape = MaterialTheme.shapes.large, color = lerp(scheme.surfaceContainerHigh, sColor, 0.10f)) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Text(store.name, color = sColor, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
                   Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SarimStatTile("Weight", SarimFormat.formatKg(items.sumOf { it.netWeightKg }), Modifier.weight(1f), sColor)
                     SarimStatTile("Value", SarimFormat.formatRs(items.sumOf { it.totalValue }, false, hideMoney), Modifier.weight(1f), palette.green)

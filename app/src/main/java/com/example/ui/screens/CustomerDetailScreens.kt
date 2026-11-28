@@ -11,9 +11,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -164,8 +162,8 @@ fun CustomerDetailsScreen(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
             modifier = Modifier
-              .background(palette.surfaceElevated)
-              .border(1.dp, palette.green.copy(alpha = 0.4f), RoundedCornerShape(16.dp)),
+              .clip(RoundedCornerShape(20.dp))
+              .background(MaterialTheme.colorScheme.surfaceContainerHigh),
           ) {
             DropdownMenuItem(
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("customer_menu_edit"),
@@ -176,7 +174,7 @@ fun CustomerDetailsScreen(
                 viewModel.openStandalone(if (isRep) StandaloneScreen.RepCustomerEdit(customer.id) else StandaloneScreen.CustomerEdit(customer.id))
               },
             )
-            HorizontalDivider(color = palette.border)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
             DropdownMenuItem(
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("customer_menu_pdf"),
               leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
@@ -192,7 +190,7 @@ fun CustomerDetailsScreen(
     }
 
     // Balance card
-    SarimCard(borderColor = palette.amber.copy(alpha = 0.45f)) {
+    SarimCard(tonalAccent = palette.amber) {
       Text("CURRENT DEBT", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
       Text(
         SarimFormat.formatRs(customer.currentCredit, privacyHidden = state.hideMoneyFigures),
@@ -207,7 +205,7 @@ fun CustomerDetailsScreen(
         progress = { pctReceived / 100f },
         modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
         color = palette.green,
-        trackColor = palette.border,
+        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
       )
       Text("$pctReceived% of the amount owed has been received", color = palette.textMuted, fontSize = 12.sp)
     }
@@ -392,11 +390,11 @@ fun CustomerDetailsScreen(
     ) {
       Surface(
         modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 460.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = palette.surface,
-        border = BorderStroke(1.dp, palette.red.copy(alpha = 0.45f)),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 6.dp,
       ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
           Text("Money Out — ${customer.name}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
           Text(
             "Cash payout/refund to customer increases their owed balance and optionally logs to Daily Ledger.",
@@ -431,7 +429,7 @@ fun CustomerDetailsScreen(
             testTag = "mo_note",
           )
           Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
           ) {
@@ -578,8 +576,7 @@ fun CustomerEditScreen(
           modifier = Modifier
             .size(66.dp)
             .clip(CircleShape)
-            .background(palette.surfaceElevated)
-            .border(1.5.dp, palette.green.copy(alpha = 0.6f), CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .testTag("cust_photo_preview")
             .clickable { if (!curPhoto.isNullOrBlank()) viewModel.openPhotoViewer(listOf(curPhoto), 0) },
           contentAlignment = Alignment.Center,

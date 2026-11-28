@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -514,7 +513,7 @@ fun ApprovalsScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     // Hero card
-    SarimCard(borderColor = if (pending.isEmpty()) palette.green.copy(alpha = 0.5f) else palette.amber.copy(alpha = 0.5f)) {
+    SarimCard(tonalAccent = if (pending.isEmpty()) palette.green else palette.amber) {
       if (pending.isEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
           SarimChip("All caught up", palette.green)
@@ -559,6 +558,7 @@ fun ApprovalsScreen(
               selected = selectedType == cat,
               onClick = { selectedType = cat },
               label = { Text("$cat ($count)") },
+              modifier = Modifier.minimumInteractiveComponentSize(),
             )
           }
         }
@@ -575,6 +575,7 @@ fun ApprovalsScreen(
               selected = selectedPerson == person,
               onClick = { selectedPerson = person },
               label = { Text(person) },
+              modifier = Modifier.minimumInteractiveComponentSize(),
             )
           }
         }
@@ -647,7 +648,7 @@ fun ApprovalsScreen(
       SarimEmptyState("No matches", "Nothing matches your search or filter.")
     } else {
       filtered.forEach { req: ApprovalRequestEntity ->
-        SarimCard {
+        SarimCard(tonalAccent = palette.amber) {
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

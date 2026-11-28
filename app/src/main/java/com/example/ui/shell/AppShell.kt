@@ -202,12 +202,13 @@ fun AppShell(
 
           // Offline / Pending Sync slim banner
           if (!state.isOnline || state.isOfflineSession || state.pendingSyncCount > 0) {
+            val scheme = MaterialTheme.colorScheme
             Row(
               modifier = Modifier
                 .fillMaxWidth()
-                .background(palette.surface)
+                .background(scheme.surfaceContainer)
                 .clickable { if (!state.isOfflineSession) viewModel.syncDataNow() }
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -233,7 +234,7 @@ fun AppShell(
                 color = if (state.pendingSyncCount > 0) palette.amber else palette.green,
               )
             }
-            HorizontalDivider(color = palette.border)
+            HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.4f))
           }
         }
       },

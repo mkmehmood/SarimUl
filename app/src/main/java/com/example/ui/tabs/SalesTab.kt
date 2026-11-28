@@ -2,11 +2,12 @@ package com.example.ui.tabs
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -270,17 +273,21 @@ fun SalesTab(
 
         SarimFieldLabel("Sales Representative (For Calculator Link)")
         Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          val scheme = MaterialTheme.colorScheme
           repOptions.forEach { rep ->
             val sel = rep.equals(selectedRep, ignoreCase = true)
+            val chipSource = remember { MutableInteractionSource() }
+            val (scale, corner) = rememberExpressivePress(chipSource, restCorner = 24.dp, pressedCorner = 14.dp)
+            val chipShape = RoundedCornerShape(corner)
             Surface(
-              shape = RoundedCornerShape(50),
-              color = if (sel) palette.green.copy(alpha = 0.16f) else palette.surfaceElevated,
-              border = BorderStroke(1.dp, if (sel) palette.green else palette.border),
+              shape = chipShape,
+              color = if (sel) lerp(scheme.surfaceContainerHigh, palette.green, 0.22f) else scheme.surfaceContainerHigh,
               modifier = Modifier
                 .defaultMinSize(minHeight = 48.dp)
-                .clip(RoundedCornerShape(50))
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(chipShape)
                 .testTag("sales_rep_chip_${rep.lowercase().replace(" ", "_")}")
-                .clickable {
+                .clickable(interactionSource = chipSource, indication = LocalIndication.current) {
                   if (lockRepReturnIdentity && !sel) {
                     viewModel.showDialog(AppDialogRequest("Action Not Allowed", "The rep and date of a return cannot be changed. Delete it and enter it again.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                   } else {
@@ -289,15 +296,18 @@ fun SalesTab(
                 },
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text(rep, color = if (sel) palette.green else palette.textMuted, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(rep, color = if (sel) palette.green else palette.textMuted, fontSize = 12.5.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.SemiBold)
               }
             }
           }
         }
 
         if (isRepSelected) {
-          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.45f))) {
-            Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+          Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.cyan, 0.12f),
+          ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
               Column {
                 Text("Rep Outstanding", color = palette.textMuted, fontSize = 11.sp)
                 Text(SarimFormat.formatRs(repOutstanding, true, hideMoney), color = palette.cyan, style = TabularNumberStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold))
@@ -321,8 +331,11 @@ fun SalesTab(
           }
 
           if (matchedCustomer != null) {
-            Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.amber.copy(alpha = 0.45f))) {
-              Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Surface(
+              shape = RoundedCornerShape(20.dp),
+              color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.amber, 0.12f),
+            ) {
+              Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                   Text("Current Credit", color = palette.textMuted, fontSize = 11.sp)
                   Text(SarimFormat.formatRs(matchedCustomer.currentCredit, true, hideMoney), color = palette.amber, style = TabularNumberStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold))
@@ -382,7 +395,7 @@ fun SalesTab(
               }
             }
 
-            SarimCard {
+            SarimCard(containerColor = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.emerald, 0.08f)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Total Cost:", color = palette.textMuted, fontSize = 12.5.sp)
                 Text(SarimFormat.formatRs(totalCost, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold))
@@ -403,22 +416,28 @@ fun SalesTab(
               StockTone.LOW -> palette.amber
               StockTone.OK -> palette.green
             }
+            val stockSource = remember { MutableInteractionSource() }
+            val (stockScale, stockCorner) = rememberExpressivePress(stockSource, restCorner = 20.dp, pressedCorner = 14.dp, pressedScale = 0.98f)
+            val stockShape = RoundedCornerShape(stockCorner)
             Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = stockTone.copy(alpha = 0.1f),
-              border = BorderStroke(1.dp, stockTone.copy(alpha = 0.5f)),
-              modifier = Modifier.fillMaxWidth().clickable { showStockDetails = !showStockDetails },
+              shape = stockShape,
+              color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, stockTone, 0.13f),
+              modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { scaleX = stockScale; scaleY = stockScale }
+                .clip(stockShape)
+                .clickable(interactionSource = stockSource, indication = LocalIndication.current) { showStockDetails = !showStockDetails },
             ) {
-              Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                   Text("In Stock: ${SarimFormat.formatKg(inStockKg.coerceAtLeast(0.0))}", color = stockTone, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                   SarimChip(SarimStockCheck.note(inStockKg, qtyNum), stockTone)
                 }
                 LinearProgressIndicator(
                   progress = { SarimStockCheck.usedFraction(inStockKg, qtyNum) },
-                  modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
+                  modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
                   color = stockTone,
-                  trackColor = palette.surfaceElevated,
+                  trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 )
                 if (showStockDetails && daySnap != null) {
                   Text(
@@ -478,7 +497,7 @@ fun SalesTab(
               onCheckedChange = { collAddToLedger = it },
               label = "Add to Daily Ledger",
             )
-            SarimCard {
+            SarimCard(containerColor = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, if (afterDebt <= 0.01) palette.green else palette.amber, 0.08f)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Balance After Collection:", color = palette.textMuted, fontSize = 12.5.sp)
                 Text(SarimFormat.formatRs(afterDebt, true, hideMoney), color = if (afterDebt <= 0.01) palette.green else palette.amber, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))

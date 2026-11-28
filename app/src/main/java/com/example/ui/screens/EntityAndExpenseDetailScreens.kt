@@ -110,13 +110,14 @@ fun EntityDetailsScreen(
             ),
           )
         }
-        IconButton(onClick = { showStatementFlow = true }) {
+        IconButton(onClick = { showStatementFlow = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
           Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Share statement", tint = palette.green)
         }
-        IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }) {
+        IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }, modifier = Modifier.minimumInteractiveComponentSize()) {
           Icon(Icons.Rounded.Edit, contentDescription = "Edit entity", tint = palette.cyan)
         }
         IconButton(
+          modifier = Modifier.minimumInteractiveComponentSize(),
           onClick = {
             val blockMsg = SarimLinkEngine.getEntityDeleteBlockReason(
               entity = entity,
@@ -165,7 +166,7 @@ fun EntityDetailsScreen(
       }
     }
 
-    SarimCard(borderColor = palette.purple.copy(alpha = 0.45f)) {
+    SarimCard(tonalAccent = palette.purple) {
       val bal = entity.currentBalance
       Text("ENTITY BALANCE", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
       Text(
@@ -325,7 +326,7 @@ fun ExpenseDetailsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    SarimCard(borderColor = palette.red.copy(alpha = 0.4f)) {
+    SarimCard(tonalAccent = palette.red) {
       Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
       Text(
         "Total: ${SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures)}",

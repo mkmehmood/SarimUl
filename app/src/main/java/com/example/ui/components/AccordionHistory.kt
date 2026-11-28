@@ -1,19 +1,23 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +30,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -156,10 +162,15 @@ internal fun Modifier.historyToneBackground(
   }
 }
 
-/** Web `.badge.status-badge`: tiny uppercase tinted pill. */
+/** Web `.badge.status-badge`: expressive tinted pill. */
 @Composable
 internal fun HistoryStatusBadge(text: String, color: Color, modifier: Modifier = Modifier) {
-  Surface(modifier = modifier, shape = RoundedCornerShape(50), color = color.copy(alpha = 0.16f)) {
+  val scheme = MaterialTheme.colorScheme
+  Surface(
+    modifier = modifier,
+    shape = RoundedCornerShape(50),
+    color = lerp(scheme.surfaceContainerHighest, color, 0.22f),
+  ) {
     Text(
       text = text.uppercase(),
       color = color,
@@ -168,14 +179,14 @@ internal fun HistoryStatusBadge(text: String, color: Color, modifier: Modifier =
       letterSpacing = 0.4.sp,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.padding(horizontal = 8.dp, vertical = 1.dp),
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 2.dp),
     )
   }
 }
 
 internal enum class SheetButtonKind { PRIMARY, SECONDARY, DANGER }
 
-/** Web `.cm-sheet-actions .btn`: 42dp pill; Edit is the wide gradient one, Delete the narrow one. */
+/** Expressive 48dp pill sheet button with spring press feedback. */
 @Composable
 internal fun HistorySheetButton(
   text: String,
@@ -185,13 +196,16 @@ internal fun HistorySheetButton(
   icon: ImageVector? = null,
 ) {
   val palette = LocalSarimPalette.current
-  val shape = RoundedCornerShape(50)
+  val scheme = MaterialTheme.colorScheme
+  val source = remember { MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 14.dp)
+  val shape = RoundedCornerShape(corner)
   val surface: Modifier = when (kind) {
     SheetButtonKind.PRIMARY -> Modifier.background(Brush.horizontalGradient(listOf(palette.gradientStart, palette.gradientEnd)), shape)
     SheetButtonKind.DANGER -> Modifier.background(Brush.horizontalGradient(listOf(palette.red, palette.amber)), shape)
-    SheetButtonKind.SECONDARY -> Modifier.background(palette.surfaceElevated, shape).border(1.dp, palette.border, shape)
+    SheetButtonKind.SECONDARY -> Modifier.background(scheme.secondaryContainer, shape)
   }
-  val fg = if (kind == SheetButtonKind.SECONDARY) palette.textPrimary else Color(0xFF04160B)
+  val fg = if (kind == SheetButtonKind.SECONDARY) scheme.onSecondaryContainer else Color(0xFF04160B)
   val tag = when (kind) {
     SheetButtonKind.PRIMARY -> "primary_button"
     SheetButtonKind.DANGER -> "danger_button"
@@ -199,20 +213,21 @@ internal fun HistorySheetButton(
   }
   Box(
     modifier = modifier
-      .height(42.dp)
+      .height(48.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
       .clip(shape)
       .then(surface)
       .testTag(tag)
-      .clickable(onClick = onClick),
+      .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick),
     contentAlignment = Alignment.Center,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 8.dp),
+      modifier = Modifier.padding(horizontal = 10.dp),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       if (icon != null) Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
-      Text(text, color = fg, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Text(text, color = fg, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
   }
 }
@@ -220,16 +235,20 @@ internal fun HistorySheetButton(
 @Composable
 private fun HistoryChevron(open: Boolean, modifier: Modifier = Modifier) {
   val palette = LocalSarimPalette.current
-  val rot by animateFloatAsState(if (open) 0f else -90f, label = "historyChevron")
+  val rot by animateFloatAsState(
+    targetValue = if (open) 0f else -90f,
+    animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMedium),
+    label = "historyChevron",
+  )
   Icon(
     imageVector = Icons.Rounded.ExpandMore,
     contentDescription = null,
     tint = palette.textMuted,
-    modifier = modifier.size(18.dp).rotate(rot),
+    modifier = modifier.size(20.dp).rotate(rot),
   )
 }
 
-/** Web `.hc-more` panel: a titled collapsible block used inside cards and sheets. */
+/** Web `.hc-more` panel: a titled collapsible tonal block used inside cards and sheets. */
 @Composable
 fun SarimCollapsibleDropdownSection(
   title: String,
@@ -240,31 +259,39 @@ fun SarimCollapsibleDropdownSection(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   var expanded by remember(title) { mutableStateOf(initiallyExpanded) }
+  val bgColor by animateColorAsState(
+    targetValue = if (expanded) lerp(scheme.surfaceContainerHigh, accentColor, 0.12f) else scheme.surfaceContainerHigh,
+    label = "collapsibleBg",
+  )
+  val shape = MaterialTheme.shapes.large
   Surface(
-    shape = RoundedCornerShape(14.dp),
-    color = palette.surface,
-    border = BorderStroke(1.dp, if (expanded) accentColor.copy(alpha = 0.5f) else palette.border),
+    shape = shape,
+    color = bgColor,
     modifier = modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(14.dp))
+      .clip(shape)
       .clickable { expanded = !expanded },
   ) {
-    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Row(
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 28.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           modifier = Modifier.weight(1f),
         ) {
-          Text(title, color = if (expanded) palette.textPrimary else accentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+          Text(title, color = if (expanded) palette.textPrimary else accentColor, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
           if (countText.isNotBlank()) HistoryStatusBadge(countText, accentColor)
         }
         HistoryChevron(open = expanded)
       }
       AnimatedVisibility(visible = expanded) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.45f))
           content()
         }
       }
@@ -305,44 +332,67 @@ private fun <T> buildLedger(records: List<HistoryRecordDisplay<T>>): List<YearGr
 
 private fun entriesWord(n: Int) = if (n == 1) "1 entry" else "$n entries"
 
-/** Web `.cm-month-head`: name, entry count, optional sums line, chevron, hairline underneath. */
+/** Web `.cm-month-head`: name, entry pill badge, optional sums line, chevron. */
 @Composable
 private fun LedgerGroupHeader(name: String, count: String, sum: String, open: Boolean, onToggle: () -> Unit) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
+  val headerBg by animateColorAsState(
+    targetValue = if (open) lerp(scheme.surfaceContainerLow, scheme.primary, 0.06f) else Color.Transparent,
+    label = "ledgerGroupBg",
+  )
   Column(modifier = Modifier.fillMaxWidth()) {
-    Row(
+    Surface(
+      shape = RoundedCornerShape(18.dp),
+      color = headerBg,
       modifier = Modifier
         .fillMaxWidth()
-        .clickable(onClick = onToggle)
-        .padding(horizontal = 4.dp, vertical = 10.dp),
-      verticalAlignment = Alignment.CenterVertically,
+        .defaultMinSize(minHeight = 52.dp)
+        .clip(RoundedCornerShape(18.dp))
+        .clickable(onClick = onToggle),
     ) {
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(name, color = palette.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
-          Text(count, color = palette.textMuted, fontSize = 11.5.sp)
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(name, color = palette.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            HistoryStatusBadge(count, if (open) palette.cyan else palette.textMuted)
+          }
+          if (sum.isNotBlank()) {
+            Text(sum, color = palette.textMuted, fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+          }
         }
-        if (sum.isNotBlank()) {
-          Text(sum, color = palette.textMuted, fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
+        HistoryChevron(open = open)
       }
-      HistoryChevron(open = open)
     }
-    HorizontalDivider(color = palette.border)
+    if (!open) {
+      HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.4f))
+    }
   }
 }
 
-/** Web `.hl-row`: dot + title + status badge, sub line, amount; tone wash; opens the entry sheet. */
+/** Web `.hl-row`: expressive tonal transaction card with leading accent bar, dot, title, badge, subtitle, and amount. */
 @Composable
 private fun <T> LedgerRow(rec: HistoryRecordDisplay<T>, index: Int, onClick: () -> Unit) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   val tone = historyToneOf(rec.amountColor, rec.tone)
   val toneColor = historyToneColor(tone, palette)
-  val shape = RoundedCornerShape(14.dp)
+  val source = remember { MutableInteractionSource() }
+  val (scale, corner) = rememberExpressivePress(source, restCorner = 20.dp, pressedCorner = 12.dp, pressedScale = 0.975f)
+  val shape = RoundedCornerShape(corner)
+  val baseContainer = lerp(scheme.surfaceContainerHigh, toneColor, 0.09f)
   Row(
     modifier = Modifier
       .fillMaxWidth()
+      .defaultMinSize(minHeight = 56.dp)
+      .graphicsLayer { scaleX = scale; scaleY = scale }
       .clip(shape)
+      .background(baseContainer)
       .historyToneBackground(
         tone = tone,
         color = toneColor,
@@ -351,18 +401,25 @@ private fun <T> LedgerRow(rec: HistoryRecordDisplay<T>, index: Int, onClick: () 
         dotColor = if (rec.showDots) palette.purple.copy(alpha = 0.16f) else null,
       )
       .testTag("history_row_$index")
-      .clickable(onClick = onClick)
-      .padding(horizontal = 12.dp, vertical = 10.dp),
+      .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick)
+      .padding(horizontal = 12.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Box(
+      modifier = Modifier
+        .width(3.5.dp)
+        .height(28.dp)
+        .clip(RoundedCornerShape(50))
+        .background(toneColor.copy(alpha = 0.85f)),
+    )
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(rec.amountColor))
+        Box(Modifier.size(7.5.dp).clip(CircleShape).background(rec.amountColor))
         Text(
           rec.title,
           color = palette.textPrimary,
-          fontSize = 13.8.sp,
+          fontSize = 14.sp,
           fontWeight = FontWeight.SemiBold,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -377,7 +434,7 @@ private fun <T> LedgerRow(rec: HistoryRecordDisplay<T>, index: Int, onClick: () 
     Text(
       rec.amountText,
       color = rec.amountColor,
-      style = TabularNumberStyle.copy(fontSize = 14.4.sp, fontWeight = FontWeight.Bold),
+      style = TabularNumberStyle.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
       maxLines = 1,
     )
   }
@@ -449,32 +506,54 @@ fun <T> AccordionHistoryList(
                   val dKey = "d:${d.key}"
                   val dOpen = openState[dKey] ?: (d.key == today)
                   val firstEpoch = d.items.first().dateEpoch
+                  val scheme = MaterialTheme.colorScheme
+                  val dayCorner by animateDpAsState(if (dOpen) 28.dp else 22.dp, label = "dayCorner")
+                  val daySurfaceColor by animateColorAsState(
+                    if (dOpen) scheme.surfaceContainer else scheme.surfaceContainerLow,
+                    label = "daySurface",
+                  )
+                  val isToday = d.key == today
                   Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = palette.surface,
-                    border = BorderStroke(1.dp, palette.border),
+                    shape = RoundedCornerShape(dayCorner),
+                    color = daySurfaceColor,
                   ) {
                     Column {
                       Row(
                         modifier = Modifier
                           .fillMaxWidth()
+                          .defaultMinSize(minHeight = 56.dp)
                           .clickable { openState[dKey] = !dOpen }
                           .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                       ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(38.dp)) {
-                          Text(
-                            if (d.key == UNDATED) "--" else SarimFormat.formatDayNumber(firstEpoch),
-                            color = palette.textPrimary,
-                            style = TabularNumberStyle.copy(fontSize = 16.8.sp, fontWeight = FontWeight.ExtraBold),
-                          )
-                          if (d.key != UNDATED) {
-                            Text(SarimFormat.formatWeekday(firstEpoch), color = palette.textMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        Surface(
+                          shape = RoundedCornerShape(16.dp),
+                          color = if (isToday) lerp(scheme.surfaceContainerHighest, palette.green, 0.24f) else scheme.surfaceContainerHighest,
+                          modifier = Modifier.width(44.dp).defaultMinSize(minHeight = 46.dp),
+                        ) {
+                          Column(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                          ) {
+                            Text(
+                              if (d.key == UNDATED) "--" else SarimFormat.formatDayNumber(firstEpoch),
+                              color = if (isToday) palette.green else palette.textPrimary,
+                              style = TabularNumberStyle.copy(fontSize = 16.5.sp, fontWeight = FontWeight.ExtraBold),
+                            )
+                            if (d.key != UNDATED) {
+                              Text(
+                                SarimFormat.formatWeekday(firstEpoch),
+                                color = if (isToday) palette.green else palette.textMuted,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                              )
+                            }
                           }
                         }
-                        Column(modifier = Modifier.weight(1f)) {
-                          Text(entriesWord(d.items.size), color = palette.textPrimary, fontSize = 13.8.sp, fontWeight = FontWeight.SemiBold)
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                          Text(entriesWord(d.items.size), color = palette.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                           val sum = daySummary(d.items)
                           if (sum.isNotBlank()) {
                             Text(sum, color = palette.textMuted, fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -484,10 +563,10 @@ fun <T> AccordionHistoryList(
                       }
                       AnimatedVisibility(visible = dOpen) {
                         Column {
-                          HorizontalDivider(color = palette.border)
+                          HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.4f))
                           Column(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                           ) {
                             d.items.forEachIndexed { idx, rec ->
                               LedgerRow(rec, idx) {
@@ -496,11 +575,23 @@ fun <T> AccordionHistoryList(
                             }
                             val dayAction = actions?.onDayAction
                             if (dayAction != null) {
-                              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = { dayAction(d.items.map { it.item }) }) {
-                                  Icon(Icons.Rounded.Share, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(14.dp))
-                                  Spacer(Modifier.width(6.dp))
-                                  Text(actions?.dayActionLabel ?: "Invoice", color = palette.cyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                              Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.End) {
+                                Surface(
+                                  shape = RoundedCornerShape(50),
+                                  color = lerp(scheme.surfaceContainerHigh, palette.cyan, 0.16f),
+                                  modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { dayAction(d.items.map { it.item }) },
+                                ) {
+                                  Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                  ) {
+                                    Icon(Icons.Rounded.Share, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(16.dp))
+                                    Text(actions?.dayActionLabel ?: "Invoice", color = palette.cyan, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                                  }
                                 }
                               }
                             }
@@ -572,35 +663,49 @@ fun SarimHistoryCard(
   content: @Composable ColumnScope.() -> Unit = {},
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   val toneColor = historyToneColor(tone, palette)
   var open by remember(title) { mutableStateOf(initiallyOpen) }
   val showBody = !collapsible || open
-  val shape = RoundedCornerShape(16.dp)
+  val cardSource = remember { MutableInteractionSource() }
+  val (pressScale, pressCorner) = rememberExpressivePress(cardSource, restCorner = 26.dp, pressedCorner = 16.dp, pressedScale = 0.98f)
+  val cardShape = RoundedCornerShape(pressCorner)
+  val cardContainer by animateColorAsState(
+    targetValue = lerp(scheme.surfaceContainerHigh, toneColor, if (showBody && collapsible) 0.11f else 0.05f),
+    label = "historyCardContainer",
+  )
   Surface(
     modifier = modifier
       .fillMaxWidth()
-      .clip(shape)
-      .then(if (!collapsible && onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-    shape = shape,
-    color = palette.surface,
-    border = BorderStroke(1.dp, if (showBody && collapsible) toneColor.copy(alpha = 0.5f) else palette.border),
+      .then(if (!collapsible && onClick != null) Modifier.graphicsLayer { scaleX = pressScale; scaleY = pressScale } else Modifier)
+      .clip(cardShape)
+      .then(
+        if (!collapsible && onClick != null) {
+          Modifier.clickable(interactionSource = cardSource, indication = LocalIndication.current, onClick = onClick)
+        } else {
+          Modifier
+        },
+      ),
+    shape = cardShape,
+    color = cardContainer,
   ) {
     Column(
       modifier = Modifier
         .drawBehind {
           drawRoundRect(
             color = toneColor.copy(alpha = 0.85f),
-            topLeft = Offset(0f, 14.dp.toPx()),
-            size = Size(3.dp.toPx(), (size.height - 28.dp.toPx()).coerceAtLeast(0f)),
-            cornerRadius = CornerRadius(3.dp.toPx()),
+            topLeft = Offset(0f, 16.dp.toPx()),
+            size = Size(3.5.dp.toPx(), (size.height - 32.dp.toPx()).coerceAtLeast(0f)),
+            cornerRadius = CornerRadius(4.dp.toPx()),
           )
         }
-        .padding(horizontal = 12.dp, vertical = 10.dp),
+        .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
+          .defaultMinSize(minHeight = 52.dp)
+          .clip(RoundedCornerShape(16.dp))
           .then(
             if (collapsible) {
               Modifier.clickable {
@@ -612,17 +717,17 @@ fun SarimHistoryCard(
             },
           ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
       ) {
-        InitialsAvatar(avatarName, leadColor ?: toneColor, sizeDp = 32.dp)
-        Column(modifier = Modifier.weight(1f)) {
-          Text(title, color = palette.textPrimary, fontSize = 14.4.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        InitialsAvatar(avatarName, leadColor ?: toneColor, sizeDp = 36.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(title, color = palette.textPrimary, fontSize = 14.8.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
           if (subtitle.isNotBlank()) {
             Text(subtitle, color = palette.textMuted, fontSize = 11.8.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
           }
         }
         if (amountText.isNotBlank() || tagText.isNotBlank()) {
-          Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
             if (amountText.isNotBlank()) {
               Text(amountText, color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 15.2.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
             }
@@ -633,32 +738,41 @@ fun SarimHistoryCard(
       }
       if (collapsible) {
         AnimatedVisibility(visible = showBody) {
-          Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+          Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
         }
       } else {
-        Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+        Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
       }
     }
   }
 }
 
-/** Web `.txn-balance-after` row: muted label on the left, bold value on the right, hairline above. */
+/** Web `.txn-balance-after` row: muted label on the left, bold value on the right. */
 @Composable
-fun HistoryKeyValueRow(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color? = null) {
+fun HistoryKeyValueRow(
+  label: String,
+  value: String,
+  modifier: Modifier = Modifier,
+  valueColor: Color? = null,
+  showDivider: Boolean = true,
+) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   Column(modifier = modifier.fillMaxWidth()) {
-    HorizontalDivider(color = palette.border.copy(alpha = 0.6f))
+    if (showDivider) {
+      HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.45f))
+    }
     Row(
-      modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+      modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Text(label, color = palette.textMuted, fontSize = 11.8.sp, modifier = Modifier.weight(1f))
+      Text(label, color = palette.textMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
       Spacer(Modifier.width(10.dp))
       Text(
         value,
         color = valueColor ?: palette.textPrimary,
-        style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold),
+        style = TabularNumberStyle.copy(fontSize = 12.8.sp, fontWeight = FontWeight.Bold),
       )
     }
   }
@@ -666,7 +780,7 @@ fun HistoryKeyValueRow(label: String, value: String, modifier: Modifier = Modifi
 
 /**
  * The one entry popup for every history list (web `#hl-sheet`): grab handle, title + amount head,
- * info line + badge, key/value rows, extras, then Delete (narrow) and Edit (wide gradient) pills.
+ * info line + badge, grouped tonal metrics container, extras, then 48dp expressive action pills.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -690,23 +804,24 @@ fun SarimRecordBottomSheet(
   tone: HistoryTone? = null,
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   val resolved = historyToneOf(amountColor, tone)
   val toneColor = historyToneColor(resolved, palette)
   ModalBottomSheet(
     onDismissRequest = onDismiss,
     sheetState = sheetState,
-    containerColor = palette.surface,
+    containerColor = scheme.surfaceContainerLow,
     contentColor = palette.textPrimary,
-    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
     dragHandle = {
       Box(
         Modifier
-          .padding(top = 8.dp, bottom = 12.dp)
-          .width(38.dp)
+          .padding(top = 10.dp, bottom = 12.dp)
+          .width(44.dp)
           .height(4.dp)
           .clip(RoundedCornerShape(50))
-          .background(palette.border),
+          .background(scheme.outlineVariant),
       )
     },
   ) {
@@ -716,27 +831,41 @@ fun SarimRecordBottomSheet(
         .historyToneBackground(resolved, toneColor, palette.textPrimary)
         .verticalScroll(rememberScrollState())
         .navigationBarsPadding()
-        .padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 18.dp),
+        .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 20.dp),
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Text(title, color = palette.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Text(title, color = palette.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(10.dp))
-        Text(amountText, color = amountColor, style = TabularNumberStyle.copy(fontSize = 16.8.sp, fontWeight = FontWeight.ExtraBold))
+        Text(amountText, color = amountColor, style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold))
       }
-      Spacer(Modifier.height(10.dp))
-      Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (subtitle.isNotBlank()) Text(subtitle, color = palette.textMuted, fontSize = 12.sp)
-        if (badgeText.isNotBlank()) HistoryStatusBadge(badgeText, badgeColor ?: amountColor)
+      if (subtitle.isNotBlank() || badgeText.isNotBlank()) {
+        Spacer(Modifier.height(10.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          if (subtitle.isNotBlank()) Text(subtitle, color = palette.textMuted, fontSize = 12.5.sp)
+          if (badgeText.isNotBlank()) HistoryStatusBadge(badgeText, badgeColor ?: amountColor)
+        }
       }
-      Spacer(Modifier.height(6.dp))
-      metrics.forEach { (label, value) -> HistoryKeyValueRow(label, value) }
+      if (metrics.isNotEmpty()) {
+        Spacer(Modifier.height(12.dp))
+        Surface(
+          shape = MaterialTheme.shapes.large,
+          color = scheme.surfaceContainerHigh,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+            metrics.forEachIndexed { idx, (label, value) ->
+              HistoryKeyValueRow(label, value, showDivider = idx > 0)
+            }
+          }
+        }
+      }
 
       if (extraContent != null) {
-        Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
           extraContent()
         }
       }
@@ -744,7 +873,7 @@ fun SarimRecordBottomSheet(
       val hasActions = onEdit != null || onDelete != null || (onExtraAction != null && extraActionLabel != null)
       if (hasActions) {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+          modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           if (onDelete != null) {

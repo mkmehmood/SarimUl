@@ -50,11 +50,11 @@ private val SarimDarkColorScheme = darkColorScheme(
   scrim = Color(0xFF000000),
   surfaceBright = Color(0xFF343B36),
   surfaceDim = DarkBackground,
-  surfaceContainerLowest = Color(0xFF090F0B),
-  surfaceContainerLow = Color(0xFF121A15),
+  surfaceContainerLowest = Color(0xFF080D0A),
+  surfaceContainerLow = Color(0xFF101813),
   surfaceContainer = DarkSurface,
   surfaceContainerHigh = DarkSurfaceElevated,
-  surfaceContainerHighest = Color(0xFF2A342E),
+  surfaceContainerHighest = Color(0xFF29352D),
 )
 
 private val SarimLightColorScheme = lightColorScheme(
@@ -90,10 +90,10 @@ private val SarimLightColorScheme = lightColorScheme(
   surfaceBright = LightBackground,
   surfaceDim = Color(0xFFD9DED8),
   surfaceContainerLowest = Color.White,
-  surfaceContainerLow = Color(0xFFF4F9F2),
+  surfaceContainerLow = Color(0xFFF3F8F2),
   surfaceContainer = LightSurface,
   surfaceContainerHigh = LightSurfaceElevated,
-  surfaceContainerHighest = Color(0xFFDDE4DC),
+  surfaceContainerHighest = Color(0xFFD7E2D6),
 )
 
 /** Expressive shape scale: rounder, more playful corners across every component. */

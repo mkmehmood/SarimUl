@@ -1,11 +1,14 @@
 package com.example.ui.tabs
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -20,8 +25,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
 import com.example.data.model.*
 import com.example.ui.components.*
 import com.example.ui.navigation.SarimRoute
@@ -191,6 +194,7 @@ fun OverviewTab(
 
     // 4. Panel tabs
     item {
+      val scheme = MaterialTheme.colorScheme
       Row(
         modifier = Modifier
           .fillMaxWidth()
@@ -201,22 +205,21 @@ fun OverviewTab(
           val active = state.prefs.activeOverviewPanel == panel
           Surface(
             shape = RoundedCornerShape(50),
-            color = if (active) palette.green.copy(alpha = 0.16f) else palette.surface,
-            border = BorderStroke(1.dp, if (active) palette.green else palette.border),
+            color = if (active) lerp(scheme.surfaceContainerHigh, palette.green, 0.22f) else scheme.surfaceContainer,
             modifier = Modifier
-              .defaultMinSize(minHeight = 42.dp)
+              .defaultMinSize(minHeight = 48.dp)
               .clip(RoundedCornerShape(50))
               .clickable { viewModel.setOverviewPanel(panel) },
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+              modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
               Text(
                 panel.label,
                 color = if (active) palette.green else palette.textPrimary,
-                fontSize = 12.5.sp,
+                fontSize = 13.sp,
                 fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
               )
               if (panel == OverviewPanel.CHECKS && snap.auditFindings.isNotEmpty()) {
@@ -579,24 +582,25 @@ fun OverviewTab(
             if (snap.auditFindings.isEmpty()) {
               SarimCallout("No negative-margin sales, zero-weight batches, or stock anomalies detected.", palette.green)
             } else {
-              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                val scheme = MaterialTheme.colorScheme
                 snap.auditFindings.forEach { finding ->
                   val sevColor = if (finding.severity == "ERROR") palette.red else palette.amber
                   Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.surfaceElevated,
-                    border = BorderStroke(1.dp, sevColor.copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(22.dp),
+                    color = lerp(scheme.surfaceContainerHigh, sevColor, 0.12f),
                     modifier = Modifier
                       .fillMaxWidth()
-                      .clip(RoundedCornerShape(16.dp))
+                      .defaultMinSize(minHeight = 56.dp)
+                      .clip(RoundedCornerShape(22.dp))
                       .clickable { fixingFinding = finding },
                   ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(finding.title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(finding.title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, modifier = Modifier.weight(1f))
                         SarimChip("Tap to fix", sevColor)
                       }
-                      Text(SarimFormat.formatDate(finding.dateEpoch), color = palette.textMuted, fontSize = 11.sp)
+                      Text(SarimFormat.formatDate(finding.dateEpoch), color = palette.textMuted, fontSize = 11.5.sp)
                       finding.reasons.forEach { r ->
                         Text("• $r", color = palette.textMuted, fontSize = 12.sp)
                       }
@@ -617,23 +621,28 @@ fun OverviewTab(
               Text("No activity recorded in this period.", color = palette.textMuted, fontSize = 12.5.sp)
             } else {
               Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val scheme = MaterialTheme.colorScheme
                 snap.recentActivity.forEach { act ->
                   val tone = Color(act.toneHex)
-                  Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated) {
+                  Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = lerp(scheme.surfaceContainerHigh, tone, 0.09f),
+                  ) {
                     Row(
-                      modifier = Modifier.fillMaxWidth().padding(10.dp),
+                      modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).padding(12.dp),
                       verticalAlignment = Alignment.CenterVertically,
                       horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                      Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(tone))
-                      Column(modifier = Modifier.weight(1f)) {
-                        Text(act.title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${act.subtitle} · ${SarimFormat.formatDate(act.dateEpoch)}", color = palette.textMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                      Box(Modifier.width(3.5.dp).height(26.dp).clip(RoundedCornerShape(50)).background(tone.copy(alpha = 0.85f)))
+                      Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(tone))
+                      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(act.title, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${act.subtitle} · ${SarimFormat.formatDate(act.dateEpoch)}", color = palette.textMuted, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                       }
                       Text(
                         act.amountText,
                         color = tone,
-                        style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold),
+                        style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
                       )
                     }
                   }
@@ -645,18 +654,23 @@ fun OverviewTab(
         item {
           SarimCard {
             Text("Monthly summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              val scheme = MaterialTheme.colorScheme
               snap.monthlyRows.reversed().forEach { row ->
-                Surface(shape = RoundedCornerShape(14.dp), color = palette.surfaceElevated) {
-                  Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                      Text(row.monthLabel, color = palette.green, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
-                      Text("Net ${SarimFormat.formatRs(row.netProfit, false, hideMoney)}", color = if (row.netProfit >= 0) palette.green else palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
+                val netTone = if (row.netProfit >= 0) palette.green else palette.red
+                Surface(
+                  shape = RoundedCornerShape(20.dp),
+                  color = lerp(scheme.surfaceContainerHigh, netTone, 0.07f),
+                ) {
+                  Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                      Text(row.monthLabel, color = palette.green, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                      SarimChip("Net ${SarimFormat.formatRs(row.netProfit, false, hideMoney)}", netTone)
                     }
                     Text(
                       "Prod ${SarimFormat.formatKg(row.producedKg)} · Sales ${SarimFormat.formatRs(row.salesValue, false, hideMoney)} · In ${SarimFormat.formatRs(row.cashIn, false, hideMoney)} · Out ${SarimFormat.formatRs(row.cashOut, false, hideMoney)}",
                       color = palette.textMuted,
-                      fontSize = 11.sp,
+                      fontSize = 11.5.sp,
                     )
                   }
                 }
@@ -683,11 +697,10 @@ fun OverviewTab(
 
     Dialog(onDismissRequest = { fixingFinding = null }) {
       Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = palette.surface,
-        border = BorderStroke(1.dp, palette.border),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
       ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
           Text(finding.title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           Text("${finding.recordType} · ${SarimFormat.formatDate(finding.dateEpoch)}", color = palette.textMuted, fontSize = 11.5.sp)
           finding.reasons.forEach { Text("• $it", color = palette.amber, fontSize = 12.5.sp) }
@@ -830,38 +843,51 @@ private fun KpiWaveTile(
   onClick: (() -> Unit)? = null,
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   val deltaPct = if (wave.size >= 2 && abs(wave[wave.size - 2]) > 0.01) {
     val prev = wave[wave.size - 2]
     val curr = wave.last()
     ((curr - prev) / abs(prev)) * 100.0
   } else 0.0
 
+  val source = remember { MutableInteractionSource() }
+  val (pressScale, pressCorner) = rememberExpressivePress(source, restCorner = 28.dp, pressedCorner = 18.dp, pressedScale = 0.97f)
+  val tileShape = RoundedCornerShape(pressCorner)
+  val tileColor = lerp(scheme.surfaceContainer, accent, if (highlighted) 0.16f else 0.07f)
+
   Surface(
     modifier = modifier
-      .clip(RoundedCornerShape(24.dp))
+      .then(if (onClick != null) Modifier.graphicsLayer { scaleX = pressScale; scaleY = pressScale } else Modifier)
+      .clip(tileShape)
       .let { m -> if (testTag != null) m.testTag(testTag) else m }
-      .let { m -> if (onClick != null) m.clickable(onClick = onClick) else m },
-    shape = RoundedCornerShape(24.dp),
-    color = if (highlighted) accent.copy(alpha = 0.08f) else palette.surface,
-    border = BorderStroke(1.dp, if (highlighted) accent.copy(alpha = 0.55f) else palette.border),
+      .let { m -> if (onClick != null) m.clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick) else m },
+    shape = tileShape,
+    color = tileColor,
   ) {
-    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title, color = palette.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (deltaPct != 0.0) {
           val up = deltaPct >= 0
-          Text(
-            "${if (up) "▲" else "▼"} ${abs(deltaPct).toInt()}%",
-            color = if (up) palette.green else palette.red,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-          )
+          val deltaColor = if (up) palette.green else palette.red
+          Surface(
+            shape = RoundedCornerShape(50),
+            color = deltaColor.copy(alpha = 0.16f),
+          ) {
+            Text(
+              "${if (up) "▲" else "▼"} ${abs(deltaPct).toInt()}%",
+              color = deltaColor,
+              fontSize = 9.5.sp,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+          }
         }
       }
       Text(
         value,
         color = palette.textPrimary,
-        style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+        style = TabularNumberStyle.copy(fontSize = 17.5.sp, fontWeight = FontWeight.ExtraBold),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -874,15 +900,15 @@ private fun KpiWaveTile(
 @Composable
 private fun RightNowPill(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   Surface(
     modifier = modifier,
-    shape = RoundedCornerShape(16.dp),
-    color = palette.surfaceElevated,
-    border = BorderStroke(1.dp, color.copy(alpha = 0.4f)),
+    shape = RoundedCornerShape(20.dp),
+    color = lerp(scheme.surfaceContainerHigh, color, 0.12f),
   ) {
-    Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-      Text(label, color = palette.textMuted, fontSize = 10.sp)
-      Text(value, color = color, style = TabularNumberStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+      Text(label, color = palette.textMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+      Text(value, color = color, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
   }
 }

@@ -50,15 +50,15 @@ fun StatementRangeDialog(
   var error by remember { mutableStateOf<String?>(null) }
 
   Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    val scheme = androidx.compose.material3.MaterialTheme.colorScheme
     Surface(
       modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 460.dp),
-      shape = RoundedCornerShape(28.dp),
-      color = palette.surface,
-      border = BorderStroke(1.dp, palette.green.copy(alpha = 0.45f)),
+      shape = RoundedCornerShape(32.dp),
+      color = scheme.surfaceContainerLow,
     ) {
-      Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        Text("Pick the dates to include", color = palette.textMuted, fontSize = 12.sp)
+      Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("Pick the dates to include", color = palette.textMuted, fontSize = 12.5.sp)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
           SarimDatePickerField(label = "From", dateEpoch = from, onDateSelected = { from = it; error = null }, modifier = Modifier.weight(1f), testTag = "stmt_from")
           SarimDatePickerField(label = "To", dateEpoch = to, onDateSelected = { to = it; error = null }, modifier = Modifier.weight(1f), testTag = "stmt_to")

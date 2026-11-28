@@ -144,12 +144,12 @@ fun AuthScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
+      val scheme = MaterialTheme.colorScheme
       // Brand Emblem & Header above login card (matches web auth layout)
       Surface(
         modifier = Modifier.size(84.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = palette.surfaceElevated,
-        border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(28.dp),
+        color = scheme.surfaceContainerHigh,
       ) {
         Image(
           painter = painterResource(id = R.drawable.brand_logo),
@@ -183,9 +183,8 @@ fun AuthScreen(
 
       Surface(
         modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = palette.surface.copy(alpha = 0.94f),
-        border = BorderStroke(1.dp, palette.border),
+        shape = RoundedCornerShape(32.dp),
+        color = scheme.surfaceContainerLow.copy(alpha = 0.96f),
       ) {
         Column(
           modifier = Modifier.padding(22.dp),
@@ -395,10 +394,9 @@ fun FingerprintLockScreen(
     ) {
       Surface(
         shape = CircleShape,
-        color = palette.green.copy(alpha = 0.15f),
-        border = BorderStroke(1.dp, palette.green),
+        color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.green, 0.22f),
         onClick = { triggerBiometric(context) },
-        modifier = Modifier.size(86.dp),
+        modifier = Modifier.size(88.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(Icons.Rounded.Fingerprint, contentDescription = "Unlock with fingerprint", tint = palette.green, modifier = Modifier.size(44.dp))

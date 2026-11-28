@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -132,7 +132,7 @@ fun DailyLedgerScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
       ) {
         // Hero card: Cash In Hand + Sync + PDF Export
-        SarimCard(borderColor = palette.green.copy(alpha = 0.45f)) {
+        SarimCard(tonalAccent = palette.green) {
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -437,14 +437,26 @@ fun DailyLedgerScreen(
       if (channelBalances.isEmpty()) {
         Text("No channel movements yet.", color = palette.textMuted, fontSize = 12.5.sp)
       } else {
-        channelBalances.forEach { (channel, bal) ->
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(channel, color = palette.textPrimary, fontSize = 13.5.sp)
-            Text(
-              text = "${if (bal >= 0) "+" else "−"} ${SarimFormat.formatRs(kotlin.math.abs(bal), showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
-              color = if (bal >= 0) palette.green else palette.red,
-              style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold),
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          channelBalances.forEach { (channel, bal) ->
+            val balTone = if (bal >= 0) palette.green else palette.red
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, balTone, 0.06f),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(channel, color = palette.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                  text = "${if (bal >= 0) "+" else "−"} ${SarimFormat.formatRs(kotlin.math.abs(bal), showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
+                  color = balTone,
+                  style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold),
+                )
+              }
+            }
           }
         }
       }
@@ -456,14 +468,25 @@ fun DailyLedgerScreen(
       if (categorySummary.isEmpty()) {
         Text("No expense categories recorded yet.", color = palette.textMuted, fontSize = 12.5.sp)
       } else {
-        categorySummary.forEach { (cat, sum) ->
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(cat, color = palette.textPrimary, fontSize = 13.sp)
-            Text(
-              SarimFormat.formatRs(sum, privacyHidden = state.hideMoneyFigures),
-              color = palette.amber,
-              style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          categorySummary.forEach { (cat, sum) ->
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(cat, color = palette.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Text(
+                  SarimFormat.formatRs(sum, privacyHidden = state.hideMoneyFigures),
+                  color = palette.amber,
+                  style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                )
+              }
+            }
           }
         }
       }
@@ -554,22 +577,24 @@ fun DailyLedgerScreen(
         modifier = Modifier
           .fillMaxWidth(0.92f)
           .widthIn(max = 460.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = palette.surface.copy(alpha = 0.96f),
-        border = BorderStroke(1.dp, toneColor.copy(alpha = 0.45f)),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
       ) {
         Column(
           modifier = Modifier
-            .padding(18.dp)
+            .padding(22.dp)
             .verticalScroll(rememberScrollState()),
-          verticalArrangement = Arrangement.spacedBy(10.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Select Category", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             SarimChip(if (entryType == "IN") "CASH IN" else "CASH OUT", toneColor)
           }
-          Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+          Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, toneColor, 0.12f),
+          ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
               Text(modeText.ifBlank { "Cash" }, color = palette.textMuted, fontSize = 13.sp)
               Text(
                 SarimFormat.formatRs(pendingAmount, true, state.hideMoneyFigures),
@@ -668,11 +693,10 @@ fun DailyLedgerScreen(
     }
     Dialog(onDismissRequest = { ambiguousLinkState = null }) {
       Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = palette.surface,
-        border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.5f)),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
       ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
           Text("Link Target Match", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           Text(
             "\"${ambig.customerName}\" exists as both a Payment Entity and a Direct Customer. Choose where to post this entry:",

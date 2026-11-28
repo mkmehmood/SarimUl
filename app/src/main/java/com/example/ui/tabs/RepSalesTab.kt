@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -386,9 +386,8 @@ fun RepSalesTab(
           }
 
           Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF0A2218),
-            border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f)),
+            shape = RoundedCornerShape(24.dp),
+            color = lerp(MaterialTheme.colorScheme.surfaceContainerLowest, Color(0xFF0A2218), 0.90f),
           ) {
             Box(modifier = Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
               var canvasWidthPx by remember { mutableFloatStateOf(1f) }
@@ -481,9 +480,8 @@ fun RepSalesTab(
             val lng = selectedPin.longitude ?: 0.0
             val dispVal = if (selectedPin.mode == "COLLECTION") (selectedPin.amountReceived.takeIf { it > 0.0 } ?: selectedPin.totalValue) else selectedPin.totalValue
             Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = palette.surfaceElevated,
-              border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.45f)),
+              shape = RoundedCornerShape(20.dp),
+              color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.cyan, 0.12f),
             ) {
               Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),

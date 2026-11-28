@@ -4,9 +4,7 @@ import android.content.Intent
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -85,11 +83,11 @@ fun SettingsScreen(
             )
           )
         }
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         SettingsRow("BACKUP & RESTORE", Icons.Rounded.Backup, palette.cyan) { viewModel.openStandalone(StandaloneScreen.BackupRestore) }
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         SettingsRow("RECYCLE BIN", Icons.Rounded.DeleteOutline, palette.red) { viewModel.openStandalone(StandaloneScreen.RecycleBin) }
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         SettingsRow("DATABASE STRUCTURE", Icons.Rounded.Storage, palette.purple) { viewModel.openStandalone(StandaloneScreen.DatabaseStructure) }
       }
     }
@@ -98,7 +96,7 @@ fun SettingsScreen(
     SarimFieldLabel("Appearance & Device")
     SarimCard(contentPadding = 4.dp) {
       SettingsRow(state.prefs.themeMode.label, Icons.Rounded.Palette, palette.amber) { viewModel.cycleTheme() }
-      HorizontalDivider(color = palette.border)
+      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
       SettingsRow("SOUND & HAPTICS", Icons.Rounded.Vibration, palette.cyan) { viewModel.openStandalone(StandaloneScreen.SoundHaptics) }
     }
 
@@ -111,7 +109,7 @@ fun SettingsScreen(
         iconColor = palette.green,
       ) { viewModel.toggleFingerprintLock() }
       if (state.isAdmin) {
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         SettingsRow("APP ACCOUNTS", Icons.Rounded.ManageAccounts, palette.purple) { viewModel.openStandalone(StandaloneScreen.AppAccounts) }
       }
     }
@@ -125,7 +123,7 @@ fun SettingsScreen(
 
       // 5. Danger Zone
       SarimFieldLabel("Danger Zone")
-      SarimCard(borderColor = palette.red.copy(alpha = 0.4f), contentPadding = 4.dp) {
+      SarimCard(tonalAccent = palette.red, contentPadding = 4.dp) {
         SettingsRow("CLOSE FINANCIAL YEAR", Icons.Rounded.Warning, palette.red, textColor = palette.red) {
           viewModel.openStandalone(StandaloneScreen.CloseFinancialYear)
         }
@@ -659,7 +657,7 @@ fun DatabaseStructureScreen(
           else -> palette.cyan
         }
 
-        SarimCard(contentPadding = 12.dp, modifier = Modifier.testTag("db_quota_card")) {
+        SarimCard(tonalAccent = palette.cyan, contentPadding = 14.dp, modifier = Modifier.testTag("db_quota_card")) {
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -684,9 +682,9 @@ fun DatabaseStructureScreen(
             }
             LinearProgressIndicator(
               progress = { readRatio },
-              modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+              modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
               color = readTone,
-              trackColor = palette.surfaceElevated,
+              trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
           }
           Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -700,9 +698,9 @@ fun DatabaseStructureScreen(
             }
             LinearProgressIndicator(
               progress = { writeRatio },
-              modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+              modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
               color = writeTone,
-              trackColor = palette.surfaceElevated,
+              trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
           }
           if (snap != null && snap.deviceId.isNotBlank()) {
@@ -723,8 +721,8 @@ fun DatabaseStructureScreen(
           collections.forEach { col ->
             val hasMismatch = col.fsCount != null && col.fsCount != col.activeCount
             SarimCard(
-              contentPadding = 12.dp,
-              borderColor = if (hasMismatch) palette.amber.copy(alpha = 0.7f) else null,
+              contentPadding = 14.dp,
+              tonalAccent = if (hasMismatch) palette.amber else null,
               modifier = Modifier.testTag("db_col_${col.name}"),
             ) {
               Row(
@@ -977,7 +975,7 @@ fun DatabaseStructureScreen(
             Text("JS Var", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.9f))
             Text("FS / Loc", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
           }
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           collections.forEach { col ->
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
               Text(col.name, color = palette.cyan, fontSize = 10.5.sp, fontFamily = JetBrainsMonoFontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.1f))
@@ -1160,13 +1158,12 @@ private fun SoundHapticsDropdownCard(
     Box(modifier = Modifier.fillMaxWidth()) {
       Surface(
         shape = RoundedCornerShape(16.dp),
-        color = palette.surfaceElevated,
-        border = BorderStroke(1.dp, if (expanded) accentColor else palette.border),
+        color = if (expanded) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier
           .fillMaxWidth()
           .onSizeChanged { anchorWidthPx = it.width }
           .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
-          .clip(SarimFieldDefaults.Shape)
+          .clip(RoundedCornerShape(16.dp))
           .testTag(testTag)
           .clickable { onExpandedChange(!expanded) },
       ) {
@@ -1188,8 +1185,8 @@ private fun SoundHapticsDropdownCard(
         onDismissRequest = { onExpandedChange(false) },
         modifier = Modifier
           .width(with(density) { anchorWidthPx.toDp() })
-          .background(palette.surfaceElevated)
-          .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
+          .clip(RoundedCornerShape(20.dp))
+          .background(MaterialTheme.colorScheme.surfaceContainerHigh),
       ) {
         options.forEachIndexed { idx, (optLabel, optDesc) ->
           val isSelected = optLabel == selectedLabel
@@ -1223,7 +1220,7 @@ private fun SoundHapticsDropdownCard(
             },
           )
           if (idx < options.lastIndex) {
-            HorizontalDivider(color = palette.border)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
           }
         }
       }

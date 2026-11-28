@@ -1,7 +1,8 @@
 package com.example.ui.tabs
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -164,7 +167,8 @@ fun PaymentsTab(
         )
 
         SarimFieldLabel(if (editingTxId != null) "Transaction Type (Locked while editing)" else "Transaction Type")
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          val scheme = MaterialTheme.colorScheme
           PayTxType.entries.forEach { t ->
             val sel = t == txType
             val lockedOut = editingOriginal != null && editingOriginal.type != t.code
@@ -173,17 +177,23 @@ fun PaymentsTab(
               PayTxType.PAYMENT_IN -> palette.green
               PayTxType.PAYMENT_OUT -> palette.amber
             }
+            val typeSource = remember { MutableInteractionSource() }
+            val (scale, corner) = rememberExpressivePress(typeSource, restCorner = 20.dp, pressedCorner = 13.dp, pressedScale = 0.98f)
+            val shape = RoundedCornerShape(corner)
             Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = if (sel) c.copy(alpha = 0.16f) else palette.surfaceElevated,
-              border = BorderStroke(1.dp, if (sel) c else palette.border),
+              shape = shape,
+              color = if (sel) lerp(scheme.surfaceContainerHigh, c, 0.22f) else scheme.surfaceContainerHigh,
               modifier = Modifier
                 .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
                 .alpha(if (lockedOut) 0.45f else 1f)
-                .clip(RoundedCornerShape(16.dp))
-                .clickable(enabled = !lockedOut) { txType = t },
+                .clip(shape)
+                .clickable(interactionSource = typeSource, indication = LocalIndication.current, enabled = !lockedOut) { txType = t },
             ) {
-              Text(t.label, color = if (sel) c else palette.textMuted, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+              Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(t.label, color = if (sel) c else palette.textMuted, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+              }
             }
           }
         }
@@ -284,12 +294,12 @@ fun PaymentsTab(
         val quickRatio = if (currentLiabilities > 0.01) String.format("%.2f", (snap.cashInHandBalance + snap.directReceivables + snap.repReceivables) / currentLiabilities) else "—"
         val cashRatio = if (currentLiabilities > 0.01) String.format("%.2f", snap.cashInHandBalance / currentLiabilities) else "—"
 
-        SarimCard {
+        SarimCard(tonalAccent = palette.green) {
           Text("ECONOMIC HEALTH DASHBOARD", color = palette.green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
           Text(SarimFormat.formatRs(snap.cashInHandBalance), color = palette.green, style = TabularNumberStyle.copy(fontSize = 26.sp, fontWeight = FontWeight.Bold))
           Text("Operating Cash Flow", color = palette.textMuted, fontSize = 11.5.sp)
 
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           HealthLine("Cash in Hand", SarimFormat.formatRs(snap.cashInHandBalance), palette.green)
           HealthLine("Raw Materials Inventory", SarimFormat.formatRs(snap.rawInventoryValue), palette.cyan)
           HealthLine("Formula Units Inventory", SarimFormat.formatRs(snap.formulaUnitsInventoryValue), palette.purple)
@@ -297,13 +307,19 @@ fun PaymentsTab(
           HealthLine("Representative Credits", SarimFormat.formatRs(snap.repReceivables), palette.amber)
           HealthLine("TOTAL CURRENT ASSETS", SarimFormat.formatRs(currentAssets), palette.green, bold = true)
 
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           HealthLine("Supplier Payables", SarimFormat.formatRs(snap.supplierPayables), palette.red)
           HealthLine("Entity Payables", SarimFormat.formatRs(snap.entityPayables), palette.red)
           HealthLine("TOTAL CURRENT LIABILITIES", SarimFormat.formatRs(currentLiabilities), palette.red, bold = true)
 
-          HorizontalDivider(color = palette.border)
-          HealthLine("Net Working Capital", SarimFormat.formatRs(netWorkingCapital), palette.textPrimary, bold = true)
+          Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+          ) {
+            Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+              HealthLine("Net Working Capital", SarimFormat.formatRs(netWorkingCapital), palette.textPrimary, bold = true)
+            }
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Current Ratio", currentRatio, Modifier.weight(1f), palette.cyan)
             SarimStatTile("Quick Ratio", quickRatio, Modifier.weight(1f), palette.purple)
@@ -323,7 +339,7 @@ fun PaymentsTab(
           cutoffEpoch = cutoff,
         )
 
-        SarimCard {
+        SarimCard(tonalAccent = palette.cyan) {
           Text("CASH IN HAND TRACKER", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.8.sp)
           SarimToggleGroup(TimePeriod.entries, trackerPeriod, { it.label }, { trackerPeriod = it })
           HealthLine("Sales Tab Cash", SarimFormat.formatRs(breakdown.salesCash), palette.green)
@@ -338,7 +354,15 @@ fun PaymentsTab(
           if (breakdown.factoryAdditionalCost > 0.01) {
             HealthLine("Factory Extra Cost", SarimFormat.formatRs(breakdown.factoryAdditionalCost), palette.red)
           }
-          HealthLine("NET CASH", SarimFormat.formatRs(breakdown.netCash), if (breakdown.netCash >= 0) palette.green else palette.red, bold = true)
+          val netTone = if (breakdown.netCash >= 0) palette.green else palette.red
+          Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, netTone, 0.12f),
+          ) {
+            Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+              HealthLine("NET CASH", SarimFormat.formatRs(breakdown.netCash), netTone, bold = true)
+            }
+          }
         }
       }
 
@@ -419,15 +443,22 @@ fun PaymentsTab(
             } else {
               Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 filtered.forEach { ent ->
+                  val rowSource = remember { MutableInteractionSource() }
+                  val (rowScale, rowCorner) = rememberExpressivePress(rowSource, restCorner = 20.dp, pressedCorner = 13.dp, pressedScale = 0.98f)
+                  val rowShape = RoundedCornerShape(rowCorner)
                   Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.surfaceElevated,
-                    border = BorderStroke(1.dp, palette.border),
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
-                      viewModel.openStandalone(StandaloneScreen.EntityDetails(ent.id))
-                    },
+                    shape = rowShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .defaultMinSize(minHeight = 56.dp)
+                      .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
+                      .clip(rowShape)
+                      .clickable(interactionSource = rowSource, indication = LocalIndication.current) {
+                        viewModel.openStandalone(StandaloneScreen.EntityDetails(ent.id))
+                      },
                   ) {
-                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                       InitialsAvatar(ent.name, avatarColorForName(ent.name), badgeText = ent.ledgerPage)
                       Column(modifier = Modifier.weight(1f)) {
                         Text(ent.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
@@ -454,15 +485,22 @@ fun PaymentsTab(
               Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 grouped.forEach { (expName, list) ->
                   val total = list.sumOf { it.amount }
+                  val rowSource = remember { MutableInteractionSource() }
+                  val (rowScale, rowCorner) = rememberExpressivePress(rowSource, restCorner = 20.dp, pressedCorner = 13.dp, pressedScale = 0.98f)
+                  val rowShape = RoundedCornerShape(rowCorner)
                   Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.surfaceElevated,
-                    border = BorderStroke(1.dp, palette.border),
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
-                      viewModel.openStandalone(StandaloneScreen.ExpenseDetails(expName))
-                    },
+                    shape = rowShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .defaultMinSize(minHeight = 56.dp)
+                      .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
+                      .clip(rowShape)
+                      .clickable(interactionSource = rowSource, indication = LocalIndication.current) {
+                        viewModel.openStandalone(StandaloneScreen.ExpenseDetails(expName))
+                      },
                   ) {
-                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                       Column(modifier = Modifier.weight(1f)) {
                         Text(expName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                         Text("${list.size} entries", color = palette.textMuted, fontSize = 11.sp)

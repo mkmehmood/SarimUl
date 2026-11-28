@@ -1,7 +1,6 @@
 package com.example.ui.tabs
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -19,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -260,7 +260,7 @@ fun CalculatorTab(
                   Text("METRIC", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(130.dp))
                   compReps.forEach { Text(it, color = palette.cyan, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(96.dp)) }
                 }
-                HorizontalDivider(color = palette.border)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                 val metricRows: List<Pair<String, (List<CalculatorSettlementEntity>) -> String>> = listOf(
                   "Qty Sold" to { l -> SarimFormat.formatKg(l.sumOf { it.totalSoldKg }) },
                   "Returns" to { l -> SarimFormat.formatKg(l.sumOf { it.returnedKg }) },
@@ -417,7 +417,7 @@ fun CalculatorTab(
 
           SarimTextField(creditSalesQtyText, { creditSalesQtyText = it }, "Credit Sales Qty", suffixText = "kg", keyboardType = KeyboardType.Decimal, testTag = "calc_credit_qty")
 
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           Text("Commission", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimTextField(commissionPerUnitText, { commissionPerUnitText = it }, "Commission / Unit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f))
@@ -432,7 +432,7 @@ fun CalculatorTab(
             )
           }
 
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           Text("Collections & Handover Cash", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimTextField(recoveredCreditText, { recoveredCreditText = it }, "Recovered Credit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f), testTag = "calc_recovered_credit")
@@ -449,8 +449,11 @@ fun CalculatorTab(
           SarimTextField(receivedCashText, { receivedCashText = it }, "Physical Cash Received from Rep", prefixText = "Rs", keyboardType = KeyboardType.Decimal, testTag = "calc_received_cash")
 
           // Result box (web: #calc-result-card) — one labelled line per value.
-          Surface(shape = RoundedCornerShape(20.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))) {
-            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, statusColor, 0.12f),
+          ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
               CalcResultLine("Expected Cash:", SarimFormat.formatRs(expectedCash, true, hideMoney), palette.cyan)
               CalcResultLine("Status:", statusText, statusColor)
               CalcResultLine("Gross Commission Earned:", SarimFormat.formatRs(grossCommission, false, hideMoney), palette.cyan)
@@ -628,22 +631,48 @@ fun CalculatorTab(
             SarimStatTile("Comm Payable", SarimFormat.formatRs(periodFiltered.sumOf { it.commissionPayable }, false, hideMoney), Modifier.weight(1f), palette.purple)
             SarimStatTile("Comm Paid", SarimFormat.formatRs(periodFiltered.sumOf { it.commissionPaid }, false, hideMoney), Modifier.weight(1f), palette.green)
           }
-          TextButton(onClick = { showExpensesBreakdown = !showExpensesBreakdown }) {
-            Text(if (showExpensesBreakdown) "Hide Expenses breakdown" else "Expenses breakdown", color = palette.cyan)
+          TextButton(
+            onClick = { showExpensesBreakdown = !showExpensesBreakdown },
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+          ) {
+            Text(if (showExpensesBreakdown) "Hide Expenses breakdown" else "Expenses breakdown", color = palette.cyan, fontWeight = FontWeight.Bold)
           }
           AnimatedVisibility(visible = showExpensesBreakdown) {
             val allExp = periodFiltered.flatMap { JsonCodecs.decodeLineItems(it.expenseItemsJson) }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              allExp.forEach { Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp) }
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+              Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                allExp.forEach {
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
+              }
             }
           }
-          TextButton(onClick = { showCommissionBreakdown = !showCommissionBreakdown }) {
-            Text(if (showCommissionBreakdown) "Hide Commission breakdown" else "Commission breakdown", color = palette.green)
+          TextButton(
+            onClick = { showCommissionBreakdown = !showCommissionBreakdown },
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+          ) {
+            Text(if (showCommissionBreakdown) "Hide Commission breakdown" else "Commission breakdown", color = palette.green, fontWeight = FontWeight.Bold)
           }
           AnimatedVisibility(visible = showCommissionBreakdown) {
             val allComm = periodFiltered.flatMap { JsonCodecs.decodeLineItems(it.commissionItemsJson) }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              allComm.forEach { Text("• ${it.category}: ${SarimFormat.formatRs(it.amount, true, hideMoney)}", color = palette.textMuted, fontSize = 12.sp) }
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+              Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                allComm.forEach {
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(it.category, color = palette.textMuted, fontSize = 12.sp)
+                    Text(SarimFormat.formatRs(it.amount, true, hideMoney), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
+              }
             }
           }
         }
@@ -987,9 +1016,8 @@ private fun LineItemsPopupDialog(
       modifier = Modifier
         .fillMaxWidth(0.92f)
         .widthIn(max = 460.dp),
-      shape = RoundedCornerShape(28.dp),
-      color = palette.surface.copy(alpha = 0.96f),
-      border = BorderStroke(1.dp, palette.green.copy(alpha = 0.45f)),
+      shape = RoundedCornerShape(32.dp),
+      color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
       Column(
         modifier = Modifier

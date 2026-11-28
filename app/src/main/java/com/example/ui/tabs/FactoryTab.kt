@@ -1,7 +1,6 @@
 package com.example.ui.tabs
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -180,8 +180,11 @@ fun FactoryTab(
         }
 
         // Formula preview (flattened through sub-formulas, live cost + stock check, like the web tab)
-        Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.border)) {
-          Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(
+          shape = MaterialTheme.shapes.large,
+          color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.green, if (selectedFormula != null) 0.08f else 0f),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (selectedFormula == null) {
               Text(
                 "No formula selected. Choose a formula for a store in Store Manager first.",
@@ -394,7 +397,7 @@ fun FactoryTab(
       item {
         val cutoff = SarimMetricsEngine.periodStart(summaryPeriod)
         val batches = state.factoryBatches.filter { it.dateEpoch >= cutoff }
-        SarimCard {
+        SarimCard(tonalAccent = palette.cyan) {
           Text("Performance Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           SarimToggleGroup(TimePeriod.entries, summaryPeriod, { it.label }, { summaryPeriod = it })
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -405,13 +408,24 @@ fun FactoryTab(
             SarimStatTile("Output kg", SarimFormat.formatKg(batches.sumOf { it.outputKg }), Modifier.weight(1f), palette.cyan)
             SarimStatTile("Raw Used kg", SarimFormat.formatKg(batches.sumOf { it.rawUsedKg }), Modifier.weight(1f), palette.purple)
           }
-          TextButton(onClick = { showMaterialsBreakdown = !showMaterialsBreakdown }) {
-            Text("MATERIALS BREAKDOWN (${state.rawMaterials.size})", color = palette.cyan)
+          TextButton(
+            onClick = { showMaterialsBreakdown = !showMaterialsBreakdown },
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+          ) {
+            Text("MATERIALS BREAKDOWN (${state.rawMaterials.size})", color = palette.cyan, fontWeight = FontWeight.Bold)
           }
           AnimatedVisibility(visible = showMaterialsBreakdown) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              state.rawMaterials.forEach { m ->
-                Text("• ${m.name}: ${SarimFormat.formatKg(m.stockKg)} in stock", color = palette.textMuted, fontSize = 12.sp)
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+              Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                state.rawMaterials.forEach { m ->
+                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(m.name, color = palette.textMuted, fontSize = 12.sp)
+                    Text("${SarimFormat.formatKg(m.stockKg)} in stock", color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                  }
+                }
               }
             }
           }

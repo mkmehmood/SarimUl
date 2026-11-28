@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -84,11 +85,11 @@ fun SarimRecordTable(
   maxListHeight: Dp = 460.dp,
 ) {
   val palette = LocalSarimPalette.current
+  val scheme = MaterialTheme.colorScheme
   Surface(
     modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(16.dp),
-    color = palette.surfaceElevated.copy(alpha = 0.55f),
-    border = BorderStroke(1.dp, palette.border),
+    shape = MaterialTheme.shapes.largeIncreased,
+    color = scheme.surfaceContainerLow,
   ) {
     Column {
       if (rows.isEmpty()) {
@@ -100,37 +101,42 @@ fun SarimRecordTable(
             .fillMaxWidth()
             .heightIn(max = maxListHeight)
             .verticalScroll(scroll)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         ) {
           rows.forEachIndexed { index, row ->
-            if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(palette.border))
+            if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant.copy(alpha = 0.4f)))
             RecordRowView(row)
           }
         }
       }
       if (stats.isNotEmpty()) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(palette.border))
-        Row(
-          modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 14.dp, vertical = 8.dp),
+        Surface(
+          color = scheme.surfaceContainerHigh,
+          shape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp),
+          modifier = Modifier.fillMaxWidth(),
         ) {
-          stats.forEachIndexed { index, stat ->
-            if (index > 0) {
-              Box(Modifier.fillMaxHeight().width(1.dp).background(palette.border))
-            }
-            Column(
-              modifier = Modifier
-                .weight(1f)
-                .padding(start = if (index > 0) 12.dp else 4.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
-              verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-              Text(stat.label, color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-              Text(
-                stat.value,
-                color = stat.color ?: palette.textPrimary,
-                style = TabularNumberStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
+          Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 14.dp, vertical = 10.dp),
+          ) {
+            stats.forEachIndexed { index, stat ->
+              if (index > 0) {
+                Box(Modifier.fillMaxHeight().width(1.dp).background(scheme.outlineVariant.copy(alpha = 0.45f)))
+              }
+              Column(
+                modifier = Modifier
+                  .weight(1f)
+                  .padding(start = if (index > 0) 12.dp else 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(stat.label, color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                  stat.value,
+                  color = stat.color ?: palette.textPrimary,
+                  style = TabularNumberStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
             }
           }
         }
@@ -143,10 +149,10 @@ fun SarimRecordTable(
 @Composable
 private fun RecordRowView(row: RecordRow) {
   val palette = LocalSarimPalette.current
-  val base = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+  val base = Modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).clip(RoundedCornerShape(16.dp))
   Row(
     modifier = (if (row.onClick != null) base.clickable { row.onClick.invoke() } else base)
-      .padding(horizontal = 6.dp, vertical = 11.dp),
+      .padding(horizontal = 8.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(12.dp),
   ) {
@@ -165,8 +171,8 @@ private fun RecordRowView(row: RecordRow) {
           modifier = Modifier.weight(1f, fill = false),
         )
         row.flag?.let { flag ->
-          Surface(shape = RoundedCornerShape(6.dp), color = palette.red.copy(alpha = 0.16f)) {
-            Text(flag, color = palette.red, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+          Surface(shape = RoundedCornerShape(50), color = palette.red.copy(alpha = 0.16f)) {
+            Text(flag, color = palette.red, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
           }
         }
       }

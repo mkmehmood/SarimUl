@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -104,7 +104,7 @@ private fun Modifier.savedCalcPattern(color: Color, stripes: Boolean): Modifier 
 @Composable
 private fun SavedCalcTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
   val palette = LocalSarimPalette.current
-  Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.32f)) {
+  Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(label.uppercase(), color = palette.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
       Text(value, color = color, style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
@@ -166,16 +166,15 @@ private fun SavedCalcCard(
       Surface(
         modifier = Modifier.fillMaxWidth().clip(shape),
         shape = shape,
-        color = palette.surface,
-        border = BorderStroke(1.5.dp, tone.copy(alpha = 0.65f)),
+        color = lerp(MaterialTheme.colorScheme.surfaceContainer, tone, 0.08f),
       ) {
         Column(
-          modifier = Modifier.savedCalcPattern(tone, stripes = isFix).padding(14.dp),
+          modifier = Modifier.savedCalcPattern(tone, stripes = isFix).padding(16.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
           Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.35f)) {
-              Icon(Icons.Rounded.Calculate, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.padding(12.dp).size(26.dp))
+            Surface(shape = RoundedCornerShape(18.dp), color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, tone, 0.16f)) {
+              Icon(Icons.Rounded.Calculate, contentDescription = null, tint = tone, modifier = Modifier.padding(12.dp).size(26.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
               Text(calc.name, color = palette.textPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, maxLines = 2)
@@ -188,7 +187,7 @@ private fun SavedCalcCard(
               }
             }
           }
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           Box(
             Modifier.fillMaxWidth().height(1.dp).drawBehind {
               drawLine(tone.copy(alpha = 0.55f), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
@@ -199,7 +198,7 @@ private fun SavedCalcCard(
           } else {
             SavedCalcTileGrid(tiles)
             if (rows.isNotEmpty()) {
-              Surface(shape = RoundedCornerShape(22.dp), color = palette.green.copy(alpha = 0.08f), border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f))) {
+              Surface(shape = RoundedCornerShape(22.dp), color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.green, 0.10f)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                   Text(if (isFix) "INGREDIENTS TO ADD" else "REQUIRED INGREDIENTS", color = palette.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
                   SavedCalcTileGrid(rows.map { (n, v, fix) -> Triple(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, unit)} $unit", palette.cyan) })
@@ -373,12 +372,12 @@ fun BatchingScreen(
     } else if (plan.units <= 0.0) {
       SarimEmptyState("Enter a value", "Enter a value to build the batch.")
     } else {
-      SarimCard(borderColor = palette.green.copy(alpha = 0.4f)) {
+      SarimCard(tonalAccent = palette.green) {
         Text("Weigh Amounts", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         BatchLine("Units", String.format(java.util.Locale.US, "%.3f", plan.units), palette.textPrimary)
         BatchLine("Weight per Unit", "${fmtAmt(plan.unitWeight * mult, unit)} $unit", palette.textPrimary)
         BatchLine("Total Batch Weight", "${fmtAmt(plan.totalWeight * mult, unit)} $unit", palette.green, bold = true)
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
         plan.rows.forEach { r ->
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f)) {
@@ -666,8 +665,10 @@ fun BatchCorrectionScreen(
         Row(
           modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable { showActual = !showActual }
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -698,14 +699,14 @@ fun BatchCorrectionScreen(
         if (plan.error == "nothing-left") "Used / Lost must be less than the Original Batch." else "Enter the original batch weight.",
       )
     } else {
-      SarimCard(borderColor = palette.amber.copy(alpha = 0.45f)) {
+      SarimCard(tonalAccent = palette.amber) {
         Text("Required Additions", color = palette.amber, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         Text(
           "Type a new amount in any Add box or in Total to Add – all other ingredients update automatically.",
           color = palette.textMuted,
           fontSize = 11.5.sp,
         )
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
         plan.rows.forEach { r ->
           val typingHere = manualMode == "add" && manualId == r.id
@@ -736,7 +737,7 @@ fun BatchCorrectionScreen(
           }
         }
 
-        HorizontalDivider(color = palette.border)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
         SarimTextField(
           value = if (manualMode == "total") manualText else fmtAmt(plan.addTotal, unit),
           onValueChange = { v ->

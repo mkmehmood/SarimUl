@@ -46,6 +46,7 @@ fun SarimDatePickerField(
 
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
     if (label.isNotBlank()) SarimFieldLabel(label)
+    val scheme = MaterialTheme.colorScheme
     Surface(
       modifier = Modifier
         .fillMaxWidth()
@@ -54,8 +55,7 @@ fun SarimDatePickerField(
         .testTag(testTag)
         .clickable { open = true },
       shape = SarimFieldDefaults.Shape,
-      color = palette.surfaceElevated,
-      border = BorderStroke(SarimFieldDefaults.BorderWidth, palette.border),
+      color = scheme.surfaceContainerHigh,
     ) {
       Row(
         modifier = Modifier
@@ -107,13 +107,13 @@ fun CustomCalendarDialog(
 
   // Web `.cdp-popover`: compact 14dp-radius panel with 10dp padding.
   Dialog(onDismissRequest = onDismiss) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
-      modifier = Modifier.widthIn(max = 300.dp),
-      shape = RoundedCornerShape(14.dp),
-      color = palette.surface,
-      border = BorderStroke(1.dp, palette.border),
+      modifier = Modifier.widthIn(max = 320.dp),
+      shape = RoundedCornerShape(28.dp),
+      color = scheme.surfaceContainerLow,
     ) {
-      Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Header
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -239,13 +239,15 @@ fun CustomCalendarDialog(
               items((0..11).toList()) { mIdx ->
                 val isCur = mIdx == displayMonth
                 Surface(
-                  shape = RoundedCornerShape(14.dp),
-                  color = if (isCur) palette.green.copy(alpha = 0.2f) else palette.surfaceElevated,
-                  border = BorderStroke(1.dp, if (isCur) palette.green else palette.border),
-                  modifier = Modifier.clickable {
-                    displayMonth = mIdx
-                    mode = CalendarViewMode.DAYS
-                  },
+                  shape = RoundedCornerShape(16.dp),
+                  color = if (isCur) palette.green.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                  modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable {
+                      displayMonth = mIdx
+                      mode = CalendarViewMode.DAYS
+                    },
                 ) {
                   Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(monthShortNames[mIdx], color = if (isCur) palette.green else palette.textPrimary, fontWeight = FontWeight.SemiBold)
@@ -266,13 +268,15 @@ fun CustomCalendarDialog(
               items(years) { yr ->
                 val isCur = yr == displayYear
                 Surface(
-                  shape = RoundedCornerShape(14.dp),
-                  color = if (isCur) palette.green.copy(alpha = 0.2f) else palette.surfaceElevated,
-                  border = BorderStroke(1.dp, if (isCur) palette.green else palette.border),
-                  modifier = Modifier.clickable {
-                    displayYear = yr
-                    mode = CalendarViewMode.MONTHS
-                  },
+                  shape = RoundedCornerShape(16.dp),
+                  color = if (isCur) palette.green.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                  modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable {
+                      displayYear = yr
+                      mode = CalendarViewMode.MONTHS
+                    },
                 ) {
                   Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(yr.toString(), color = if (isCur) palette.green else palette.textPrimary, fontWeight = FontWeight.SemiBold)
