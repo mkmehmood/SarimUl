@@ -305,11 +305,13 @@ fun PaymentsTab(
           HealthLine("Formula Units Inventory", SarimFormat.formatRs(snap.formulaUnitsInventoryValue), palette.purple)
           HealthLine("Direct Customer Credits", SarimFormat.formatRs(snap.directReceivables), palette.amber)
           HealthLine("Representative Credits", SarimFormat.formatRs(snap.repReceivables), palette.amber)
+          HealthLine("TOTAL RECEIVABLES", SarimFormat.formatRs(snap.directReceivables + snap.repReceivables), palette.amber, bold = true)
           HealthLine("TOTAL CURRENT ASSETS", SarimFormat.formatRs(currentAssets), palette.green, bold = true)
 
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           HealthLine("Supplier Payables", SarimFormat.formatRs(snap.supplierPayables), palette.red)
           HealthLine("Entity Payables", SarimFormat.formatRs(snap.entityPayables), palette.red)
+          HealthLine("TOTAL ACCOUNTS PAYABLE", SarimFormat.formatRs(currentLiabilities), palette.red, bold = true)
           HealthLine("TOTAL CURRENT LIABILITIES", SarimFormat.formatRs(currentLiabilities), palette.red, bold = true)
 
           Surface(
@@ -317,7 +319,10 @@ fun PaymentsTab(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
           ) {
             Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-              HealthLine("Net Working Capital", SarimFormat.formatRs(netWorkingCapital), palette.textPrimary, bold = true)
+              Column {
+                HealthLine("Net Working Capital", SarimFormat.formatRs(netWorkingCapital), palette.textPrimary, bold = true)
+                HealthLine("Total Enterprise Value", SarimFormat.formatRs(currentAssets - currentLiabilities), palette.textPrimary, bold = true)
+              }
             }
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
