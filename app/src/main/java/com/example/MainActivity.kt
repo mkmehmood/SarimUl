@@ -51,6 +51,18 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  override fun onStart() {
+    super.onStart()
+    com.example.work.AppForeground.visible.set(true)
+  }
+
+  override fun onStop() {
+    com.example.work.AppForeground.visible.set(false)
+    // Leaving the app: upload anything still pending as soon as a connection exists (no-op when nothing is pending).
+    if (!isChangingConfigurations) com.example.work.PendingSyncWorker.enqueueNow(applicationContext)
+    super.onStop()
+  }
+
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)

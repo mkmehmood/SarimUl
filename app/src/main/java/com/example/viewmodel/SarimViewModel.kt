@@ -636,6 +636,8 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
 
   fun onFirebaseAuthChanged(user: FirebaseUser?) {
     currentFirebaseUser = user
+    if (user == null) com.example.work.PendingSyncWorker.cancelAll(getApplication())
+    else com.example.work.PendingSyncWorker.schedulePeriodic(getApplication())
     if (user == null) {
       lastInitialSyncedUid = null
       activeListenerKey = null
