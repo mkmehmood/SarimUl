@@ -377,11 +377,76 @@ object StatementShare {
     val balance: String,
   )
 
-  private val URDU_KIND = mapOf(
-    "SALE" to "فروخت", "CASH" to "نقد", "CREDIT" to "ادھار", "COLLECTION" to "وصولی",
-    "MONEY_OUT" to "رقم واپسی", "REP_RETURN" to "واپسی",
-    "PAYMENT_IN" to "وصولی", "PAYMENT_OUT" to "ادائیگی", "OPENING" to "سابقہ بقایا",
+  // ---- exact port of the web `_buildStatementText` helpers (utilities-core.js) ----
+  private const val LRI = "\u2066"
+  private const val PDI = "\u2069"
+  private val HAS_URDU = Regex("[\u0600-\u06FF]")
+  private val AMOUNT_ONLY = Regex("^(Rs\\.?\\s*)?[\\d,]+(\\.\\d+)?$", RegexOption.IGNORE_CASE)
+
+  private val URDU_TITLES = mapOf(
+    "Account Statement" to "اکاؤنٹ اسٹیٹمنٹ",
+    "Customer Account Statement" to "کسٹمر اکاؤنٹ اسٹیٹمنٹ",
+    "Rep Customer Account Statement" to "ریپ کسٹمر اکاؤنٹ اسٹیٹمنٹ",
   )
+  private val URDU_RANGES = mapOf(
+    "All Time" to "تمام وقت", "Today" to "آج", "This Week" to "اس ہفتے", "This Month" to "اس مہینے", "This Year" to "اس سال",
+  )
+  private val URDU_MONTHS = mapOf(
+    "JAN" to "جنوری", "FEB" to "فروری", "MAR" to "مارچ", "APR" to "اپریل", "MAY" to "مئی", "JUN" to "جون",
+    "JUL" to "جولائی", "AUG" to "اگست", "SEP" to "ستمبر", "OCT" to "اکتوبر", "NOV" to "نومبر", "DEC" to "دسمبر",
+  )
+  private val URDU_HEADS = mapOf(
+    "date" to "تاریخ", "invoice date" to "تاریخ",
+    "description" to "تفصیل", "details" to "تفصیل", "year period / summary" to "تفصیل", "material" to "مال",
+    "qty" to "مقدار",
+    "payment out" to "ادائیگی", "payment in" to "وصولی",
+    "debit (sale)" to "بل", "credit (rcvd)" to "وصولی", "debit" to "بل", "credit" to "وصولی",
+    "balance" to "بقایا", "running balance" to "بقایا",
+    "outstanding" to "بقایا", "settled" to "ادا شدہ",
+    "invoice amt" to "انوائس رقم", "paid so far" to "اب تک ادا", "remaining" to "باقی", "status" to "حالت",
+  )
+  private val MONEY_HEAD = Regex("amt|debit|credit|payment|balance|outstanding|settled|remaining|paid")
+  private val IC = RegexOption.IGNORE_CASE
+
+  private val URDU_RULES: List<Pair<Regex, (MatchResult) -> String>> = listOf(
+    Regex("^[\\u21a9\\u2714]\\s*(Credit Purchase|Supplier Pmt)\\s*", IC) to { _ -> "" },
+    Regex("\\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\\b") to { m -> URDU_MONTHS[m.value] ?: m.value },
+    Regex("Settled by collection", IC) to { _ -> "وصولی سے ادا" },
+    Regex("Expired credit", IC) to { _ -> "ایکسپائرڈ کریڈٹ" },
+    Regex("\\bRs\\.?\\s*(\\d[\\d,]*(?:\\.\\d+)?)") to { m -> "${m.groupValues[1]} روپے" },
+    Regex("\\breceived\\b", IC) to { _ -> "وصول" },
+    Regex("\\bReturn\\b", IC) to { _ -> "واپسی" },
+    Regex("\\bPayment\\b", IC) to { _ -> "ادائیگی" },
+    Regex("^Opening Balance$", IC) to { _ -> "سابقہ بقایا" },
+    Regex("^(Previous balance|Previous balance brought forward|Brought forward from previous records)$", IC) to { _ -> "سابقہ بقایا" },
+    Regex("^Cash paid out", IC) to { _ -> "نقد ادائیگی" },
+    Regex("Cash payment received", IC) to { _ -> "نقد رقم وصول" },
+    Regex("Partial payment received", IC) to { _ -> "جزوی رقم وصول" },
+    Regex("(\\d+) txns? merged", IC) to { m -> "${m.groupValues[1]} لین دین یکجا" },
+    Regex("year-end merge", IC) to { _ -> "سال کے آخر کا انضمام" },
+    Regex("Prev\\. Year", IC) to { _ -> "پچھلا سال" },
+    Regex("Cash sales:", IC) to { _ -> "نقد فروخت:" },
+    Regex("Net due:", IC) to { _ -> "واجب الادا:" },
+    Regex("\\bOVERPAID\\b") to { _ -> "زائد ادائیگی" },
+    Regex("\\bSETTLED\\b") to { _ -> "حساب صاف" },
+    Regex("\\bSettled\\b") to { _ -> "ادا شدہ" },
+    Regex("\\bPaid:") to { _ -> "ادا:" },
+    Regex("\\bDue:") to { _ -> "باقی:" },
+    Regex("\\bkg\\b", IC) to { _ -> "کلو" },
+    Regex("^Prior$") to { _ -> "پچھلا" },
+  )
+
+  private fun urduValue(v: String?): String {
+    var out = v ?: ""
+    URDU_RULES.forEach { (re, rep) -> out = re.replace(out) { rep(it) } }
+    return out.replace(Regex("\\s+"), " ").trim()
+  }
+
+  private fun ltr(v: String): String = if (v.isEmpty()) v else LRI + v + PDI
+  private fun bidiValue(v: String): String {
+    if (v.isEmpty()) return v
+    return if (AMOUNT_ONLY.matches(v) || !HAS_URDU.containsMatchIn(v)) ltr(v) else v
+  }
 
   /** Port of the web `_buildStatementText`: an RTL Urdu WhatsApp/SMS-friendly statement. */
   fun buildStatementText(
@@ -394,31 +459,39 @@ object StatementShare {
     closing: String,
   ): String {
     val out = mutableListOf<String>()
-    fun emit(t: String) = out.add(if (t.isEmpty()) "" else RLM + t)
-    emit("*گل اینڈ زبیر نسوار ڈیلرز*")
-    emit("${kind.urduTitle} · $rangeLabel")
-    emit("")
-    emit("نام: $name")
-    if (phone.isNotBlank() && phone != "N/A") emit("فون: $LRM$phone$LRM")
-    emit("تاریخ اجراء: $dateLabel")
+    fun add(t: String) = out.add(if (t.isEmpty()) "" else RLM + t)
+    val isEntity = kind == StatementKind.ENTITY
+    // Column headers of the matching statement table (type column is skipped, like the web).
+    val heads = listOf("date", "type", "details", if (isEntity) "payment out" else "debit (sale)", if (isEntity) "payment in" else "credit (rcvd)", "balance")
+
+    add("*گل اینڈ زبیر نسوار ڈیلرز*")
+    add("${URDU_TITLES[kind.pdfTitle] ?: kind.pdfTitle} \u00b7 ${urduValue(URDU_RANGES[rangeLabel] ?: rangeLabel)}")
+    add("")
+    add("نام: ${bidiValue(name)}")
+    if (phone.isNotBlank() && phone != "N/A") add("فون: ${ltr(phone)}")
+    add("تاریخ اجراء: ${urduValue(dateLabel)}")
     if (lines.isNotEmpty()) {
-      emit("")
-      emit("------------------------")
+      add("")
+      add("------------------------")
       lines.forEach { r ->
-        val parts = buildList<String> {
-          add(URDU_KIND[r.type] ?: r.type)
-          if (r.details.isNotBlank() && r.type != "OPENING") add(r.details)
-          if (r.debit.isNotBlank()) add("بل: ${r.debit}")
-          if (r.credit.isNotBlank()) add("وصولی: ${r.credit}")
-          if (r.balance.isNotBlank()) add("بقایا: ${r.balance}")
+        val cells = listOf(r.date, r.type, r.details, r.debit, r.credit, r.balance)
+        val parts = mutableListOf<String>()
+        cells.forEachIndexed { i, raw ->
+          if (i == 0 || heads[i] == "type") return@forEachIndexed
+          val v = urduValue(raw)
+          if (v.isEmpty() || v == "-" || v == "\u2014") return@forEachIndexed
+          val label = URDU_HEADS[heads[i]]
+          val isMoney = MONEY_HEAD.containsMatchIn(heads[i])
+          parts += if (label != null && isMoney) "$label: ${bidiValue(v)}" else bidiValue(v)
         }
-        emit("\u2022 ${r.date} | ${parts.joinToString(" | ")}")
+        add("\u2022 ${bidiValue(urduValue(cells[0]))}${if (parts.isNotEmpty()) " | " + parts.joinToString(" | ") else ""}")
       }
     }
-    if (closing.isNotBlank()) {
-      emit("")
-      emit("------------------------")
-      emit("*کل بقایا: $closing*")
+    val closingV = urduValue(closing)
+    if (closingV.isNotEmpty()) {
+      add("")
+      add("------------------------")
+      add("*کل بقایا: ${bidiValue(closingV)}*")
     }
     return out.joinToString("\n")
   }
