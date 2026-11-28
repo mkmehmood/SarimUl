@@ -182,8 +182,8 @@ fun LedgerSkeletonContent(
         }
       }
       ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp))
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp))
-      ShimmerPlaceholder(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp))
+      ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp))
       ShimmerPlaceholder(Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(50))
     }
 
@@ -202,7 +202,7 @@ fun LedgerSkeletonContent(
     SarimCard {
       ShimmerPlaceholder(Modifier.width(168.dp).height(17.dp))
       repeat(3) {
-        ShimmerPlaceholder(Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp))
+        ShimmerPlaceholder(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp))
       }
     }
 

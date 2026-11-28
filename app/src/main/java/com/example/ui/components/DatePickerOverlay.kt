@@ -49,22 +49,24 @@ fun SarimDatePickerField(
     Surface(
       modifier = Modifier
         .fillMaxWidth()
-        .defaultMinSize(minHeight = 48.dp)
-        .clip(RoundedCornerShape(16.dp))
+        .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+        .clip(SarimFieldDefaults.Shape)
         .testTag(testTag)
         .clickable { open = true },
-      shape = RoundedCornerShape(16.dp),
+      shape = SarimFieldDefaults.Shape,
       color = palette.surfaceElevated,
-      border = BorderStroke(1.dp, palette.border),
+      border = BorderStroke(SarimFieldDefaults.BorderWidth, palette.border),
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+        modifier = Modifier
+          .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+          .padding(horizontal = SarimFieldDefaults.HorizontalPadding),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
           text = SarimFormat.formatDate(dateEpoch),
           color = palette.textPrimary,
-          fontSize = 14.sp,
+          fontSize = SarimFieldDefaults.TextSize,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.weight(1f),
         )

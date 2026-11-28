@@ -7,7 +7,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -194,6 +197,20 @@ fun SarimFieldLabel(text: String, modifier: Modifier = Modifier) {
   )
 }
 
+/**
+ * One size for every input control (text, number, date, dropdown, search).
+ * The calendar/date field is the reference; all other fields use these same values.
+ */
+object SarimFieldDefaults {
+  val MinHeight = 48.dp
+  val HorizontalPadding = 14.dp
+  val TrailingPadding = 8.dp
+  val CornerRadius = 16.dp
+  val Shape = RoundedCornerShape(CornerRadius)
+  val BorderWidth = 1.dp
+  val TextSize = 14.sp
+}
+
 @Composable
 fun SarimTextField(
   value: String,
@@ -216,53 +233,75 @@ fun SarimTextField(
   onClickIfReadOnly: (() -> Unit)? = null,
 ) {
   val palette = LocalSarimPalette.current
+  val interaction = remember { MutableInteractionSource() }
+  val focused by interaction.collectIsFocusedAsState()
+  val clickable = readOnly && onClickIfReadOnly != null
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
     if (label.isNotBlank()) SarimFieldLabel(label)
-    val shape = RoundedCornerShape(16.dp)
-    val borderColor = if (dashedReadOnly) palette.cyan.copy(alpha = 0.45f) else palette.border
-    OutlinedTextField(
+    val borderColor = when {
+      focused -> palette.green
+      dashedReadOnly -> palette.cyan.copy(alpha = 0.45f)
+      else -> palette.border
+    }
+    val isNumeric = keyboardType == KeyboardType.Decimal || keyboardType == KeyboardType.Number || keyboardType == KeyboardType.Phone
+    BasicTextField(
       value = value,
       onValueChange = { if (it.length <= maxLength) onValueChange(it) },
       modifier = textFieldModifier
         .fillMaxWidth()
         .testTag(testTag)
-        .let { m -> if (readOnly && onClickIfReadOnly != null) m.clickable { onClickIfReadOnly() } else m },
-      enabled = !(readOnly && onClickIfReadOnly != null),
+        .let { m -> if (clickable) m.clickable { onClickIfReadOnly?.invoke() } else m },
+      enabled = !clickable,
       readOnly = readOnly,
       singleLine = true,
-      placeholder = if (placeholder.isNotBlank()) {
-        { Text(placeholder, color = palette.textMuted.copy(alpha = 0.65f), fontSize = 14.sp) }
-      } else null,
-      prefix = if (prefixText != null) {
-        { Text("$prefixText ", color = palette.textMuted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
-      } else null,
-      suffix = if (suffixText != null) {
-        { Text(" $suffixText", color = palette.textMuted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
-      } else null,
-      leadingIcon = leadingIcon?.let { icon ->
-        { Icon(icon, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp)) }
-      },
-      trailingIcon = trailingContent,
+      interactionSource = interaction,
+      cursorBrush = SolidColor(palette.green),
       visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
       keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
       keyboardActions = KeyboardActions.Default,
       textStyle = TextStyle(
-        fontFamily = if (keyboardType == KeyboardType.Decimal || keyboardType == KeyboardType.Number || keyboardType == KeyboardType.Phone) ManropeFontFamily else PlusJakartaFontFamily,
+        fontFamily = if (isNumeric) ManropeFontFamily else PlusJakartaFontFamily,
         fontFeatureSettings = "tnum",
-        fontSize = 14.5.sp,
+        fontSize = SarimFieldDefaults.TextSize,
+        fontWeight = FontWeight.SemiBold,
         color = palette.textPrimary,
       ),
-      shape = shape,
-      colors = OutlinedTextFieldDefaults.colors(
-        focusedContainerColor = palette.surfaceElevated,
-        unfocusedContainerColor = palette.surfaceElevated,
-        disabledContainerColor = palette.surfaceElevated,
-        focusedBorderColor = palette.green,
-        unfocusedBorderColor = borderColor,
-        disabledBorderColor = borderColor,
-        disabledTextColor = palette.textPrimary,
-        cursorColor = palette.green,
-      ),
+      decorationBox = { inner ->
+        Surface(
+          shape = SarimFieldDefaults.Shape,
+          color = palette.surfaceElevated,
+          border = BorderStroke(SarimFieldDefaults.BorderWidth, borderColor),
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+              .padding(
+                start = SarimFieldDefaults.HorizontalPadding,
+                end = if (trailingContent != null) SarimFieldDefaults.TrailingPadding else SarimFieldDefaults.HorizontalPadding,
+              ),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            if (leadingIcon != null) {
+              Icon(leadingIcon, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(8.dp))
+            }
+            if (prefixText != null) {
+              Text("$prefixText ", color = palette.textMuted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+              if (value.isEmpty() && placeholder.isNotBlank()) {
+                Text(placeholder, color = palette.textMuted.copy(alpha = 0.65f), fontSize = SarimFieldDefaults.TextSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              }
+              inner()
+            }
+            if (suffixText != null) {
+              Text(" $suffixText", color = palette.textMuted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            trailingContent?.invoke()
+          }
+        }
+      },
     )
   }
 }
@@ -438,23 +477,25 @@ fun SarimPopoverSelector(
         modifier = Modifier
           .fillMaxWidth()
           .onSizeChanged { anchorWidthPx = it.width }
-          .defaultMinSize(minHeight = 48.dp)
-          .clip(RoundedCornerShape(16.dp))
+          .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+          .clip(SarimFieldDefaults.Shape)
           .testTag(testTag)
           .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(16.dp),
+        shape = SarimFieldDefaults.Shape,
         color = palette.surfaceElevated,
-        border = BorderStroke(1.dp, if (expanded) palette.green else palette.border),
+        border = BorderStroke(SarimFieldDefaults.BorderWidth, if (expanded) palette.green else palette.border),
       ) {
         Row(
-          modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+          modifier = Modifier
+            .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+            .padding(start = SarimFieldDefaults.HorizontalPadding, end = SarimFieldDefaults.TrailingPadding),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           Text(
             text = selectedText,
             color = palette.textPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = SarimFieldDefaults.TextSize,
+            fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

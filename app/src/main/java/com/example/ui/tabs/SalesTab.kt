@@ -90,7 +90,7 @@ fun SalesTab(
   var sheetSale by remember { mutableStateOf<SaleTransactionEntity?>(null) }
 
   var custSearchFilter by remember { mutableStateOf("") }
-  var analyticsPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
+  var analyticsPeriod by remember { mutableStateOf(TimePeriod.WEEKLY) }
   var summaryPeriod by remember { mutableStateOf(TimePeriod.DAILY) }
 
   val isRepSelected = !selectedRep.equals("Direct", ignoreCase = true)
@@ -202,6 +202,42 @@ fun SalesTab(
           SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
         }
 
+        SarimToggleGroup(
+          options = availableModes,
+          selected = if (mode in availableModes) mode else availableModes.first(),
+          labelOf = { it.label },
+          onSelect = { mode = it },
+          testTagPrefix = "sales_mode",
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+          Box(modifier = Modifier.weight(1f)) {
+            SarimDatePickerField("Date", dateEpoch, onDateSelected = { dateEpoch = it }, testTag = "cust_date")
+          }
+          Box(modifier = Modifier.weight(1f)) {
+            if (isRepSelected) {
+            SarimTextField(
+              value = selectedRep,
+              onValueChange = {},
+              label = "Customer Name",
+              readOnly = true,
+              dashedReadOnly = true,
+              testTag = "cust_name",
+            )
+            } else {
+            SarimSearchFieldWithDropdown(
+              value = customerName,
+              onValueChange = { customerName = it },
+              label = "Customer Name",
+              placeholder = "Search or type new...",
+              suggestions = directCustomers.map { it.name },
+              onSuggestionSelected = { customerName = it },
+              testTag = "cust_name",
+            )
+
+            }
+          }
+        }
+
         SarimFieldLabel("Sales Representative (For Calculator Link)")
         Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           repOptions.forEach { rep ->
@@ -223,24 +259,7 @@ fun SalesTab(
           }
         }
 
-        SarimToggleGroup(
-          options = availableModes,
-          selected = if (mode in availableModes) mode else availableModes.first(),
-          labelOf = { it.label },
-          onSelect = { mode = it },
-          testTagPrefix = "sales_mode",
-        )
-        SarimDatePickerField("Date", dateEpoch, onDateSelected = { dateEpoch = it }, testTag = "cust_date")
-
         if (isRepSelected) {
-          SarimTextField(
-            value = selectedRep,
-            onValueChange = {},
-            label = "Customer Name (Locked to Rep)",
-            readOnly = true,
-            dashedReadOnly = true,
-            testTag = "cust_name",
-          )
           Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.cyan.copy(alpha = 0.45f))) {
             Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
               Column {
@@ -254,16 +273,6 @@ fun SalesTab(
             }
           }
         } else {
-          SarimSearchFieldWithDropdown(
-            value = customerName,
-            onValueChange = { customerName = it },
-            label = "Customer Name",
-            placeholder = "Search or type new...",
-            suggestions = directCustomers.map { it.name },
-            onSuggestionSelected = { customerName = it },
-            testTag = "cust_name",
-          )
-
           if (isNewCustomer) {
             SarimTextField(
               value = newCustPhone,
@@ -337,10 +346,19 @@ fun SalesTab(
               }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimStatTile("Total Cost", SarimFormat.formatRs(totalCost, false, hideMoney), Modifier.weight(1f), palette.red)
-              SarimStatTile("Total Value", SarimFormat.formatRs(totalValue, false, hideMoney), Modifier.weight(1f), palette.green)
-              SarimStatTile("Profit", SarimFormat.formatRs(profit, false, hideMoney), Modifier.weight(1f), palette.emerald)
+            SarimCard {
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Total Cost:", color = palette.textMuted, fontSize = 12.5.sp)
+                Text(SarimFormat.formatRs(totalCost, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold))
+              }
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Total Value:", color = palette.textMuted, fontSize = 12.5.sp)
+                Text(SarimFormat.formatRs(totalValue, true, hideMoney), color = palette.green, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))
+              }
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Profit:", color = palette.textMuted, fontSize = 12.5.sp)
+                Text(SarimFormat.formatRs(profit, true, hideMoney), color = palette.emerald, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))
+              }
             }
 
             val tileTone = SarimStockCheck.tone(inStockKg, qtyNum)
@@ -424,12 +442,12 @@ fun SalesTab(
               onCheckedChange = { collAddToLedger = it },
               label = "Add to Daily Ledger",
             )
-            SarimStatTile(
-              label = "Balance After Collection",
-              value = SarimFormat.formatRs(afterDebt, true, hideMoney),
-              accentColor = if (afterDebt <= 0.01) palette.green else palette.amber,
-              modifier = Modifier.fillMaxWidth(),
-            )
+            SarimCard {
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Balance After Collection:", color = palette.textMuted, fontSize = 12.5.sp)
+                Text(SarimFormat.formatRs(afterDebt, true, hideMoney), color = if (afterDebt <= 0.01) palette.green else palette.amber, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))
+              }
+            }
           }
 
           SalesMode.REP_RETURN -> {

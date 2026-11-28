@@ -988,12 +988,12 @@ private fun SoundHapticsDropdownCard(
         modifier = Modifier
           .fillMaxWidth()
           .onSizeChanged { anchorWidthPx = it.width }
-          .defaultMinSize(minHeight = 52.dp)
-          .clip(RoundedCornerShape(16.dp))
+          .defaultMinSize(minHeight = SarimFieldDefaults.MinHeight)
+          .clip(SarimFieldDefaults.Shape)
           .testTag(testTag)
           .clickable { onExpandedChange(!expanded) },
       ) {
-        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.padding(horizontal = SarimFieldDefaults.HorizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
           Column(modifier = Modifier.weight(1f)) {
             Text(selectedLabel, color = accentColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Text(selectedDescription, color = palette.textMuted, fontSize = 12.sp)

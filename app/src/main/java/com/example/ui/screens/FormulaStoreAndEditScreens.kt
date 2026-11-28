@@ -360,7 +360,7 @@ fun FormulaEditScreen(
               style = TabularNumberStyle.copy(fontSize = 12.sp),
               modifier = Modifier.weight(0.65f),
             )
-            OutlinedTextField(
+            SarimTextField(
               value = qtyInput,
               onValueChange = { v ->
                 qtyInput = v
@@ -369,8 +369,9 @@ fun FormulaEditScreen(
                   rows[idx] = rows[idx].copy(qtyKg = num)
                 }
               },
-              singleLine = true,
-              placeholder = { Text("0") },
+              label = "",
+              placeholder = "0",
+              keyboardType = KeyboardType.Decimal,
               modifier = Modifier.weight(0.75f),
             )
             IconButton(

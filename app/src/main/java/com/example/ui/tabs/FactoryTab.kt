@@ -156,7 +156,7 @@ fun FactoryTab(
               text = SarimFormat.formatRs(batchTotalCost, true, hideMoney),
               toneColor = palette.red,
               icon = null,
-              modifier = Modifier.defaultMinSize(minHeight = 56.dp),
+              modifier = Modifier.defaultMinSize(minHeight = SarimFieldDefaults.MinHeight),
             )
           }
         }
