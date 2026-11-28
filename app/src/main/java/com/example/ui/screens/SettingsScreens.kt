@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -45,6 +46,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import com.example.util.DialogChoice
 import com.example.data.backup.SarimBackupCrypto
+import com.example.data.backup.SarimBackupService
 import com.example.data.backup.RestoreSummary
 import com.example.data.backup.BackupPreview
 import com.example.data.backup.BackupCryptoException
@@ -52,6 +54,7 @@ import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -169,6 +172,7 @@ fun BackupRestoreScreen(
 ) {
   val context = LocalContext.current
   val palette = LocalSarimPalette.current
+  val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val scope = rememberCoroutineScope()
   var pendingBackup by remember { mutableStateOf<ByteArray?>(null) }
 
@@ -283,12 +287,21 @@ fun BackupRestoreScreen(
     if (uri != null) {
       scope.launch {
         try {
+          val displayName = withContext(Dispatchers.IO) {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+              val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+              if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            } ?: uri.lastPathSegment
+          }
+          if (!displayName.isNullOrBlank() && !displayName.trim().endsWith(".gznd", ignoreCase = true)) {
+            fail("Unsupported file", "Only encrypted .gznd backup files can be restored.")
+            return@launch
+          }
           val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } } ?: ByteArray(0)
-          when {
-            SarimBackupCrypto.looksEncrypted(bytes) -> askPasswordAndOpen(bytes)
-            bytes.firstOrNull { !it.toInt().toChar().isWhitespace() }?.toInt()?.toChar() == '{' ->
-              confirmRestore(viewModel.backupService.openPlainBackup(bytes))
-            else -> fail("Unsupported file", "Only encrypted .gznd backup files can be restored.")
+          if (SarimBackupService.isAllowedEncryptedUpload(displayName, bytes)) {
+            askPasswordAndOpen(bytes)
+          } else {
+            fail("Unsupported file", "Only encrypted .gznd backup files can be restored.")
           }
         } catch (e: Exception) {
           fail("Restore Failed", e.message ?: "Unable to read file.")
@@ -348,12 +361,35 @@ fun BackupRestoreScreen(
   ) {
     SarimCard {
       SarimFieldLabel("Backup")
-      Text("Save an AES-256 encrypted copy of all data. The file needs your account password to restore, and the web app can open it too.", color = palette.textMuted, fontSize = 13.sp)
+      Text("Cloud Backup uploads your data to your account. Encrypted .gznd files use AES-256-GCM and need your account password to restore.", color = palette.textMuted, fontSize = 13.sp)
       SarimPrimaryButton(
         text = "Backup to Phone",
         onClick = {
-          runCatching { askPasswordAndBackup(share = false) }.onFailure { err ->
-            fail("Backup Unavailable", err.localizedMessage ?: "No file picker available.")
+          if (uiState.isOnline && !uiState.isOfflineSession) {
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Save Backup",
+                body = "Choose how to back up your workspace data.\n\n• Cloud Backup saves to Firebase for all your devices.\n• Encrypted .gznd File saves an offline AES-256-GCM encrypted file protected with your account credentials.",
+                tone = DialogTone.CONFIRM,
+                choices = listOf(
+                  DialogChoice("cloud", "Cloud Backup", "Upload latest changes to your cloud workspace"),
+                  DialogChoice("file", "Download Encrypted File (.gznd)", "Save a password-encrypted backup file to phone"),
+                ),
+                cancelLabel = "Cancel",
+                onChoiceSelected = { choice ->
+                  when (choice) {
+                    "cloud" -> viewModel.syncDataNow()
+                    "file" -> runCatching { askPasswordAndBackup(share = false) }.onFailure { err ->
+                      fail("Backup Unavailable", err.localizedMessage ?: "No file picker available.")
+                    }
+                  }
+                },
+              )
+            )
+          } else {
+            runCatching { askPasswordAndBackup(share = false) }.onFailure { err ->
+              fail("Backup Unavailable", err.localizedMessage ?: "No file picker available.")
+            }
           }
         },
       )
@@ -366,14 +402,14 @@ fun BackupRestoreScreen(
 
     SarimCard {
       SarimFieldLabel("Restore")
-      Text("Load a backup file (.gznd). Records are merged with your current data. A backup made by Close Financial Year can reverse that close.", color = palette.textMuted, fontSize = 13.sp)
+      Text("Load an encrypted backup file (.gznd). Unencrypted JSON files are blocked. Records merge with your current data, or reverse a Financial Year close.", color = palette.textMuted, fontSize = 13.sp)
       SarimSecondaryButton(
         text = "Restore from Phone",
         icon = Icons.Rounded.FolderOpen,
         modifier = Modifier.fillMaxWidth(),
         onClick = {
           runCatching {
-            openDocLauncher.launch(arrayOf("application/octet-stream", "application/json", "*/*"))
+            openDocLauncher.launch(arrayOf("application/octet-stream", "*/*"))
           }.onFailure { err ->
             fail("Restore Unavailable", err.localizedMessage ?: "No file picker available.")
           }
@@ -394,6 +430,7 @@ fun RecycleBinScreen(
 
   LaunchedEffect(Unit) { viewModel.refreshDiagnostics() }
 
+  val scope = rememberCoroutineScope()
   val items = remember(state.recycleBinItems, filterIndex) {
     val selected = filterOptions[filterIndex]
     if (selected == "All Tabs") state.recycleBinItems
@@ -427,21 +464,22 @@ fun RecycleBinScreen(
       SarimDangerButton(
         text = "Empty Bin",
         icon = Icons.Rounded.DeleteForever,
-        enabled = state.recycleBinItems.isNotEmpty(),
+        enabled = items.isNotEmpty(),
         modifier = Modifier.weight(1f),
         onClick = {
+          val targetLabel = if (filterIndex == 0) "all ${items.size} deleted record(s)" else "${items.size} deleted record(s) in ${filterOptions[filterIndex]}"
           viewModel.showDialog(
             AppDialogRequest(
               title = "Empty Recycle Bin",
-              body = "Permanently erase all ${state.recycleBinItems.size} deleted records? This cannot be undone.",
+              body = "Permanently erase $targetLabel? Linked records deleted together will also be removed. This cannot be undone.",
               tone = DialogTone.PERMANENT,
-              confirmLabel = "Erase All",
+              confirmLabel = "Erase ${items.size}",
               onConfirm = {
                 viewModel.launchSafely(
                   errorTitle = "Empty Recycle Bin Failed",
                   successMessage = "Recycle Bin emptied",
                 ) {
-                  viewModel.syncRepo.emptyRecycleBin()
+                  viewModel.syncRepo.emptyRecycleBinFiltered(items)
                   viewModel.refreshDiagnostics()
                 }
               },
@@ -478,12 +516,45 @@ fun RecycleBinScreen(
               text = "Restore",
               modifier = Modifier.weight(1f),
               onClick = {
-                viewModel.launchSafely(
-                  errorTitle = "Restore Failed",
-                  successMessage = "Restored record",
-                ) {
-                  viewModel.syncRepo.restoreRecycleItem(rec)
-                  viewModel.refreshDiagnostics()
+                scope.launch {
+                  val preview = viewModel.syncRepo.previewRecycleRestore(rec)
+                  if (preview.blockedReason != null) {
+                    viewModel.showDialog(
+                      AppDialogRequest(
+                        title = "Warning",
+                        body = preview.blockedReason,
+                        tone = DialogTone.WARNING,
+                        confirmLabel = "OK",
+                        cancelLabel = null,
+                      )
+                    )
+                  } else {
+                    val body = buildString {
+                      append("Restore ${rec.title}?")
+                      if (rec.amountText.isNotBlank()) append("\nAmount: ${rec.amountText}")
+                      if (preview.notes.isNotEmpty()) {
+                        append("\n\n")
+                        append(preview.notes.joinToString("\n") { "• $it" })
+                      }
+                    }
+                    viewModel.showDialog(
+                      AppDialogRequest(
+                        title = "Restore Record",
+                        body = body,
+                        tone = if (preview.groupSize > 1) DialogTone.WARNING else DialogTone.CONFIRM,
+                        confirmLabel = "Restore",
+                        onConfirm = {
+                          viewModel.launchSafely(
+                            errorTitle = "Restore Failed",
+                            successMessage = "Restored record",
+                          ) {
+                            viewModel.syncRepo.restoreRecycleItem(rec)
+                            viewModel.refreshDiagnostics()
+                          }
+                        },
+                      )
+                    )
+                  }
                 }
               },
             )

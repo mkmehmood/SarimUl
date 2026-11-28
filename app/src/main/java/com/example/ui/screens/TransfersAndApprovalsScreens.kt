@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.ApprovalRequestEntity
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -204,22 +205,33 @@ viewModel.launchSafely(
         actions = HistoryRecordActions<com.example.data.local.StockTransferEntity>(
           deleteLabel = "Delete Transfer",
           onDelete = { t ->
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Delete Stock Transfer",
-                body = "Reverse ${SarimFormat.formatKg(t.quantityKg)} transfer and move to Recycle Bin?",
-                tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete",
-                onConfirm = {
-                  viewModel.launchSafely(
-                    errorTitle = "Delete Failed",
-                    successMessage = "Deleted stock transfer",
-                  ) {
-                    viewModel.repository.deleteStockTransfer(t.id)
-                  }
-                },
-              )
+            val blockMsg = SarimLinkEngine.getStockTransferDeleteBlockReason(
+              transfer = t,
+              production = state.productionEntries,
+              sales = state.sales,
+              stockTransfers = state.stockTransfers,
+              settlements = state.settlements,
             )
+            if (blockMsg != null) {
+              viewModel.showDialog(AppDialogRequest("Cannot Delete Transfer", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+            } else {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Stock Transfer",
+                  body = "Reverse ${SarimFormat.formatKg(t.quantityKg)} transfer (${t.fromStoreName} → ${t.toStoreName}) and move to Recycle Bin?",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Delete Failed",
+                      successMessage = "Deleted stock transfer",
+                    ) {
+                      viewModel.repository.deleteStockTransfer(t.id)
+                    }
+                  },
+                )
+              )
+            }
           },
         ),
       )
@@ -234,7 +246,7 @@ fun PaymentTransferScreen(
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
-  val entities = remember(state.paymentEntities) { state.paymentEntities.filter { !it.isDeleted } }
+  val entities = remember(state.paymentEntities) { state.paymentEntities.filter { !it.isDeleted && !it.isExpenseEntity } }
   val entityNames = remember(entities) { entities.map { it.name } }
 
   var fromQuery by remember { mutableStateOf("") }
@@ -420,22 +432,31 @@ viewModel.launchSafely(
         actions = HistoryRecordActions<com.example.data.local.PaymentTransferEntity>(
           deleteLabel = "Delete Transfer",
           onDelete = { t ->
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Delete Payment Transfer",
-                body = "Reverse ${SarimFormat.formatRs(t.amount)} transfer between entities and move to Recycle Bin?",
-                tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete",
-                onConfirm = {
-                  viewModel.launchSafely(
-                    errorTitle = "Delete Failed",
-                    successMessage = "Deleted payment transfer",
-                  ) {
-                    viewModel.repository.deletePaymentTransfer(t.id)
-                  }
-                },
-              )
+            val blockMsg = SarimLinkEngine.getPaymentTransferDeleteBlockReason(
+              transfer = t,
+              fromEntity = entities.firstOrNull { it.id == t.fromEntityId },
+              toEntity = entities.firstOrNull { it.id == t.toEntityId },
             )
+            if (blockMsg != null) {
+              viewModel.showDialog(AppDialogRequest("Cannot Delete Transfer", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+            } else {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Payment Transfer",
+                  body = "Reverse ${SarimFormat.formatRs(t.amount)} transfer (${t.fromEntityName} → ${t.toEntityName}) and move to Recycle Bin?",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Delete Failed",
+                      successMessage = "Deleted payment transfer",
+                    ) {
+                      viewModel.repository.deletePaymentTransfer(t.id)
+                    }
+                  },
+                )
+              )
+            }
           },
         ),
       )
@@ -551,6 +572,10 @@ fun ApprovalsScreen(
             icon = Icons.Rounded.Check,
             modifier = Modifier.weight(1f),
             onClick = {
+              if (!state.isOnline) {
+                viewModel.showDialog(AppDialogRequest("No Internet", "Approvals require an active internet connection so every device stays in sync.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimSecondaryButton
+              }
               val batch = filtered.toList()
               viewModel.showDialog(
                 AppDialogRequest(
@@ -575,6 +600,10 @@ fun ApprovalsScreen(
             icon = Icons.Rounded.Close,
             modifier = Modifier.weight(1f),
             onClick = {
+              if (!state.isOnline) {
+                viewModel.showDialog(AppDialogRequest("No Internet", "Approvals require an active internet connection so every device stays in sync.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimDangerButton
+              }
               val batch = filtered.toList()
               viewModel.showDialog(
                 AppDialogRequest(
@@ -624,6 +653,10 @@ fun ApprovalsScreen(
               icon = Icons.Rounded.Check,
               modifier = Modifier.weight(1f),
               onClick = {
+                if (!state.isOnline) {
+                  viewModel.showDialog(AppDialogRequest("No Internet", "Approvals require an active internet connection so every device stays in sync.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimSecondaryButton
+                }
                 viewModel.launchSafely(
                   errorTitle = "Approval Failed",
                   successMessage = "Approved",
@@ -637,6 +670,10 @@ fun ApprovalsScreen(
               icon = Icons.Rounded.Close,
               modifier = Modifier.weight(1f),
               onClick = {
+                if (!state.isOnline) {
+                  viewModel.showDialog(AppDialogRequest("No Internet", "Approvals require an active internet connection so every device stays in sync.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimDangerButton
+                }
                 viewModel.showDialog(
                   AppDialogRequest(
                     title = "Discard Request?",

@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.PaymentTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
@@ -75,8 +76,16 @@ fun PaymentsTab(
   var editingTxId by remember { mutableStateOf<String?>(null) }
   var sheetPayment by remember { mutableStateOf<PaymentTransactionEntity?>(null) }
 
-  val suggestions = remember(state.paymentEntities, state.paymentTransactions) {
-    (state.paymentEntities.map { it.name } + state.paymentTransactions.filter { it.type == "EXPENSE" }.map { it.entityOrExpenseName }).distinct()
+  val editingOriginal = editingTxId?.let { id -> state.paymentTransactions.firstOrNull { it.id == id } }
+  val suggestions = remember(txType, state.operatingCategories, state.paymentEntities, state.paymentTransactions) {
+    if (txType == PayTxType.EXPENSE) {
+      (state.operatingCategories +
+        state.paymentTransactions.filter { it.type == "EXPENSE" }.map { it.entityOrExpenseName } +
+        state.paymentEntities.filter { it.isExpenseEntity }.map { it.name })
+        .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    } else {
+      state.paymentEntities.filter { !it.isExpenseEntity }.map { it.name }.distinct()
+    }
   }
 
   LazyColumn(
@@ -92,7 +101,17 @@ fun PaymentsTab(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
           Text(if (editingTxId == null) "Transaction Manager" else "Edit Transaction", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           TextButton(onClick = {
-            editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList()
+            if (editingTxId != null) {
+              val hasEdits = editingOriginal == null ||
+                nameText.trim() != editingOriginal.entityOrExpenseName ||
+                (SarimFormat.parseSafeDouble(amountText) ?: 0.0) != editingOriginal.amount ||
+                descriptionText.trim() != editingOriginal.description
+              viewModel.requestCancelEdit(hasEdits) {
+                editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList()
+              }
+            } else {
+              nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList()
+            }
           }) { Text(if (editingTxId == null) "Clear" else "Cancel Edit", color = if (editingTxId == null) palette.cyan else palette.amber) }
         }
         if (editingTxId != null) {
@@ -167,37 +186,72 @@ fun PaymentsTab(
               viewModel.showDialog(AppDialogRequest("Invalid Entry", "Enter a valid name/entity and positive amount.", confirmLabel = "OK", cancelLabel = null))
               return@SarimPrimaryButton
             }
+            if (txType != PayTxType.EXPENSE && state.operatingCategories.any { it.equals(nameText.trim(), ignoreCase = true) }) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Reserved Category Name",
+                  body = "\"${nameText.trim()}\" is an Operating Expense category and cannot be used as a Payment IN / Payment OUT entity.",
+                  tone = DialogTone.WARNING,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+              return@SarimPrimaryButton
+            }
             val currentEditId = editingTxId
-            if (currentEditId != null) {
-              val orig = state.paymentTransactions.firstOrNull { it.id == currentEditId }
-              if (orig != null && orig.type != txType.code) {
-                viewModel.showDialog(AppDialogRequest("Type Locked", "The type cannot be changed while editing. Delete and re-enter it instead.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+            if (currentEditId != null && editingOriginal != null && editingOriginal.type != txType.code) {
+              viewModel.showDialog(AppDialogRequest("Type Locked", "The type cannot be changed while editing. Delete and re-enter it instead.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+              return@SarimPrimaryButton
+            }
+            if (txType == PayTxType.EXPENSE || txType == PayTxType.PAYMENT_OUT) {
+              val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+                sales = state.sales,
+                settlements = state.settlements,
+                payments = state.paymentTransactions,
+                factoryBatches = state.factoryBatches,
+              ).netCash + if (editingOriginal != null && editingOriginal.type != "PAYMENT_IN") editingOriginal.amount else 0.0
+              if (amt > cashNow + 0.01) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Low Cash in Hand",
+                    body = viewModel.redactMoney(
+                      "Insufficient cash in hand.\nAvailable: ${SarimFormat.formatRs(cashNow.coerceAtLeast(0.0))}\nRequired: ${SarimFormat.formatRs(amt)}",
+                      "Insufficient cash in hand.",
+                    ),
+                    tone = DialogTone.ERROR,
+                    confirmLabel = "OK",
+                    cancelLabel = null,
+                  )
+                )
                 return@SarimPrimaryButton
               }
             }
             viewModel.confirmSave(
-"Transaction",
-listOf("Name" to nameText, "Amount" to amountText, "Date" to SarimFormat.formatDate(dateEpoch), "Note" to descriptionText),
-isUpdate = currentEditId != null,
-shareAfterSave = if (txType == PayTxType.EXPENSE) null else ShareAfterSave(StatementKind.ENTITY, nameText, dateEpoch),
-) {
-viewModel.launchSafely(
-              errorTitle = "Save Payment Failed",
-              successMessage = if (currentEditId == null) "Payment transaction saved" else "Payment transaction updated",
-              onSuccess = { editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList() },
+              "Transaction",
+              listOf("Name" to nameText, "Amount" to SarimFormat.formatRs(amt, false, hideMoney), "Date" to SarimFormat.formatDate(dateEpoch), "Note" to descriptionText),
+              isUpdate = currentEditId != null,
+              shareAfterSave = if (txType == PayTxType.EXPENSE) null else ShareAfterSave(StatementKind.ENTITY, nameText, dateEpoch),
             ) {
-              viewModel.repository.savePaymentTransaction(
-                editingId = currentEditId,
-                dateEpoch = dateEpoch,
-                type = txType.code,
-                name = nameText,
-                amount = amt,
-                description = descriptionText,
-                photoUri = photoUris.firstOrNull() ?: "",
-                addToLedger = addToLedger,
-              )
+              viewModel.launchSafely(
+                errorTitle = "Save Payment Failed",
+                successMessage = if (currentEditId == null) "Payment transaction saved" else "Payment transaction updated",
+                onSuccess = { editingTxId = null; nameText = ""; amountText = ""; descriptionText = ""; photoUris = emptyList() },
+              ) {
+                if (txType == PayTxType.EXPENSE) {
+                  viewModel.repository.saveCategoryIfNew("categories", nameText)
+                }
+                viewModel.repository.savePaymentTransaction(
+                  editingId = currentEditId,
+                  dateEpoch = dateEpoch,
+                  type = txType.code,
+                  name = nameText,
+                  amount = amt,
+                  description = descriptionText,
+                  photoUri = photoUris.firstOrNull() ?: "",
+                  addToLedger = addToLedger,
+                )
+              }
             }
-}
           },
         )
       }
@@ -444,30 +498,70 @@ viewModel.launchSafely(
       extraActionLabel = if (p.photoUri.isNotBlank()) "View Attached Photo" else null,
       onExtraAction = if (p.photoUri.isNotBlank()) { { viewModel.openPhotoViewer(listOf(p.photoUri), 0) } } else null,
       onEdit = {
-        editingTxId = p.id
-        dateEpoch = p.dateEpoch
-        txType = PayTxType.entries.firstOrNull { it.code == p.type } ?: PayTxType.PAYMENT_OUT
-        nameText = p.entityOrExpenseName
-        amountText = p.amount.toString()
-        descriptionText = p.description
-        photoUris = if (p.photoUri.isNotBlank()) listOf(p.photoUri) else emptyList()
-        addToLedger = p.addToLedger
+        val isTransfer = state.paymentTransfers.any { !it.isDeleted && (it.outDocId == p.id || it.inDocId == p.id) }
+        val hasConsumedCredit = p.type == "PAYMENT_IN" && state.paymentTransactions.any { other ->
+          !other.isDeleted && other.type == "PAYMENT_OUT" &&
+            com.example.data.local.JsonCodecs.decodeConsumedCredits(other.consumedCreditsJson).any { it.id == p.id }
+        }
+        val blockMsg = when {
+          YearCloseMerge.isMergedId(p.id) -> "Merged opening balance records cannot be edited."
+          isTransfer -> "Transfers are edited from the Payment Transfer screen."
+          hasConsumedCredit -> "This Payment IN has supplier credit already consumed by a Payment OUT. Delete that Payment OUT first."
+          p.isPayable || !p.materialId.isNullOrBlank() || p.supplierCreditAmount > 0.001 ->
+            "This payment settled a supplier payable or credit. Delete and re-enter it to change it."
+          else -> null
+        }
+        if (blockMsg != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          editingTxId = p.id
+          dateEpoch = p.dateEpoch
+          txType = PayTxType.entries.firstOrNull { it.code == p.type } ?: PayTxType.PAYMENT_OUT
+          nameText = p.entityOrExpenseName
+          amountText = p.amount.toString()
+          descriptionText = p.description
+          photoUris = if (p.photoUri.isNotBlank()) listOf(p.photoUri) else emptyList()
+          addToLedger = p.addToLedger
+        }
       },
       onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = deleteTitle,
-            body = "Delete this $deleteTypeDesc?\nEntity: ${p.entityOrExpenseName}\nDate: ${SarimFormat.dateInput(p.dateEpoch)}\nPermanent: This cannot be undone.",
-            tone = DialogTone.PERMANENT,
-            highlight = DialogHighlight("Amount", SarimFormat.formatRs(p.amount, false, hideMoney)),
-            confirmLabel = "Delete",
-            onConfirm = {
-              viewModel.launchSafely(errorTitle = "Delete Payment Failed", successMessage = "Moved to Recycle Bin") {
-                viewModel.repository.deletePaymentTransaction(p.id)
-              }
-            },
-          )
+        val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
+          tx = p,
+          allTxs = state.paymentTransactions,
+          sales = state.sales,
+          settlements = state.settlements,
+          factoryBatches = state.factoryBatches,
         )
+        if (blockMsg != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          val impactNotes = buildString {
+            if (p.isPayable && p.type == "PAYMENT_OUT") {
+              append("\n\n↩ Supplier payable status will be restored — material purchase reverts to pending payment.")
+            }
+            if (p.isPayable && p.type == "PAYMENT_IN") {
+              val matName = p.materialId?.let { id -> state.rawMaterials.firstOrNull { it.id == id }?.name } ?: "the material"
+              append("\n\n↩ Credit purchase record removed — supplier will be unlinked from $matName.")
+            }
+            if (p.addToLedger) {
+              append("\n↩ Linked Daily Ledger entry will also be removed.")
+            }
+          }
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = deleteTitle,
+              body = "Delete this $deleteTypeDesc?\nEntity: ${p.entityOrExpenseName}\nDate: ${SarimFormat.dateInput(p.dateEpoch)}$impactNotes\n\nThis cannot be undone.",
+              tone = DialogTone.PERMANENT,
+              highlight = DialogHighlight("Amount", SarimFormat.formatRs(p.amount, false, hideMoney)),
+              confirmLabel = "Delete",
+              onConfirm = {
+                viewModel.launchSafely(errorTitle = "Delete Payment Failed", successMessage = "Moved to Recycle Bin") {
+                  viewModel.repository.deletePaymentTransaction(p.id)
+                }
+              },
+            )
+          )
+        }
       },
     )
   }

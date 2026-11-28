@@ -41,9 +41,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.JsonCodecs
 import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.StandaloneScreen
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -318,19 +320,43 @@ fun CustomerDetailsScreen(
       emptySubtitle = "Transactions with ${customer.name} appear here.",
       actions = HistoryRecordActions(
         onDelete = { tx ->
-          viewModel.showDialog(
-            AppDialogRequest(
-              title = "Delete Transaction",
-              body = "Move this transaction to Recycle Bin?",
-              tone = DialogTone.PERMANENT,
-              confirmLabel = "Delete",
-              onConfirm = {
-                viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                  viewModel.repository.deleteSale(tx.id)
-                }
-              },
+          val blockMsg = if (YearCloseMerge.isMergedId(tx.id)) {
+            "Merged opening balance records cannot be deleted."
+          } else {
+            SarimLinkEngine.getSaleBlockReason(tx, state.settlements)
+              ?: SarimLinkEngine.getCollectionDeleteBlockReason(tx, state.rawMaterials)
+          }
+          if (blockMsg != null) {
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Cannot Delete",
+                body = blockMsg,
+                tone = DialogTone.ERROR,
+                confirmLabel = "OK",
+                cancelLabel = null,
+              )
             )
-          )
+          } else {
+            val dispAmt = when {
+              tx.isRepReturn -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
+              tx.mode == "COLLECTION" || tx.mode == "MONEY_OUT" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
+              else -> tx.totalValue
+            }
+            val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Delete Transaction",
+                body = "Customer: ${customer.name}\nType: ${tx.mode.replace("_", " ")}\nAmount: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
+                tone = DialogTone.PERMANENT,
+                confirmLabel = "Delete",
+                onConfirm = {
+                  viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                    viewModel.repository.deleteSale(tx.id)
+                  }
+                },
+              )
+            )
+          }
         },
         dayActionLabel = "Invoice",
         onDayAction = { dayItems ->
@@ -422,14 +448,50 @@ fun CustomerDetailsScreen(
                   viewModel.showDialog(AppDialogRequest("Invalid Amount", "Enter a valid positive amount.", tone = DialogTone.ERROR, cancelLabel = null))
                   return@SarimPrimaryButton
                 }
-                viewModel.recordCustomerMoneyOut(
-                  customer = customer,
-                  dateEpoch = moDateEpoch,
-                  amount = amt,
-                  note = moNote.trim(),
-                  addToLedger = moAddToLedger,
+                if (SarimFormat.isFutureDate(moDateEpoch)) {
+                  viewModel.showDialog(AppDialogRequest("Invalid Date", "Future dates are refused on customer payouts.", tone = DialogTone.ERROR, cancelLabel = null))
+                  return@SarimPrimaryButton
+                }
+                val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+                  sales = state.sales,
+                  settlements = state.settlements,
+                  payments = state.paymentTransactions,
+                  factoryBatches = state.factoryBatches,
+                ).netCash
+                if (amt > cashNow + 0.01) {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Low Cash in Hand",
+                      body = viewModel.redactMoney(
+                        "Insufficient cash in hand.\nAvailable: ${SarimFormat.formatRs(cashNow.coerceAtLeast(0.0))}\nRequired: ${SarimFormat.formatRs(amt)}",
+                        "Insufficient cash in hand.",
+                      ),
+                      tone = DialogTone.ERROR,
+                      confirmLabel = "OK",
+                      cancelLabel = null,
+                    )
+                  )
+                  return@SarimPrimaryButton
+                }
+                viewModel.confirmSave(
+                  "Money Out",
+                  listOf(
+                    "Customer" to customer.name,
+                    "Amount" to viewModel.redactMoney(SarimFormat.formatRs(amt)),
+                    "Date" to SarimFormat.formatDate(moDateEpoch),
+                    "Daily Ledger" to if (moAddToLedger) "Linked" else "No",
+                  ),
+                  isUpdate = false,
                 ) {
-                  showMoneyOutDialog = false
+                  viewModel.recordCustomerMoneyOut(
+                    customer = customer,
+                    dateEpoch = moDateEpoch,
+                    amount = amt,
+                    note = moNote.trim(),
+                    addToLedger = moAddToLedger,
+                  ) {
+                    showMoneyOutDialog = false
+                  }
                 }
               },
               modifier = Modifier.weight(1f),
@@ -645,10 +707,41 @@ fun CustomerEditScreen(
           text = "Delete",
           modifier = Modifier.weight(1f),
           onClick = {
+            val custTxs = state.sales.filter {
+              !it.isDeleted && it.isRepSale == existing.isRepCustomer &&
+                (it.customerId == existing.id || it.customerName.equals(existing.name, ignoreCase = true))
+            }
+            val blockMsg = custTxs.firstNotNullOfOrNull { tx ->
+              when {
+                YearCloseMerge.isMergedId(tx.id) -> "Contains merged opening balance records that cannot be deleted."
+                !tx.usedInCalcId.isNullOrBlank() ||
+                  (!tx.isRepSale && tx.id in SarimLinkEngine.reconciledAdminSalesIds(state.settlements)) ||
+                  (tx.isRepSale && tx.id in SarimLinkEngine.reconciledRepSalesIds(state.settlements)) ||
+                  (tx.isRepReturn && tx.id in SarimLinkEngine.reconciledRepReturnIds(state.settlements)) ->
+                  "This customer has transactions reconciled in the Calculator. Delete those settlements first."
+                else -> SarimLinkEngine.getCollectionDeleteBlockReason(tx, state.rawMaterials)
+              }
+            }
+            if (blockMsg != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete Customer",
+                  body = blockMsg,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+              return@SarimDangerButton
+            }
+            val debtLine = if (kotlin.math.abs(existing.currentCredit) > 0.01) {
+              "\nCurrent debt: ${viewModel.redactMoney(SarimFormat.formatRs(existing.currentCredit))}"
+            } else ""
+            val txLine = if (custTxs.isNotEmpty()) "\nLinked transactions removed: ${custTxs.size}" else ""
             viewModel.showDialog(
               AppDialogRequest(
                 title = "Delete Customer",
-                body = "Move ${existing.name} to Recycle Bin?",
+                body = "Move ${existing.name} to Recycle Bin?$debtLine$txLine\n\nMoves to Recycle Bin for 90 days.",
                 tone = DialogTone.PERMANENT,
                 confirmLabel = "Delete",
                 onConfirm = {

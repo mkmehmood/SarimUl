@@ -86,13 +86,23 @@ object BackupRestoreLogic {
   }
 
   /** Merge-restore: records are merged, not overwritten. Deleted ids stay deleted; newer wins. */
-  fun planMergeRestore(local: Map<String, List<Rec>>, backup: Map<String, List<Rec>>, deleted: Set<String>): MergeRestorePlan {
+  fun planMergeRestore(
+    local: Map<String, List<Rec>>,
+    backup: Map<String, List<Rec>>,
+    deleted: Set<String>,
+    repNames: Set<String> = emptySet(),
+  ): MergeRestorePlan {
     var added = 0; var updated = 0; var skipped = 0
+    val lowerReps = repNames.map { it.lowercase() }.toSet()
+    val notRepName: (Rec) -> Boolean = { r -> str(r["name"]).isEmpty() || str(r["name"]).lowercase() !in lowerReps }
     val out = linkedMapOf<String, List<Rec>>()
     for (key in RECORD_KEYS) {
       val localById = local[key].orEmpty().associateBy { id(it) }
       val apply = mutableListOf<Rec>()
-      for (b in dedupeById(backup[key].orEmpty()).filter { id(it).isNotEmpty() && id(it) !in deleted }) {
+      val candidates = dedupeById(backup[key].orEmpty())
+        .filter { id(it).isNotEmpty() && id(it) !in deleted }
+        .let { list -> if (key == "customers" && lowerReps.isNotEmpty()) list.filter(notRepName) else list }
+      for (b in candidates) {
         val l = localById[id(b)]
         when {
           l == null -> { added++; apply += b }

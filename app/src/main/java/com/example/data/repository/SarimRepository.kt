@@ -36,6 +36,7 @@ class SarimRepository(
   val approvals: Flow<List<ApprovalRequestEntity>> = dao.observeApprovals()
   val accounts: Flow<List<AppAccountEntity>> = dao.observeAccounts()
   val allKvKeys: Flow<List<String>> = dao.observeAllKvKeys()
+  val categoryAndRepKv: Flow<List<KvStoreEntity>> = dao.observeCategoryAndRepKv()
 
   suspend fun initDefaults() {
     SarimSeedHelper.ensureStructuralDefaults(dao)
@@ -241,6 +242,10 @@ class SarimRepository(
         )
       )
     }
+  }
+
+  suspend fun saveCategoryIfNew(userKey: String, categoryName: String) {
+    appendCategoryToKv(userKey, categoryName)
   }
 
   private fun customerPhotoKey(c: CustomerEntity): String {
@@ -610,17 +615,68 @@ class SarimRepository(
     existingSupplier: PaymentEntityRecord?,
     newSupplierName: String,
     newSupplierPhone: String,
+    editingLotId: String? = null,
+    adjustSupplierPayable: Boolean = true,
   ) {
     val now = System.currentTimeMillis()
     val cleanMat = materialName.trim()
-    val allMats = dao.getAllRawMaterials().filter { !it.isDeleted }
-    val existingMat = allMats.firstOrNull { it.name.equals(cleanMat, ignoreCase = true) }
+    val existingLot = editingLotId?.let { id -> dao.getAllPurchases().firstOrNull { it.id == id && !it.isDeleted } }
     val totalKg = unitsBought * weightPerUnitKg
     val totalAmount = unitsBought * costPerUnit
+
+    if (existingLot != null) {
+      val oldMat = dao.getAllRawMaterials().firstOrNull { it.id == existingLot.materialId && !it.isDeleted }
+      if (oldMat != null) {
+        val sameMat = oldMat.name.equals(cleanMat, ignoreCase = true)
+        val projectedOldMatStock = oldMat.stockKg - existingLot.totalKg + if (sameMat) totalKg else 0.0
+        if (projectedOldMatStock < -1e-6) {
+          throw IllegalStateException(
+            "${SarimLinkEngine.round2(-projectedOldMatStock)} kg more of this purchase was already used in production than the new weight allows."
+          )
+        }
+        val remStock = (oldMat.stockKg - existingLot.totalKg).coerceAtLeast(0.0)
+        val remCollected = (oldMat.collectedKg - existingLot.totalKg).coerceAtLeast(0.0)
+        val remAvg = if (remStock > 0.0001) {
+          ((oldMat.stockKg * oldMat.avgCostPerKg - existingLot.totalAmount).coerceAtLeast(0.0)) / remStock
+        } else 0.0
+        val remPending = if (adjustSupplierPayable) {
+          (oldMat.pendingSupplierAmount - existingLot.totalPayable).coerceAtLeast(0.0)
+        } else oldMat.pendingSupplierAmount
+        val revertedMat = oldMat.copy(
+          stockKg = remStock,
+          collectedKg = remCollected,
+          avgCostPerKg = remAvg,
+          pendingSupplierAmount = remPending,
+          paymentStatus = if (remPending > 0.001) "pending" else "paid",
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertRawMaterial(revertedMat)
+        enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, revertedMat.id, SarimWebSchema.materialToMap(revertedMat))
+      }
+      if (adjustSupplierPayable && !existingLot.supplierId.isNullOrBlank() && existingLot.totalPayable > 0.0) {
+        dao.getAllPaymentEntities().firstOrNull { it.id == existingLot.supplierId && !it.isDeleted }?.let { sup ->
+          val revSup = sup.copy(
+            currentBalance = sup.currentBalance - existingLot.totalPayable,
+            syncPending = true,
+            updatedAt = now,
+          )
+          dao.upsertPaymentEntity(revSup)
+          enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, revSup.id, SarimWebSchema.entityToMap(revSup))
+        }
+      }
+    }
+
+    val allMats = dao.getAllRawMaterials().filter { !it.isDeleted }
+    val existingMat = allMats.firstOrNull { it.name.equals(cleanMat, ignoreCase = true) }
     val prevStock = existingMat?.stockKg ?: 0.0
     val prevAvg = existingMat?.avgCostPerKg ?: 0.0
     val newStock = prevStock + totalKg
     val newAvgCost = if (newStock > 0.0001) ((prevStock * prevAvg) + totalAmount) / newStock else 0.0
+
+    val applyPayableToLot = if (existingLot == null || adjustSupplierPayable) {
+      if (supplierMode != "NONE") totalAmount else 0.0
+    } else existingLot.totalPayable
 
     var supplierId = existingSupplier?.id
     var supplierNameFinal = existingSupplier?.name
@@ -630,7 +686,7 @@ class SarimRepository(
         phone = newSupplierPhone.trim(),
         openingType = "CREDIT",
         openingAmount = 0.0,
-        currentBalance = totalAmount,
+        currentBalance = applyPayableToLot,
         type = "payee",
         isSupplier = true,
       )
@@ -639,17 +695,23 @@ class SarimRepository(
       supplierId = newEnt.id
       supplierNameFinal = newEnt.name
     } else if (supplierMode == "EXISTING" && existingSupplier != null) {
-      val updatedSup = existingSupplier.copy(
-        currentBalance = existingSupplier.currentBalance + totalAmount,
+      val freshSup = dao.getAllPaymentEntities().firstOrNull { it.id == existingSupplier.id && !it.isDeleted } ?: existingSupplier
+      val balanceDelta = if (existingLot == null || adjustSupplierPayable) applyPayableToLot else 0.0
+      val updatedSup = freshSup.copy(
+        currentBalance = freshSup.currentBalance + balanceDelta,
         isSupplier = true,
         syncPending = true,
         updatedAt = now,
       )
       dao.upsertPaymentEntity(updatedSup)
       enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedSup.id, SarimWebSchema.entityToMap(updatedSup))
+    } else if (existingLot != null && !adjustSupplierPayable) {
+      supplierId = existingLot.supplierId
+      supplierNameFinal = existingLot.supplierName
     }
 
-    val newPending = (existingMat?.pendingSupplierAmount ?: 0.0) + if (supplierMode != "NONE") totalAmount else 0.0
+    val addedPendingToMat = if (existingLot == null || adjustSupplierPayable) applyPayableToLot else 0.0
+    val newPending = (existingMat?.pendingSupplierAmount ?: 0.0) + addedPendingToMat
     val matEntity = (existingMat ?: RawMaterialEntity(name = cleanMat)).copy(
       name = cleanMat,
       unitName = unitName.trim().ifBlank { "kg" },
@@ -668,7 +730,7 @@ class SarimRepository(
     dao.upsertRawMaterial(matEntity)
     enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, matEntity.id, SarimWebSchema.materialToMap(matEntity))
 
-    val purchaseLot = RawMaterialPurchaseEntity(
+    val purchaseLot = (existingLot ?: RawMaterialPurchaseEntity(
       materialId = matEntity.id,
       materialName = matEntity.name,
       dateEpoch = dateEpoch,
@@ -681,9 +743,27 @@ class SarimRepository(
       supplierMode = supplierMode,
       supplierId = supplierId,
       supplierName = supplierNameFinal,
-      paymentStatus = if (supplierMode != "NONE") "pending" else "paid",
-      totalPayable = if (supplierMode != "NONE") totalAmount else 0.0,
+      paymentStatus = if (applyPayableToLot > 0.001) "pending" else "paid",
+      totalPayable = applyPayableToLot,
       purchaseDate = SarimFormat.dateInput(dateEpoch),
+      updatedAt = now,
+    )).copy(
+      materialId = matEntity.id,
+      materialName = matEntity.name,
+      dateEpoch = dateEpoch,
+      unitName = matEntity.unitName,
+      unitsBought = unitsBought,
+      weightPerUnitKg = weightPerUnitKg,
+      costPerUnit = costPerUnit,
+      totalKg = totalKg,
+      totalAmount = totalAmount,
+      supplierMode = supplierMode,
+      supplierId = supplierId,
+      supplierName = supplierNameFinal,
+      paymentStatus = if (applyPayableToLot > 0.001) "pending" else "paid",
+      totalPayable = applyPayableToLot,
+      purchaseDate = SarimFormat.dateInput(dateEpoch),
+      syncPending = true,
       updatedAt = now,
     )
     dao.upsertPurchase(purchaseLot)
@@ -1852,19 +1932,13 @@ class SarimRepository(
   }
 
   private suspend fun assertPaymentTxCashDeleteAllowed(tx: PaymentTransactionEntity) {
-    if (tx.type == "PAYMENT_IN" && !tx.isPayable) {
-      val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
-        sales = dao.getAllSales(),
-        settlements = dao.getAllSettlements(),
-        payments = dao.getAllPaymentTransactions(),
-        factoryBatches = dao.getAllFactoryBatches(),
-      ).netCash
-      if (cashNow >= -0.01 && (cashNow - tx.amount) < -0.01) {
-        throw IllegalStateException(
-          "Cannot delete Payment IN (${SarimFormat.formatRs(tx.amount)}): net cash in hand would drop below zero."
-        )
-      }
-    }
+    SarimLinkEngine.getPaymentTxDeleteBlockReason(
+      tx = tx,
+      allTxs = dao.getAllPaymentTransactions(),
+      sales = dao.getAllSales(),
+      settlements = dao.getAllSettlements(),
+      factoryBatches = dao.getAllFactoryBatches(),
+    )?.let { msg -> throw IllegalStateException(msg) }
   }
 
   suspend fun deletePaymentEntity(id: String) {
@@ -1872,20 +1946,16 @@ class SarimRepository(
     val e = dao.getAllPaymentEntities().firstOrNull { it.id == id }
     val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_ent", tsMs = now)
 
-    val linkedTxs = dao.getAllPaymentTransactions().filter { !it.isDeleted && it.entityId == id }
-    val nonPayableInTotal = linkedTxs.filter { it.type == "PAYMENT_IN" && !it.isPayable }.sumOf { it.amount }
-    if (nonPayableInTotal > 0.01) {
-      val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+    val allTxs = dao.getAllPaymentTransactions()
+    val linkedTxs = allTxs.filter { !it.isDeleted && it.entityId == id }
+    if (e != null) {
+      SarimLinkEngine.getEntityDeleteBlockReason(
+        entity = e,
+        allTxs = allTxs,
         sales = dao.getAllSales(),
         settlements = dao.getAllSettlements(),
-        payments = dao.getAllPaymentTransactions(),
         factoryBatches = dao.getAllFactoryBatches(),
-      ).netCash
-      if (cashNow >= -0.01 && (cashNow - nonPayableInTotal) < -0.01) {
-        throw IllegalStateException(
-          "Cannot delete entity ${e?.name ?: id}: reversing received payments would drop net cash in hand below zero."
-        )
-      }
+      )?.let { msg -> throw IllegalStateException(msg) }
     }
 
     // Unlink supplier from raw materials & purchase lots
@@ -3050,6 +3120,13 @@ class SarimRepository(
   suspend fun deleteStockTransfer(id: String) {
     val now = System.currentTimeMillis()
     val tr = dao.getAllStockTransfers().firstOrNull { it.id == id } ?: return
+    SarimLinkEngine.getStockTransferDeleteBlockReason(
+      transfer = tr,
+      production = dao.getAllProductionEntries(),
+      sales = dao.getAllSales(),
+      stockTransfers = dao.getAllStockTransfers(),
+      settlements = dao.getAllSettlements(),
+    )?.let { msg -> throw IllegalStateException(msg) }
     val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_st", tsMs = now)
     val (outPair, inPair) = SarimWebSchema.stockTransferToOutInMaps(tr)
     dao.softDeleteStockTransfer(id, now)

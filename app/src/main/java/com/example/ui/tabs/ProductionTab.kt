@@ -15,14 +15,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.JsonCodecs
 import com.example.data.local.ProductionEntryEntity
 import com.example.data.model.TimePeriod
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.storeColorForKey
 import com.example.util.AppDialogRequest
+import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
@@ -111,8 +114,15 @@ fun ProductionTab(
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(if (editingEntryId == null) "New Entry" else "Edit Production Entry", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             if (editingEntryId != null) {
+              val hasEdits = editingOriginal == null ||
+                grossWeight != editingOriginal.grossWeightKg.toString() ||
+                containerWeight != editingOriginal.containerWeightKg.toString() ||
+                formulaUnits != editingOriginal.formulaUnitsUsed.toString() ||
+                selectedStoreKey != editingOriginal.storeKey
               TextButton(onClick = {
-                editingEntryId = null; grossWeight = ""; containerWeight = "0"; formulaUnits = "1"; attachedPhotos = emptyList()
+                viewModel.requestCancelEdit(hasEdits) {
+                  editingEntryId = null; grossWeight = ""; containerWeight = "0"; formulaUnits = "1"; attachedPhotos = emptyList()
+                }
               }) { Text("Cancel Edit", color = palette.amber) }
             }
           }
@@ -483,31 +493,85 @@ viewModel.launchSafely(
       extraActionLabel = if (photos.isNotEmpty()) "View ${photos.size} Photo(s)" else null,
       onExtraAction = if (photos.isNotEmpty()) { { viewModel.openPhotoViewer(photos, 0) } } else null,
       onEdit = {
-        editingEntryId = p.id
-        selectedDate = p.dateEpoch
-        selectedStoreKey = p.storeKey
-        grossWeight = p.grossWeightKg.toString()
-        containerWeight = p.containerWeightKg.toString()
-        formulaUnits = p.formulaUnitsUsed.toString()
-        attachedPhotos = photos
-        topView = ProdTopView.STORE_ENTRY
+        if (YearCloseMerge.isMergedId(p.id)) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", "Merged opening balance records cannot be edited directly.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          val retOwner = if (p.isReturn) state.settlements.firstOrNull { !it.isDeleted && it.returnEntryId == p.id } else null
+          if (retOwner != null) {
+            viewModel.showDialog(AppDialogRequest("Action Not Allowed", "This return belongs to ${retOwner.repName}'s Calculator settlement (${retOwner.dateStr}). Delete that Calculator settlement to edit or remove it.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+          } else {
+            editingEntryId = p.id
+            selectedDate = p.dateEpoch
+            selectedStoreKey = p.storeKey
+            grossWeight = p.grossWeightKg.toString()
+            containerWeight = p.containerWeightKg.toString()
+            formulaUnits = p.formulaUnitsUsed.toString()
+            attachedPhotos = photos
+            topView = ProdTopView.STORE_ENTRY
+          }
+        }
       },
       onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = "Delete Production Entry?",
-            body = "Store: ${p.storeName}\nNet Weight: ${SarimFormat.formatKg(p.netWeightKg)}\nMoved to Recycle Bin for 90 days.",
-            confirmLabel = "Delete",
-            onConfirm = {
-              viewModel.launchSafely(
-                errorTitle = "Delete Failed",
-                successMessage = "Production entry deleted",
-              ) {
-                viewModel.repository.deleteProductionEntry(p.id)
-              }
-            },
-          )
+        val blockReason = SarimLinkEngine.getProductionDeleteBlockReason(
+          entry = p,
+          production = state.productionEntries,
+          settlements = state.settlements,
+          stockTransfers = state.stockTransfers,
+          sales = state.sales,
         )
+        if (blockReason != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockReason, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          val dateKey = SarimFormat.dateInput(p.dateEpoch)
+          val salesOnDate = state.sales.count {
+            !it.isDeleted && !it.isRepSale && !it.isRepReturn && !it.isRepTransfer &&
+              it.mode == "SALE" && it.storeKey.equals(p.storeKey, ignoreCase = true) &&
+              SarimFormat.dateInput(it.dateEpoch) == dateKey
+          }
+          val msg = buildString {
+            if (p.isReturn) {
+              append("Remove this stock return record?")
+              append("\nStore: ${p.storeName}")
+              append("\nDate: $dateKey")
+              append("\nQty Returned: ${SarimFormat.formatKg(p.netWeightKg)}")
+              if (!p.returnLogId.isNullOrBlank()) {
+                append("\n\n↩ This will decrease available stock by ${SarimFormat.formatKg(p.netWeightKg)} on $dateKey (its return log is removed with it).")
+              } else {
+                append("\n\nNo return log is attached to this record.")
+              }
+              if (salesOnDate > 0) append("\n\n⚠ $salesOnDate sale(s) exist on this date — those records may be affected.")
+            } else {
+              append("Permanently delete this production record?")
+              append("\nStore: ${p.storeName}")
+              append("\nDate: $dateKey")
+              append("\nNet Qty: ${SarimFormat.formatKg(p.netWeightKg)}")
+              if (p.grossWeightKg > 0.0) {
+                append("\nGross / Tare: ${SarimFormat.formatKg(p.grossWeightKg)} / ${SarimFormat.formatKg(p.containerWeightKg)}")
+              }
+              append("\n\n↩ ${SarimFormat.formatKg(p.netWeightKg)} will be removed from $dateKey inventory.")
+              if (salesOnDate > 0) {
+                append("\n\n⚠ $salesOnDate sale(s) on this date for ${p.storeName} will remain on record, but available stock will drop.")
+              }
+            }
+            append("\n\nThis cannot be undone.")
+          }
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = if (p.isReturn) "Remove Return" else "Delete Production",
+              body = msg,
+              tone = DialogTone.PERMANENT,
+              confirmLabel = if (p.isReturn) "Remove" else "Delete",
+              onConfirm = {
+                viewModel.launchSafely(
+                  errorTitle = "Delete Failed",
+                  successMessage = if (p.isReturn) "Return removed" else "Production entry deleted",
+                ) {
+                  viewModel.repository.deleteProductionEntry(p.id)
+                }
+              },
+            )
+          )
+        }
       },
     )
   }

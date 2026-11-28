@@ -427,4 +427,102 @@ class SarimLinksAndGuardsTest {
     assertEquals(savedCalc.id, dao.getAllSales().first { it.id == deliv.id }.usedInCalcId)
     assertFalse(dao.getAllSales().first { it.id == trSaleId }.isDeleted)
   }
+
+  @Test
+  fun extendedGuards_stockTransferProductionEntityRepReturnPurchaseEditAndRecyclePreview() = runBlocking {
+    val now = System.currentTimeMillis()
+    // 1. Purchase lot edit: stock consumption guard & adjustSupplierPayable = false vs true
+    repo.savePaymentEntity(null, "VendorPay", "03001112233", "Bank", "", "CREDIT", 0.0, "")
+    val vendor = dao.getAllPaymentEntities().first { it.name == "VendorPay" && !it.isDeleted }
+    repo.saveRawMaterialPurchase("Supari", now, "bag", 2.0, 50.0, 1000.0, "EXISTING", vendor, "", "")
+    val supari = dao.getAllRawMaterials().first { it.name == "Supari" && !it.isDeleted }
+    val lot = dao.getAllPurchases().first { it.materialId == supari.id && !it.isDeleted }
+    assertEquals(2000.0, dao.getAllPaymentEntities().first { it.id == vendor.id }.currentBalance, 0.01)
+
+    // Simulate 80 kg consumed so 20 kg remains -> editing lot down to 60 kg (short by 20 kg) must fail
+    dao.upsertRawMaterial(supari.copy(stockKg = 20.0))
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking {
+        repo.saveRawMaterialPurchase("Supari", now, "bag", 1.2, 50.0, 1000.0, "EXISTING", vendor, "", "", editingLotId = lot.id, adjustSupplierPayable = true)
+      }
+    }
+    // Restore 100 kg stock and edit lot to 3 bags @ 1200 (3600 total) keeping old payable
+    dao.upsertRawMaterial(supari.copy(stockKg = 100.0))
+    repo.saveRawMaterialPurchase("Supari", now, "bag", 3.0, 50.0, 1200.0, "EXISTING", vendor, "", "", editingLotId = lot.id, adjustSupplierPayable = false)
+    assertEquals(2000.0, dao.getAllPaymentEntities().first { it.id == vendor.id }.currentBalance, 0.01)
+    assertEquals(150.0, dao.getAllRawMaterials().first { it.id == supari.id }.stockKg, 0.01)
+
+    // Edit again with adjustSupplierPayable = true -> supplier balance changes from 2000 - 2000 (old lot totalPayable) + 4000 = 4000
+    repo.saveRawMaterialPurchase("Supari", now, "bag", 4.0, 50.0, 1000.0, "EXISTING", vendor, "", "", editingLotId = lot.id, adjustSupplierPayable = true)
+    assertEquals(4000.0, dao.getAllPaymentEntities().first { it.id == vendor.id }.currentBalance, 0.01)
+
+    // 2. Entity delete block when non-payable PAYMENT_IN reversal would drop Cash in Hand below zero
+    repo.savePaymentEntity(null, "CashPartner", "03009998877", "Cash", "", "CREDIT", 0.0, "")
+    val partner = dao.getAllPaymentEntities().first { it.name == "CashPartner" && !it.isDeleted }
+    repo.savePaymentTransaction(null, now, "PAYMENT_IN", partner.name, 5000.0, "", "", false)
+    assertNull(SarimLinkEngine.getEntityDeleteBlockReason(partner, dao.getAllPaymentTransactions(), dao.getAllSales(), dao.getAllSettlements(), dao.getAllFactoryBatches()))
+    // Spend all cash so reversing the 5000 IN drops Cash in Hand negative
+    repo.savePaymentTransaction(null, now, "EXPENSE", "Equipment", 5000.0, "", "", false)
+    assertNotNull(SarimLinkEngine.getEntityDeleteBlockReason(partner, dao.getAllPaymentTransactions(), dao.getAllSales(), dao.getAllSettlements(), dao.getAllFactoryBatches()))
+
+    // 3. Stock transfer, production delete, and rep return allowance guards
+    repo.saveFormula(null, "MixS", 50.0, 1.0, listOf(FormulaIngredient("MATERIAL", supari.id, supari.name, 10.0)))
+    val formula = dao.getAllFormulas().first { it.name == "MIXS" && !it.isDeleted }
+    repo.saveStore("S1", formula.id, 300.0)
+    repo.saveStore("S2", formula.id, 320.0)
+    val s1 = dao.getAllStores().first { it.storeKey == "s1" }
+    val s2 = dao.getAllStores().first { it.storeKey == "s2" }
+    repo.saveFactoryBatch(now, formula, 5.0)
+    repo.saveProductionEntry(null, now, s1, dao.getAllFormulas().first { it.id == formula.id }, 52.0, 2.0, 1.0, 100.0, emptyList())
+    val prodS1 = dao.getAllProductionEntries().first { !it.isDeleted && it.storeKey == "s1" }
+
+    // Transfer 20 kg from s1 -> s2, then sell 15 kg from s2
+    val transfer = StockTransferEntity(
+      id = SarimUuid.generateUUID("st", tsMs = now),
+      dateEpoch = now,
+      dateStr = SarimFormat.dateInput(now),
+      fromStoreKey = "s1",
+      fromStoreName = "S1",
+      toStoreKey = "s2",
+      toStoreName = "S2",
+      quantityKg = 20.0,
+      outDocId = SarimUuid.generateUUID("p_out", tsMs = now),
+      inDocId = SarimUuid.generateUUID("p_in", tsMs = now),
+    )
+    dao.upsertStockTransfer(transfer)
+    repo.saveSaleOrCollection(null, now, "SALE", "C_S2", "", "Direct", s2, 15.0, 100.0, "CASH", 0.0, 0.0, 0.0, false, false)
+
+    // Deleting stock transfer must be blocked because s2 already sold 15 kg
+    assertNotNull(
+      SarimLinkEngine.getStockTransferDeleteBlockReason(
+        transfer, dao.getAllProductionEntries(), dao.getAllSales(), dao.getAllStockTransfers(), dao.getAllSettlements()
+      )
+    )
+    // Deleting production entry in s1 must be blocked because 20 kg was transferred out (and remaining would go negative)
+    repo.saveSaleOrCollection(null, now, "SALE", "C_S1", "", "Direct", s1, 40.0, 100.0, "CASH", 0.0, 0.0, 0.0, false, false)
+    assertNotNull(
+      SarimLinkEngine.getProductionDeleteBlockReason(
+        prodS1, dao.getAllProductionEntries(), dao.getAllSettlements(), dao.getAllStockTransfers(), dao.getAllSales()
+      )
+    )
+
+    // Rep return allowance
+    repo.saveCustomer(null, "RepZ", "", "", 0.0, null, "", "", false, "")
+    repo.saveSaleOrCollection(null, now, "SALE", "RepZ", "", "RepZ", s1, 10.0, 100.0, "CREDIT", 0.0, 0.0, 0.0, false, false)
+    val ret1 = repo.saveSaleOrCollection(null, now, "REP_RETURN", "RepZ", "", "RepZ", null, 0.0, 0.0, "REP_RETURN", 0.0, 2.0, 3.0, false, false)
+    val (delivered, pendingRet, remaining) = SarimLinkEngine.getRepReturnAllowance("RepZ", null, dao.getAllSales(), dao.getAllSettlements())
+    assertEquals(10.0, delivered, 0.01)
+    assertEquals(5.0, pendingRet, 0.01)
+    assertEquals(5.0, remaining, 0.01)
+    val (_, excludingSelf, remainExcl) = SarimLinkEngine.getRepReturnAllowance("RepZ", ret1.id, dao.getAllSales(), dao.getAllSettlements())
+    assertEquals(0.0, excludingSelf, 0.01)
+    assertEquals(10.0, remainExcl, 0.01)
+
+    // Preview recycle restore for batch without stock vs with stock
+    val preview = restoreEngine.previewRecycleRestore(
+      RecycleBinRecord(lot.id, "Inventory", "Purchase", "", "", now, "PURCHASE_LOT")
+    )
+    assertNull(preview.blockedReason)
+    assertTrue(preview.groupSize >= 1)
+  }
 }

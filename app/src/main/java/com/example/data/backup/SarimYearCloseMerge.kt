@@ -41,7 +41,9 @@ object YearCloseMerge {
 
   private val MERGED_ID = Regex("^(prod|ret|sale|calc|pay|fprod|exp)-merged-")
 
-  fun isMerged(r: Rec): Boolean = r["isMerged"] == true || MERGED_ID.containsMatchIn(str(r["id"]))
+  fun isMergedId(id: String?): Boolean = !id.isNullOrBlank() && MERGED_ID.containsMatchIn(id)
+
+  fun isMerged(r: Rec): Boolean = r["isMerged"] == true || isMergedId(str(r["id"]))
 
   internal fun num(v: Any?): Double = when (v) {
     is Number -> v.toDouble()

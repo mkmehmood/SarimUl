@@ -32,6 +32,7 @@ import com.example.data.model.StandaloneScreen
 import com.example.data.repository.FormRow
 import com.example.data.repository.FormulaCalculator
 import com.example.data.repository.SarimFormulaEngine
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -440,23 +441,33 @@ fun FormulaEditScreen(
           text = "Delete Formula",
           modifier = Modifier.weight(1f),
           onClick = {
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Delete Formula",
-                body = "Move formula ${existing.name} to Recycle Bin?",
-                tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete",
-                onConfirm = {
-                  viewModel.launchSafely(
-                    errorTitle = "Delete Formula Failed",
-                    successMessage = "Deleted formula ${existing.name}",
-                    onSuccess = { viewModel.closeStandalone() },
-                  ) {
-                    viewModel.repository.deleteFormula(existing.id)
-                  }
-                },
+            val blockMsg = SarimLinkEngine.getFormulaDeleteBlockReason(existing, state.stores, state.formulas)
+            if (blockMsg != null) {
+              viewModel.showDialog(AppDialogRequest("Cannot Delete Formula", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+            } else {
+              val batchCount = state.factoryBatches.count { !it.isDeleted && it.formulaId == existing.id }
+              val prodCount = state.productionEntries.count { !it.isDeleted && it.formulaId == existing.id }
+              val historyNote = if (batchCount > 0 || prodCount > 0) {
+                "\n\nExisting records ($batchCount factory batch(es), $prodCount production entry(s)) will keep their saved names."
+              } else ""
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Formula",
+                  body = "Move formula ${existing.name} to Recycle Bin?$historyNote",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Delete Formula Failed",
+                      successMessage = "Deleted formula ${existing.name}",
+                      onSuccess = { viewModel.closeStandalone() },
+                    ) {
+                      viewModel.repository.deleteFormula(existing.id)
+                    }
+                  },
+                )
               )
-            )
+            }
           },
         )
       }

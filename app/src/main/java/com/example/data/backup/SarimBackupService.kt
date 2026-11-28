@@ -1,5 +1,7 @@
 package com.example.data.backup
 
+import com.example.data.local.DeletionTombstoneEntity
+import com.example.data.local.KvStoreEntity
 import com.example.data.local.SarimDao
 import com.example.data.model.SarimUuid
 import com.example.data.remote.FirebaseSyncManager
@@ -46,6 +48,19 @@ class SarimBackupService(
   private val dao: SarimDao,
   private val syncManager: FirebaseSyncManager,
 ) {
+  companion object {
+    /**
+     * Web parity (`unifiedRestore`): strictly block any unencrypted or non-`.gznd` import.
+     * Both filename (when known) and the binary `GZND_ENC_V4` magic header are required.
+     */
+    fun isAllowedEncryptedUpload(fileName: String?, bytes: ByteArray): Boolean {
+      val cleanName = fileName?.trim().orEmpty()
+      if (cleanName.isNotEmpty() && !cleanName.endsWith(".gznd", ignoreCase = true)) {
+        return false
+      }
+      return SarimBackupCrypto.looksEncrypted(bytes)
+    }
+  }
   // ------------------------------------------------------------------ small helpers
 
   private fun JSONArray?.records(): List<Rec> = SarimWebPullMappers.jsonObjectToMapList(this)
@@ -152,24 +167,41 @@ class SarimBackupService(
     return BackupPreview(root, isYearClose, meta?.optLong("createdAt") ?: 0L, total, postClose)
   }
 
-  /** Older Android builds wrote plain JSON; those can still be merge-restored (never year-close reversals). */
+  /** Plain/unencrypted JSON restore is strictly blocked for security & web parity. */
+  @Suppress("UNUSED_PARAMETER")
   suspend fun openPlainBackup(file: ByteArray): BackupPreview {
-    val root = try {
-      JSONObject(String(file, Charsets.UTF_8))
-    } catch (_: Exception) {
-      throw BackupCryptoException("INVALID_FORMAT")
-    }
-    val arrays = root.keys().asSequence().filter { root.optJSONArray(it) != null }.toSet()
-    if (!BackupRestoreLogic.isSupportedBackup(arrays)) throw IllegalArgumentException("This backup file is not supported.")
-    val total = BackupRestoreLogic.RECORD_KEYS.sumOf { root.optJSONArray(it)?.length() ?: 0 }
-    return BackupPreview(root, isYearClose = false, createdAt = root.optLong("exportedAt"), totalRecords = total, postCloseDeletions = 0)
+    throw BackupCryptoException("INVALID_FORMAT")
   }
 
   /** Merge-restore: records are merged, not overwritten; deleted records stay deleted; newer wins. */
   suspend fun applyMergeRestore(preview: BackupPreview): RestoreSummary {
     val root = preview.json
-    val deleted = tombstoneIds() + root.optJSONArray("deleted").strings()
-    val plan = BackupRestoreLogic.planMergeRestore(recordMaps(exportRoot()), recordMaps(root), deleted)
+    val now = System.currentTimeMillis()
+    val localTombstones = tombstoneIds()
+    val incomingDeleted = root.optJSONArray("deleted").strings()
+    val deleted = localTombstones + incomingDeleted
+    val repNames = repository.getSalesReps().toSet()
+    val plan = BackupRestoreLogic.planMergeRestore(
+      local = recordMaps(exportRoot()),
+      backup = recordMaps(root),
+      deleted = deleted,
+      repNames = repNames,
+    )
+
+    // Persist any deletion tombstones carried by the backup so deleted records stay deleted everywhere.
+    incomingDeleted.filter { it.isNotBlank() && it !in localTombstones }.forEach { delId ->
+      dao.upsertDeletion(
+        DeletionTombstoneEntity(
+          id = delId,
+          recordId = delId,
+          collection = "unknown",
+          recordType = "backup_tombstone",
+          deletedAt = now,
+          expiresAt = now + SarimWebSchema.TOMBSTONE_EXPIRY_MS,
+          syncedToCloud = false,
+        )
+      )
+    }
 
     val filtered = JSONObject()
     plan.toApply.forEach { (k, v) -> filtered.put(k, toJsonArray(v)) }
@@ -226,6 +258,7 @@ class SarimBackupService(
       }
     }
     syncRepo.applyFactoryFeeds(root)
+    syncRepo.mergeBackupPhotos(root, markPending = true)
     root.optJSONObject("settings")?.let { repository.applyBackupSettings(it) }
     return RestoreSummary(plan.added, plan.updated, plan.skipped, isYearClose = false)
   }
@@ -233,17 +266,33 @@ class SarimBackupService(
   /** Reverse a financial-year close using the pre-close backup (web `_doYearCloseRestore`). */
   suspend fun applyYearCloseRestore(preview: BackupPreview, honourDeletions: Boolean, online: Boolean): RestoreSummary {
     val root = preview.json
+    val now = System.currentTimeMillis()
     val deleted = tombstoneIds() + root.optJSONArray("deleted").strings()
     val current = recordMaps(exportRoot())
     val backup = recordMaps(root)
+    val repNames = repository.getSalesReps().toSet()
     val plan = BackupRestoreLogic.planYearCloseRestore(
       current = current,
       backup = backup,
       deleted = deleted,
       honourPostCloseDeletions = honourDeletions,
       backupCreatedAt = preview.createdAt,
-      repNames = emptySet(),
+      repNames = repNames,
     )
+
+    // Web `_doYearCloseRestore`: tombstone all merged FY records so cloud/other devices delete them too.
+    val newTombstones = plan.mergedToTombstone.filter { it.isNotBlank() }.map { mergedId ->
+      DeletionTombstoneEntity(
+        id = mergedId,
+        recordId = mergedId,
+        collection = "unknown",
+        recordType = "year_close_merge_reversal",
+        deletedAt = now,
+        expiresAt = now + SarimWebSchema.TOMBSTONE_EXPIRY_MS,
+        syncedToCloud = false,
+      )
+    }
+    newTombstones.forEach { dao.upsertDeletion(it) }
 
     val transactional = YearCloseMerge.COLLECTIONS
     val reference = BackupRestoreLogic.RECORD_KEYS.filter { it !in transactional }
@@ -251,6 +300,66 @@ class SarimBackupService(
     syncRepo.restoreBackupJson(importJson(plan.replaceData, transactional), markPending = !online).getOrThrow()
     // clients / customers / inventory / entities are plain upserts and always go through normal sync
     syncRepo.restoreBackupJson(importJson(plan.replaceData, reference), markPending = true).getOrThrow()
+
+    // Non-transactional singletons & lists: replace cleanly matching web `_doYearCloseRestore`.
+    val singletonRestore = JSONObject()
+    root.optJSONArray(SarimWebSchema.COL_STORES)?.takeIf { it.length() > 0 }?.let { storesArr ->
+      dao.clearStores()
+      singletonRestore.put(SarimWebSchema.COL_STORES, storesArr)
+      dao.upsertKv(KvStoreEntity("stores_timestamp", "stores_timestamp", collection = SarimWebSchema.COL_STORES, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
+    }
+    root.optJSONArray(SarimWebSchema.COL_FORMULAS)?.let { formArr ->
+      dao.clearFormulas()
+      dao.clearMixCalcs()
+      singletonRestore.put(SarimWebSchema.COL_FORMULAS, formArr)
+      listOf("defaults", "costs", "adjustment", "tracking").forEach { k ->
+        root.optJSONObject(k)?.let { singletonRestore.put(k, it) }
+      }
+      dao.upsertKv(KvStoreEntity("formulas_timestamp", "formulas_timestamp", collection = SarimWebSchema.COL_FORMULAS, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
+    }
+    val backupLedger = root.optJSONArray(SarimWebSchema.COL_DAILY_LEDGER) ?: root.optJSONArray("ledger")
+    if (backupLedger != null) {
+      val currentLedger = dao.getAllDailyLedger()
+      val allDel = deleted + plan.mergedToTombstone
+      val combinedLedger = JSONArray()
+      val backupLedgerIds = HashSet<String>()
+      for (i in 0 until backupLedger.length()) {
+        val o = backupLedger.optJSONObject(i) ?: continue
+        val lid = o.optString("id")
+        if (lid.isNotBlank() && (!honourDeletions || lid !in allDel)) {
+          backupLedgerIds += lid
+          combinedLedger.put(o)
+        }
+      }
+      currentLedger.filter {
+        !it.isDeleted && it.createdAt > preview.createdAt && it.id !in backupLedgerIds && (!honourDeletions || it.id !in allDel)
+      }.forEach { post ->
+        combinedLedger.put(JSONObject(SarimWebSchema.dailyLedgerEntryToMap(post)))
+      }
+      dao.clearDailyLedger()
+      singletonRestore.put(SarimWebSchema.COL_DAILY_LEDGER, combinedLedger)
+      dao.upsertKv(KvStoreEntity("daily_ledger_timestamp", "daily_ledger_timestamp", collection = SarimWebSchema.COL_DAILY_LEDGER, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
+    }
+    if (singletonRestore.length() > 0) {
+      syncRepo.restoreBackupJson(singletonRestore.toString(), markPending = true).getOrThrow()
+    }
+    syncRepo.applyFactoryFeeds(root)
+
+    for (listKey in listOf("categories", "field_expense_categories", "commission_categories", "reps")) {
+      root.optJSONArray(listKey)?.let { arr ->
+        val incoming = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+        syncRepo.replaceKvStringList(listKey, incoming)
+      }
+    }
+    syncRepo.mergeBackupPhotos(root, markPending = true)
+
+    root.optJSONObject("settings")?.let { repository.applyBackupSettings(it) }
+    val snap = root.optJSONObject("_meta")?.optJSONObject("fyCloseSnapshot")
+    val (currentCount, _, _) = repository.readYearCloseMeta()
+    val count = if (snap != null && snap.has("fyCloseCount")) snap.optInt("fyCloseCount") else maxOf(0, currentCount - 1)
+    val lastAt = if (snap != null && snap.has("lastYearClosedAt") && !snap.isNull("lastYearClosedAt")) snap.optLong("lastYearClosedAt") else null
+    val lastDate = snap?.optString("lastYearClosedDate")?.takeIf { it.isNotBlank() && it != "null" }
+    repository.restoreYearCloseMeta(count, lastAt, lastDate)
 
     if (online) {
       var failed = false
@@ -261,18 +370,42 @@ class SarimBackupService(
         if (remove.isEmpty() && keep.isEmpty()) continue
         if (syncManager.commitCollectionChanges(col, remove, keep).isFailure) failed = true
       }
+      if (newTombstones.isNotEmpty() && syncManager.pushDeletionTombstones(newTombstones).isSuccess) {
+        newTombstones.forEach { dao.upsertDeletion(it.copy(syncedToCloud = true)) }
+      }
+      runCatching {
+        val settingsMap = SarimWebSchema.jsonObjectToMap(repository.readSettingsObject())
+        syncManager.pushSingletonDoc(
+          SarimWebSchema.COL_SETTINGS,
+          "config",
+          mapOf("settings" to settingsMap, "settings_timestamp" to now),
+        )
+        syncManager.pushSingletonDoc(
+          SarimWebSchema.COL_STORES,
+          "list",
+          SarimWebSchema.storesListDocPayload(dao.getAllStores(), now),
+        )
+        syncManager.pushSingletonDoc(
+          SarimWebSchema.COL_FORMULAS,
+          "config",
+          SarimWebSchema.formulasConfigDocPayload(
+            dao.getAllFormulas(),
+            dao.getAllMixCalcs(),
+            dao.getAllRawMaterials().associateBy { it.id },
+            now,
+          ),
+        )
+        syncManager.pushSingletonDoc(
+          SarimWebSchema.COL_DAILY_LEDGER,
+          "entries",
+          SarimWebSchema.dailyLedgerDocPayload(dao.getAllDailyLedger(), now),
+        )
+      }
       if (failed) {
         // Fall back to the regular outbox so the restored records still reach the cloud.
         syncRepo.restoreBackupJson(importJson(plan.replaceData, transactional), markPending = true)
       }
     }
-
-    val snap = root.optJSONObject("_meta")?.optJSONObject("fyCloseSnapshot")
-    val (currentCount, _, _) = repository.readYearCloseMeta()
-    val count = if (snap != null && snap.has("fyCloseCount")) snap.optInt("fyCloseCount") else maxOf(0, currentCount - 1)
-    val lastAt = if (snap != null && snap.has("lastYearClosedAt") && !snap.isNull("lastYearClosedAt")) snap.optLong("lastYearClosedAt") else null
-    val lastDate = snap?.optString("lastYearClosedDate")?.takeIf { it.isNotBlank() && it != "null" }
-    repository.restoreYearCloseMeta(count, lastAt, lastDate)
 
     val restored = plan.replaceData.values.sumOf { it.size }
     return RestoreSummary(restored, 0, 0, isYearClose = true)

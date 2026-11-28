@@ -8,6 +8,12 @@ import com.example.util.SarimFormat
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class RecycleRestorePreview(
+  val blockedReason: String? = null,
+  val groupSize: Int = 1,
+  val notes: List<String> = emptyList(),
+)
+
 class SarimRecycleRestoreEngine(
   private val dao: SarimDao,
   private val uuidRegistry: UuidSyncRegistry,
@@ -18,6 +24,51 @@ class SarimRecycleRestoreEngine(
     var touchedFormulas: Boolean = false,
     val repricingDays: LinkedHashSet<Pair<String, String>> = linkedSetOf(),
   )
+
+  suspend fun previewRecycleRestore(item: RecycleBinRecord): RecycleRestorePreview {
+    val targets = collectRestoreTargets(item)
+    val ordered = targets.entries.sortedWith(
+      compareBy<Map.Entry<Pair<String, String>, Boolean>> { SarimLinkEngine.restoreSortOrder(it.key.first, it.value) }
+        .thenBy { it.key.second }
+    ).map { it.key }
+    try {
+      preValidateRestoreTargets(ordered, targets.keys)
+    } catch (e: Exception) {
+      return RecycleRestorePreview(
+        blockedReason = e.message ?: "Restore is blocked.",
+        groupSize = ordered.size.coerceAtLeast(1),
+      )
+    }
+    val notes = mutableListOf<String>()
+    if (ordered.size > 1) {
+      notes += "This will also restore ${ordered.size - 1} linked record(s) deleted together."
+    }
+    when (item.entityType) {
+      "STOCK_TRANSFER" -> notes += "Restores both Stock OUT and Stock IN transfer entries together."
+      "PAYMENT_TRANSFER" -> notes += "Restores both Payment OUT and Payment IN entries and updates entity balances."
+      "SETTLEMENT" -> {
+        dao.getAllSettlements().firstOrNull { it.id == item.id }?.let { s ->
+          if (s.expiredKg > 0.0 && s.expiredApplied) {
+            notes += "Re-adds ${SarimFormat.formatKg(s.expiredKg)} to CHORA raw material stock."
+          }
+          val linkedTotal = JsonCodecs.decodeStrings(s.linkedSalesIdsJson).size +
+            JsonCodecs.decodeStrings(s.linkedRepSalesIdsJson).size
+          if (linkedTotal > 0) {
+            notes += "Re-links $linkedTotal sales transaction(s) and return entries to this settlement."
+          }
+          if (s.addToLedger) {
+            notes += "Restores linked Daily Ledger entries."
+          }
+        }
+      }
+      "FORMULA" -> notes += "Saved Batching / Correction calculations deleted with this formula will also be restored."
+    }
+    return RecycleRestorePreview(
+      blockedReason = null,
+      groupSize = ordered.size.coerceAtLeast(1),
+      notes = notes,
+    )
+  }
 
   suspend fun removeTombstoneAndEnqueueCloudDelete(docId: String, now: Long) {
     dao.deleteDeletion(docId)

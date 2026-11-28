@@ -101,6 +101,9 @@ interface SarimDao {
   @Query("SELECT full_key FROM kv_store ORDER BY full_key ASC")
   fun observeAllKvKeys(): Flow<List<String>>
 
+  @Query("SELECT * FROM kv_store WHERE user_key IN ('categories', 'field_expense_categories', 'commission_categories', 'reps')")
+  fun observeCategoryAndRepKv(): Flow<List<KvStoreEntity>>
+
   @Query("SELECT full_key AS fullKey, user_key AS userKey, uid, collection, row_type AS rowType, encrypted, ts, created_at AS createdAt, COALESCE(LENGTH(value), 0) AS charLen, COALESCE(LENGTH(CAST(value AS BLOB)), 0) AS byteLen, (value IS NULL) AS isValueNull FROM kv_store ORDER BY full_key ASC")
   suspend fun getKvMetaAll(): List<KvMetaRow>
 

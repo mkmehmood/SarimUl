@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.SaleTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
@@ -192,10 +193,20 @@ fun SalesTab(
             fontSize = 16.sp,
           )
           if (editingSaleId != null) {
+            val origSale = state.sales.firstOrNull { it.id == editingSaleId }
+            val hasEdits = origSale == null ||
+              customerName.trim() != origSale.customerName ||
+              quantityText != origSale.quantityKg.toString() ||
+              (SarimFormat.parseSafeDouble(amountReceivedText) ?: 0.0) != displaySaleAmount(origSale) ||
+              (SarimFormat.parseSafeDouble(expiredQtyText) ?: 0.0) != origSale.expiredQtyKg ||
+              (SarimFormat.parseSafeDouble(repExpiredQtyText) ?: 0.0) != origSale.expiredQtyKg ||
+              (SarimFormat.parseSafeDouble(repReturnedQtyText) ?: 0.0) != origSale.returnedQtyKg
             TextButton(
               onClick = {
-                editingSaleId = null; customerName = ""; newCustPhone = ""; quantityText = ""
-                amountReceivedText = ""; expiredQtyText = ""; repExpiredQtyText = ""; repReturnedQtyText = ""
+                viewModel.requestCancelEdit(hasEdits) {
+                  editingSaleId = null; customerName = ""; newCustPhone = ""; quantityText = ""
+                  amountReceivedText = ""; expiredQtyText = ""; repExpiredQtyText = ""; repReturnedQtyText = ""
+                }
               },
               modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("btn_cancel_edit_sale"),
             ) { Text("Cancel Edit", color = palette.amber) }
@@ -205,16 +216,23 @@ fun SalesTab(
           SarimCallout("Editing entry · Saving updates the original record.", palette.amber)
         }
 
+        val lockRepReturnIdentity = editingSaleId != null && mode == SalesMode.REP_RETURN
         SarimToggleGroup(
           options = availableModes,
           selected = if (mode in availableModes) mode else availableModes.first(),
           labelOf = { it.label },
-          onSelect = { mode = it },
+          onSelect = { if (editingSaleId == null) mode = it },
           testTagPrefix = "sales_mode",
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
           Box(modifier = Modifier.weight(1f)) {
-            SarimDatePickerField("Date", dateEpoch, onDateSelected = { dateEpoch = it }, testTag = "cust_date")
+            SarimDatePickerField("Date", dateEpoch, onDateSelected = {
+              if (lockRepReturnIdentity) {
+                viewModel.showDialog(AppDialogRequest("Action Not Allowed", "The rep and date of a return cannot be changed. Delete it and enter it again.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+              } else {
+                dateEpoch = it
+              }
+            }, testTag = "cust_date")
           }
           Box(modifier = Modifier.weight(1f)) {
             if (isRepSelected) {
@@ -253,7 +271,13 @@ fun SalesTab(
                 .defaultMinSize(minHeight = 48.dp)
                 .clip(RoundedCornerShape(50))
                 .testTag("sales_rep_chip_${rep.lowercase().replace(" ", "_")}")
-                .clickable { selectedRep = rep },
+                .clickable {
+                  if (lockRepReturnIdentity && !sel) {
+                    viewModel.showDialog(AppDialogRequest("Action Not Allowed", "The rep and date of a return cannot be changed. Delete it and enter it again.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  } else {
+                    selectedRep = rep
+                  }
+                },
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Text(rep, color = if (sel) palette.green else palette.textMuted, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
@@ -530,36 +554,52 @@ fun SalesTab(
                   return@SarimPrimaryButton
                 }
                 val effPayment = if (isRepSelected) PaymentChoice.CREDIT else paymentChoice
-                viewModel.confirmSave(
-"Transaction",
-listOf("Customer" to (if (isRepSelected) selectedRep else customerName), "Store" to store.name, "Quantity" to SarimFormat.formatKg(qtyNum), "Payment" to effPayment.name, "Date" to SarimFormat.formatDate(dateEpoch)),
-isUpdate = editingSaleId != null,
-shareAfterSave = if (isRepSelected) null else ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
-) {
-viewModel.launchSafely(
-                  errorTitle = "Save Sale Failed",
-                  successMessage = if (editingSaleId == null) "Sale saved" else "Sale updated",
-                  onSuccess = { editingSaleId = null; quantityText = ""; customerName = ""; newCustPhone = "" },
-                ) {
-                  viewModel.repository.saveSaleOrCollection(
-                    editingId = editingSaleId,
-                    dateEpoch = dateEpoch,
-                    mode = "SALE",
-                    customerName = if (isRepSelected) selectedRep else customerName,
-                    newCustomerPhone = if (isRepSelected) "" else newCustPhone,
-                    repName = selectedRep,
-                    store = store,
-                    quantityKg = qtyNum,
-                    costPerKg = unitCostKg,
-                    paymentType = effPayment.name,
-                    amountReceived = if (effPayment == PaymentChoice.CASH) totalValue else 0.0,
-                    expiredQtyKg = 0.0,
-                    returnedQtyKg = 0.0,
-                    addToLedger = !isRepSelected && effPayment == PaymentChoice.CASH && saleAddToLedger,
-                    isRepSale = false,
+                val existingCredit = if (!isRepSelected && effPayment == PaymentChoice.CREDIT && customerName.isNotBlank()) {
+                  SarimLinkEngine.partyOutstanding(
+                    name = customerName.trim(),
+                    sales = state.sales,
+                    isRepProfile = false,
+                    settlements = state.settlements,
+                    excludeSaleId = editingSaleId,
+                  ).coerceAtLeast(0.0)
+                } else 0.0
+                val creditWarning = if (existingCredit > 5000.0) {
+                  viewModel.redactMoney(
+                    "Unpaid balance: ${SarimFormat.formatRs(existingCredit)}\nThis credit sale: ${SarimFormat.formatRs(totalValue)}\nNew total: ${SarimFormat.formatRs(existingCredit + totalValue)}\n\n${customerName.trim()} already has unpaid credit. Collect it before adding more.",
+                    "Check this credit sale before saving.",
                   )
+                } else null
+                viewModel.confirmSave(
+                  "Transaction",
+                  listOf("Customer" to (if (isRepSelected) selectedRep else customerName), "Store" to store.name, "Quantity" to SarimFormat.formatKg(qtyNum), "Payment" to effPayment.name, "Date" to SarimFormat.formatDate(dateEpoch)),
+                  isUpdate = editingSaleId != null,
+                  warning = creditWarning,
+                  shareAfterSave = if (isRepSelected) null else ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
+                ) {
+                  viewModel.launchSafely(
+                    errorTitle = "Save Sale Failed",
+                    successMessage = if (editingSaleId == null) "Sale saved" else "Sale updated",
+                    onSuccess = { editingSaleId = null; quantityText = ""; customerName = ""; newCustPhone = "" },
+                  ) {
+                    viewModel.repository.saveSaleOrCollection(
+                      editingId = editingSaleId,
+                      dateEpoch = dateEpoch,
+                      mode = "SALE",
+                      customerName = if (isRepSelected) selectedRep else customerName,
+                      newCustomerPhone = if (isRepSelected) "" else newCustPhone,
+                      repName = selectedRep,
+                      store = store,
+                      quantityKg = qtyNum,
+                      costPerKg = unitCostKg,
+                      paymentType = effPayment.name,
+                      amountReceived = if (effPayment == PaymentChoice.CASH) totalValue else 0.0,
+                      expiredQtyKg = 0.0,
+                      returnedQtyKg = 0.0,
+                      addToLedger = !isRepSelected && effPayment == PaymentChoice.CASH && saleAddToLedger,
+                      isRepSale = false,
+                    )
+                  }
                 }
-}
               }
 
               SalesMode.COLLECTION -> {
@@ -574,15 +614,39 @@ viewModel.launchSafely(
                   viewModel.showDialog(AppDialogRequest("No Outstanding Balance", "${customerName.trim()} has no pending credit balance to collect.", confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
-                val commitCollection: (String?) -> Unit = { collWarn ->
-                  viewModel.confirmSave(
-"Transaction",
-listOf("Customer" to customerName, "Amount" to SarimFormat.formatRs(amtRec), "Expired (kg)" to expiredQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
-isUpdate = editingSaleId != null,
-warning = collWarn,
-shareAfterSave = ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
-) {
-viewModel.launchSafely(
+                val origColl = editingSaleId?.let { id -> state.sales.firstOrNull { it.id == id } }
+                if (origColl != null && origColl.expiredQtyKg > expQty + 1e-4) {
+                  val choraStock = state.rawMaterials.firstOrNull { !it.isDeleted && it.name.equals("CHORA", ignoreCase = true) }?.stockKg ?: 0.0
+                  val choraDrop = origColl.expiredQtyKg - expQty
+                  if (choraStock + 1e-6 < choraDrop) {
+                    viewModel.showDialog(AppDialogRequest("CHORA Stock Used", "Cannot reduce expired quantity by ${SarimFormat.formatKg(choraDrop)}: only ${SarimFormat.formatKg(choraStock)} of CHORA remains unused.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                    return@SarimPrimaryButton
+                  }
+                }
+                val expUnit = SarimLinkEngine.goodsCreditUnitPrice(customerName.trim(), state.sales, unitPriceKg, isRepProfile = false, excludeSaleId = editingSaleId)
+                val expPlan = SarimLinkEngine.planGoodsCredit(expQty, expUnit, (currentDebt - amtRec).coerceAtLeast(0.0))
+                val collNotes = buildList {
+                  if (amtRec > currentDebt + 0.01) {
+                    add("Amount received exceeds customer's current credit (balance after: ${SarimFormat.formatRs(currentDebt - amtRec, false, hideMoney)}). Proceed only if this is an advance payment.")
+                  }
+                  if (expQty > 0.0) {
+                    add("Expired ${SarimFormat.formatKg(expQty)} will be added to CHORA raw material.")
+                    if (expPlan.value > 0.0) {
+                      add(viewModel.redactMoney(
+                        "Expired goods credit: ${SarimFormat.formatRs(expPlan.value)} will be deducted from ${customerName.trim()}'s balance.",
+                        "Expired goods credit will be deducted from customer's balance.",
+                      ))
+                    }
+                  }
+                }
+                viewModel.confirmSave(
+                  "Transaction",
+                  listOf("Customer" to customerName, "Amount" to SarimFormat.formatRs(amtRec, false, hideMoney), "Expired (kg)" to expiredQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
+                  isUpdate = editingSaleId != null,
+                  warning = collNotes.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                  shareAfterSave = ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
+                ) {
+                  viewModel.launchSafely(
                     errorTitle = "Save Collection Failed",
                     successMessage = if (editingSaleId == null) "Collection saved" else "Collection updated",
                     onSuccess = { editingSaleId = null; amountReceivedText = ""; expiredQtyText = ""; customerName = ""; newCustPhone = "" },
@@ -605,18 +669,17 @@ viewModel.launchSafely(
                       isRepSale = false,
                     )
                   }
-}
                 }
-                commitCollection(
-                  if (amtRec > currentDebt + 0.01) {
-                    "Amount received exceeds customer's current credit (balance after: ${SarimFormat.formatRs(currentDebt - amtRec)}). Proceed only if this is an advance payment."
-                  } else null
-                )
               }
 
               SalesMode.REP_RETURN -> {
                 if (selectedRep.isBlank() || selectedRep == "Direct") {
                   viewModel.showDialog(AppDialogRequest("Rep Required", "Please select a sales representative.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                  return@SarimPrimaryButton
+                }
+                val origReturn = editingSaleId?.let { id -> state.sales.firstOrNull { it.id == id } }
+                if (origReturn != null && (!selectedRep.equals(origReturn.repName, true) || SarimFormat.dateInput(dateEpoch) != SarimFormat.dateInput(origReturn.dateEpoch))) {
+                  viewModel.showDialog(AppDialogRequest("Action Not Allowed", "The rep and date of a return cannot be changed. Delete it and enter it again.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
                 val repExp = SarimFormat.parseSafeDouble(repExpiredQtyText) ?: 0.0
@@ -625,26 +688,44 @@ viewModel.launchSafely(
                   viewModel.showDialog(AppDialogRequest("Invalid Return", "Enter expired and/or returned quantity in kg.", confirmLabel = "OK", cancelLabel = null))
                   return@SarimPrimaryButton
                 }
-                viewModel.confirmSave(
-"Transaction",
-listOf("Rep" to selectedRep, "Expired (kg)" to repExpiredQtyText, "Returned (kg)" to repReturnedQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
-isUpdate = editingSaleId != null,
-) {
-viewModel.launchSafely(
-                  errorTitle = "Save Rep Return Failed",
-                  successMessage = if (editingSaleId == null) "Rep return saved" else "Rep return updated",
-                  onSuccess = { editingSaleId = null; repExpiredQtyText = ""; repReturnedQtyText = "" },
-                ) {
-                  viewModel.repository.saveRepReturn(
-                    editingId = editingSaleId,
-                    dateEpoch = dateEpoch,
-                    repName = selectedRep,
-                    expiredQtyKg = repExp,
-                    returnedQtyKg = repRet,
-                    fallbackUnitPrice = unitPriceKg,
+                val (deliveredKg, alreadyRetKg, allowanceKg) = SarimLinkEngine.getRepReturnAllowance(
+                  repName = selectedRep,
+                  excludeId = editingSaleId,
+                  sales = state.sales,
+                  settlements = state.settlements,
+                )
+                if (repExp + repRet > allowanceKg + 1e-4) {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Return Exceeds Pending Deliveries",
+                      body = "$selectedRep has ${SarimFormat.formatKg(deliveredKg)} delivered awaiting calculation and ${SarimFormat.formatKg(alreadyRetKg)} already pending return.\nMax returnable now: ${SarimFormat.formatKg(allowanceKg)}\nRequested: ${SarimFormat.formatKg(repExp + repRet)}",
+                      tone = DialogTone.WARNING,
+                      confirmLabel = "OK",
+                      cancelLabel = null,
+                    )
                   )
+                  return@SarimPrimaryButton
                 }
-}
+                viewModel.confirmSave(
+                  "Transaction",
+                  listOf("Rep" to selectedRep, "Expired (kg)" to repExpiredQtyText, "Returned (kg)" to repReturnedQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
+                  isUpdate = editingSaleId != null,
+                ) {
+                  viewModel.launchSafely(
+                    errorTitle = "Save Rep Return Failed",
+                    successMessage = if (editingSaleId == null) "Rep return saved" else "Rep return updated",
+                    onSuccess = { editingSaleId = null; repExpiredQtyText = ""; repReturnedQtyText = "" },
+                  ) {
+                    viewModel.repository.saveRepReturn(
+                      editingId = editingSaleId,
+                      dateEpoch = dateEpoch,
+                      repName = selectedRep,
+                      expiredQtyKg = repExp,
+                      returnedQtyKg = repRet,
+                      fallbackUnitPrice = unitPriceKg,
+                    )
+                  }
+                }
               }
             }
           },
@@ -894,11 +975,24 @@ viewModel.launchSafely(
         }
       } else null,
       onEdit = {
-        if (isReconciledRet) {
+        val editBlock = when {
+          YearCloseMerge.isMergedId(s.id) -> "Merged Entry" to "Merged opening balance entries cannot be edited."
+          s.isRepTransfer || state.settlements.any { !it.isDeleted && it.transferSaleId == s.id } ->
+            "Transfer Locked" to "Rep transfers belong to a Calculator settlement. Delete or update that Calculator settlement first."
+          !s.usedInCalcId.isNullOrBlank() ||
+            (!s.isRepSale && s.id in SarimLinkEngine.reconciledAdminSalesIds(state.settlements)) ||
+            isReconciledRet ->
+            "Transaction Reconciled" to "This entry is already reconciled in the Calculator. Delete the Calculator settlement first to edit it."
+          s.mode == "MONEY_OUT" || s.isMoneyOut ->
+            "Money Out Locked" to "Customer Money Out payouts cannot be edited directly here. Delete and re-record if needed."
+          else -> null
+        }
+        if (editBlock != null) {
           viewModel.showDialog(
             AppDialogRequest(
-              title = "Return Reconciled",
-              body = "This return is already reconciled in the Calculator. Delete the Calculator settlement first to edit it.",
+              title = editBlock.first,
+              body = editBlock.second,
+              tone = DialogTone.ERROR,
               confirmLabel = "OK",
               cancelLabel = null,
             )
@@ -924,18 +1018,51 @@ viewModel.launchSafely(
         }
       },
       onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = "Delete Transaction?",
-            body = "Customer: ${s.customerName}\nAmount: ${SarimFormat.formatRs(dispAmt)}\nMoves to Recycle Bin for 90 days.",
-            confirmLabel = "Delete",
-            onConfirm = {
-              viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                viewModel.repository.deleteSale(s.id)
-              }
-            },
+        val blockMsg = if (YearCloseMerge.isMergedId(s.id)) {
+          "Merged opening balance entries cannot be deleted."
+        } else {
+          SarimLinkEngine.getSaleBlockReason(s, state.settlements)
+            ?: SarimLinkEngine.getCollectionDeleteBlockReason(s, state.rawMaterials)
+        }
+        if (blockMsg != null) {
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Cannot Delete",
+              body = blockMsg,
+              tone = DialogTone.ERROR,
+              confirmLabel = "OK",
+              cancelLabel = null,
+            )
           )
-        )
+        } else {
+          val typeLabel = when {
+            s.isRepReturn -> "Rep Return"
+            s.mode == "COLLECTION" -> "Collection"
+            s.mode == "MONEY_OUT" -> "Money Out"
+            s.paymentType == "CASH" -> "Cash Sale"
+            else -> "Credit Sale"
+          }
+          val detailLine = when {
+            s.isRepReturn -> "Rep: ${s.repName.ifBlank { s.customerName }}\nReturned: ${SarimFormat.formatKg(s.returnedQtyKg)} · Expired: ${SarimFormat.formatKg(s.expiredQtyKg)}\nGoods Credit: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}"
+            s.mode == "COLLECTION" -> "Customer: ${s.customerName}\nCollected: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}${if (s.expiredQtyKg > 0.0) "\nExpired Chora reversed: ${SarimFormat.formatKg(s.expiredQtyKg)}" else ""}"
+            s.mode == "MONEY_OUT" -> "Customer: ${s.customerName}\nPayout Reversed: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}"
+            else -> "Customer: ${s.customerName}\nQty: ${SarimFormat.formatKg(s.quantityKg)} (${s.storeName})\nAmount: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}"
+          }
+          val ledgerLine = if (s.addToLedger && !s.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Delete $typeLabel?",
+              body = "$detailLine$ledgerLine\n\nMoves to Recycle Bin for 90 days.",
+              tone = DialogTone.PERMANENT,
+              confirmLabel = "Delete",
+              onConfirm = {
+                viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                  viewModel.repository.deleteSale(s.id)
+                }
+              },
+            )
+          )
+        }
       },
     )
   }

@@ -53,6 +53,9 @@ data class SarimUiState(
   val isAccountActionBusy: Boolean = false,
   val overviewRange: OverviewRange = OverviewRange.M6,
   val salesReps: List<String> = emptyList(),
+  val operatingCategories: List<String> = DEFAULT_OPERATING_CATEGORIES,
+  val fieldExpenseCategories: List<String> = DEFAULT_FIELD_EXPENSE_CATEGORIES,
+  val commissionCategories: List<String> = DEFAULT_COMMISSION_CATEGORIES,
   val snapshot: BusinessSnapshot? = null,
   val stores: List<StoreEntity> = emptyList(),
   val rawMaterials: List<RawMaterialEntity> = emptyList(),
@@ -428,9 +431,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       repository.accounts,
       prefsManager.prefsFlow,
       _uiState.map { it.overviewRange }.distinctUntilChanged(),
-      repository.allKvKeys,
-    ) { approvals, accounts, prefs, range, _ ->
-      Tuple4(approvals, accounts, prefs, range)
+      repository.categoryAndRepKv,
+    ) { approvals, accounts, prefs, range, catKvs ->
+      Tuple5(approvals, accounts, prefs, range, catKvs)
     }
 
     viewModelScope.launch {
@@ -438,6 +441,13 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = g4.c
         feedbackManager.updateSettings(prefs.hapticIntensity, prefs.soundIntensity)
         val storedReps = runCatching { repository.getSalesReps() }.getOrDefault(emptyList())
+        val kvMap = g4.e.associateBy { it.userKey }
+        val opCats = (DEFAULT_OPERATING_CATEGORIES + JsonCodecs.decodeStrings(kvMap["categories"]?.value ?: "[]"))
+          .map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
+        val fieldCats = (DEFAULT_FIELD_EXPENSE_CATEGORIES + JsonCodecs.decodeStrings(kvMap["field_expense_categories"]?.value ?: "[]"))
+          .map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
+        val commCats = (DEFAULT_COMMISSION_CATEGORIES + JsonCodecs.decodeStrings(kvMap["commission_categories"]?.value ?: "[]"))
+          .map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
         val snap = SarimMetricsEngine.compute(
           stores = g1.a,
           materials = g1.b,
@@ -465,6 +475,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           isOnline = isNetworkConnected(),
           pendingSyncCount = pending,
           salesReps = snap.repsList,
+          operatingCategories = opCats,
+          fieldExpenseCategories = fieldCats,
+          commissionCategories = commCats,
           snapshot = snap,
           stores = g1.a,
           rawMaterials = g1.b,
@@ -501,6 +514,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
               isOnline = bundle.isOnline,
               pendingSyncCount = bundle.pendingSyncCount,
               salesReps = bundle.salesReps,
+              operatingCategories = bundle.operatingCategories,
+              fieldExpenseCategories = bundle.fieldExpenseCategories,
+              commissionCategories = bundle.commissionCategories,
               snapshot = bundle.snapshot,
               stores = bundle.stores,
               rawMaterials = bundle.rawMaterials,
@@ -1020,8 +1036,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun toggleAccountRole(acct: AppAccountEntity, roleKey: String) {
-    if (!_uiState.value.isAdmin || !isNetworkConnected()) {
-      if (!isNetworkConnected()) postStatus("Internet connection required to change roles")
+    if (!_uiState.value.isAdmin) return
+    if (!isNetworkConnected()) {
+      showDialog(AppDialogRequest("No Internet", "Internet connection is required to change roles.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
       return
     }
     val targetUid = acct.uid.ifBlank { acct.id }
@@ -1113,8 +1130,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun toggleAccountSuspension(acct: AppAccountEntity) {
-    if (!_uiState.value.isAdmin || !isNetworkConnected()) {
-      if (!isNetworkConnected()) postStatus("Internet connection required")
+    if (!_uiState.value.isAdmin) return
+    if (!isNetworkConnected()) {
+      showDialog(AppDialogRequest("No Internet", "Internet connection is required to change account status.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
       return
     }
     val wsUid = workspaceRootUid()
@@ -1158,8 +1176,9 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun removeAccount(acct: AppAccountEntity) {
-    if (!_uiState.value.isAdmin || !isNetworkConnected()) {
-      if (!isNetworkConnected()) postStatus("Internet connection required")
+    if (!_uiState.value.isAdmin) return
+    if (!isNetworkConnected()) {
+      showDialog(AppDialogRequest("No Internet", "Internet connection is required to remove accounts.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
       return
     }
     val wsUid = workspaceRootUid()
@@ -1226,6 +1245,10 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   suspend fun resolveApprovals(reqs: List<ApprovalRequestEntity>, approved: Boolean) {
+    if (!isNetworkConnected()) {
+      showDialog(AppDialogRequest("No Internet", "Internet is required to approve or discard actions.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+      throw IllegalStateException("Internet is required to approve or discard actions.")
+    }
     val st = _uiState.value
     val res = syncRepo.resolveApprovals(
       items = reqs,
@@ -1291,6 +1314,26 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   // =====================================================================
   // Navigation, Preferences & Diagnostics
   // =====================================================================
+
+  fun redactMoney(shown: String, hiddenFallback: String = "••••"): String =
+    if (_uiState.value.hideMoneyFigures) hiddenFallback else shown
+
+  fun requestCancelEdit(hasChanges: Boolean = true, onDiscard: () -> Unit) {
+    if (!hasChanges) {
+      onDiscard()
+      return
+    }
+    showDialog(
+      AppDialogRequest(
+        title = "Discard Changes?",
+        body = "You have unsaved edits. Discard your changes and exit edit mode?",
+        tone = DialogTone.WARNING,
+        confirmLabel = "Discard",
+        cancelLabel = "Keep Editing",
+        onConfirm = { _ -> onDiscard() },
+      )
+    )
+  }
 
   /**
    * Web-parity "Save / Update / Send for Approval" confirmation (modules/confirm-guard.js).
@@ -1759,6 +1802,9 @@ private data class ObservedDataBundle(
   val isOnline: Boolean,
   val pendingSyncCount: Int,
   val salesReps: List<String>,
+  val operatingCategories: List<String>,
+  val fieldExpenseCategories: List<String>,
+  val commissionCategories: List<String>,
   val snapshot: BusinessSnapshot,
   val stores: List<StoreEntity>,
   val rawMaterials: List<RawMaterialEntity>,
@@ -1783,5 +1829,8 @@ private data class ObservedDataBundle(
   val lastUpdatedMillis: Long,
 )
 
-private data class Tuple4<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 private data class Tuple5<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
+
+private val DEFAULT_OPERATING_CATEGORIES = listOf("Operating Expense")
+private val DEFAULT_FIELD_EXPENSE_CATEGORIES = listOf("Fuel", "Food", "Toll", "Repair", "Loading")
+private val DEFAULT_COMMISSION_CATEGORIES = listOf("Standard Commission")

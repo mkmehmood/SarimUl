@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.CalculatorSettlementEntity
 import com.example.data.local.CustomerEntity
 import com.example.data.local.DailyLedgerEntity
@@ -8,6 +9,7 @@ import com.example.data.local.FormulaEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.local.PaymentEntityRecord
 import com.example.data.local.PaymentTransactionEntity
+import com.example.data.local.PaymentTransferEntity
 import com.example.data.local.ProductionEntryEntity
 import com.example.data.local.RawMaterialEntity
 import com.example.data.local.RawMaterialPurchaseEntity
@@ -799,6 +801,166 @@ object SarimLinkEngine {
       }
     }
     return null
+  }
+
+  fun projectedStoreStockAfterProductionDelete(
+    storeKey: String,
+    excludingProdId: String?,
+    production: List<ProductionEntryEntity>,
+    stockTransfers: List<StockTransferEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    sales: List<SaleTransactionEntity>,
+  ): Double {
+    val clean = storeKey.trim()
+    val produced = production.filter {
+      !it.isDeleted && !it.isReturn && it.storeKey.equals(clean, true) && it.id != excludingProdId
+    }.sumOf { it.netWeightKg }
+    val tIn = stockTransfers.filter { !it.isDeleted && it.toStoreKey.equals(clean, true) }.sumOf { it.quantityKg }
+    val tOut = stockTransfers.filter { !it.isDeleted && it.fromStoreKey.equals(clean, true) }.sumOf { it.quantityKg }
+    val returned = settlements.filter {
+      !it.isDeleted && !it.returnType.equals("TRANSFER", true) && it.returnStoreKey.equals(clean, true)
+    }.sumOf { it.returnedKg }
+    val sold = sales.filter {
+      !it.isDeleted && !it.isRepSale && !it.isRepReturn && !it.isRepTransfer &&
+        it.mode == "SALE" && it.storeKey.equals(clean, true)
+    }.sumOf { it.quantityKg }
+    return round2(produced + tIn + returned - sold - tOut)
+  }
+
+  fun getProductionDeleteBlockReason(
+    entry: ProductionEntryEntity,
+    production: List<ProductionEntryEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    stockTransfers: List<StockTransferEntity>,
+    sales: List<SaleTransactionEntity>,
+  ): String? {
+    if (YearCloseMerge.isMergedId(entry.id)) {
+      return "Merged opening balance records cannot be deleted."
+    }
+    if (entry.isReturn) {
+      val owner = settlements.firstOrNull { !it.isDeleted && it.returnEntryId == entry.id }
+      if (owner != null) {
+        return "This return belongs to ${owner.repName}'s Calculator settlement (${owner.dateStr}). Delete that Calculator settlement first."
+      }
+    }
+    if (!entry.isReturn || !entry.returnLogId.isNullOrBlank()) {
+      val projected = projectedStoreStockAfterProductionDelete(
+        storeKey = entry.storeKey,
+        excludingProdId = entry.id,
+        production = production,
+        stockTransfers = stockTransfers,
+        settlements = settlements,
+        sales = sales,
+      )
+      if (projected < -0.001) {
+        return "Cannot delete: removing ${SarimFormat.formatKg(entry.netWeightKg)} from ${entry.storeName} stock would leave it short by ${SarimFormat.formatKg(abs(projected))} because that stock was already sold or transferred. Delete those sales first."
+      }
+    }
+    return null
+  }
+
+  fun getEntityDeleteBlockReason(
+    entity: PaymentEntityRecord,
+    allTxs: List<PaymentTransactionEntity>,
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    factoryBatches: List<FactoryBatchEntity>,
+  ): String? {
+    val linked = allTxs.filter { !it.isDeleted && it.entityId == entity.id }
+    if (linked.any { YearCloseMerge.isMergedId(it.id) }) {
+      return "This entity has merged opening balance records and cannot be deleted."
+    }
+    val nonPayableIn = linked.filter { it.type == "PAYMENT_IN" && !it.isPayable }.sumOf { it.amount }
+    if (nonPayableIn > 0.01) {
+      val cashNow = computeCashInHandBreakdown(sales, settlements, allTxs, factoryBatches).netCash
+      if (cashNow >= -0.01 && (cashNow - nonPayableIn) < -0.01) {
+        return "Cannot delete entity ${entity.name}: reversing received payments (${SarimFormat.formatRs(nonPayableIn)}) would drop Cash in Hand below zero."
+      }
+    }
+    return null
+  }
+
+  fun getPaymentTxDeleteBlockReason(
+    tx: PaymentTransactionEntity,
+    allTxs: List<PaymentTransactionEntity>,
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+    factoryBatches: List<FactoryBatchEntity>,
+  ): String? {
+    if (YearCloseMerge.isMergedId(tx.id)) {
+      return "Merged opening balance records cannot be deleted."
+    }
+    if (tx.type == "PAYMENT_IN") {
+      val consumedByOut = allTxs.any { other ->
+        !other.isDeleted && other.type == "PAYMENT_OUT" &&
+          JsonCodecs.decodeConsumedCredits(other.consumedCreditsJson).any { it.id == tx.id }
+      }
+      if (consumedByOut) {
+        return "This Payment IN has supplier credit already consumed by a Payment OUT. Delete that Payment OUT first."
+      }
+      if (!tx.isPayable) {
+        val cashNow = computeCashInHandBreakdown(sales, settlements, allTxs, factoryBatches).netCash
+        if (cashNow >= -0.01 && (cashNow - tx.amount) < -0.01) {
+          return "Deleting this payment (${SarimFormat.formatRs(tx.amount)}) would drop Cash in Hand below zero (${SarimFormat.formatRs(cashNow.coerceAtLeast(0.0))} available)."
+        }
+      }
+    }
+    return null
+  }
+
+  fun getStockTransferDeleteBlockReason(
+    transfer: StockTransferEntity,
+    production: List<ProductionEntryEntity>,
+    sales: List<SaleTransactionEntity>,
+    stockTransfers: List<StockTransferEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+  ): String? {
+    val cleanTo = transfer.toStoreKey.trim()
+    val produced = production.filter { !it.isDeleted && !it.isReturn && it.storeKey.equals(cleanTo, true) }.sumOf { it.netWeightKg }
+    val tIn = stockTransfers.filter { !it.isDeleted && it.id != transfer.id && it.toStoreKey.equals(cleanTo, true) }.sumOf { it.quantityKg }
+    val tOut = stockTransfers.filter { !it.isDeleted && it.fromStoreKey.equals(cleanTo, true) }.sumOf { it.quantityKg }
+    val returned = settlements.filter {
+      !it.isDeleted && !it.returnType.equals("TRANSFER", true) && it.returnStoreKey.equals(cleanTo, true)
+    }.sumOf { it.returnedKg }
+    val sold = sales.filter {
+      !it.isDeleted && !it.isRepSale && !it.isRepReturn && !it.isRepTransfer &&
+        it.mode == "SALE" && it.storeKey.equals(cleanTo, true)
+    }.sumOf { it.quantityKg }
+    val projected = round2(produced + tIn + returned - sold - tOut)
+    if (projected < -0.001) {
+      return "Cannot delete transfer: destination store ${transfer.toStoreName} has already sold or transferred ${SarimFormat.formatKg(abs(projected))} of this stock."
+    }
+    return null
+  }
+
+  fun getPaymentTransferDeleteBlockReason(
+    transfer: PaymentTransferEntity,
+    fromEntity: PaymentEntityRecord?,
+    toEntity: PaymentEntityRecord?,
+  ): String? {
+    if (transfer.amount <= 0.0) return "Invalid transfer amount."
+    fromEntity?.sizeHintOrUnused()
+    toEntity?.sizeHintOrUnused()
+    return null
+  }
+
+  private fun PaymentEntityRecord.sizeHintOrUnused() = id
+
+  /** Returns (pendingDeliveredKg, alreadyPendingReturnKg, remainingAllowedKg). */
+  fun getRepReturnAllowance(
+    repName: String,
+    excludeId: String?,
+    sales: List<SaleTransactionEntity>,
+    settlements: List<CalculatorSettlementEntity>,
+  ): Triple<Double, Double, Double> {
+    val deliveredKg = round2(getPendingRepDeliveries(repName, sales, settlements).sumOf { it.quantityKg })
+    val pendingRetKg = round2(
+      getPendingRepReturns(repName, sales, settlements)
+        .filter { it.id != excludeId }
+        .sumOf { it.expiredQtyKg + it.returnedQtyKg }
+    )
+    val remaining = round2((deliveredKg - pendingRetKg).coerceAtLeast(0.0))
+    return Triple(deliveredKg, pendingRetKg, remaining)
   }
 
   // =====================================================================

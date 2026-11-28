@@ -33,6 +33,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.DailyLedgerEntity
+import com.example.data.local.JsonCodecs
 import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
@@ -337,9 +338,15 @@ fun DailyLedgerScreen(
 
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (editingId != null) {
+          val origEntry = activeEntries.firstOrNull { it.id == editingId }
+          val hasEdits = origEntry == null ||
+            (SarimFormat.parseSafeDouble(amountText) ?: 0.0) != origEntry.amount ||
+            modeText.trim() != origEntry.mode ||
+            partyText.trim() != origEntry.party ||
+            noteText.trim() != origEntry.note
           SarimSecondaryButton(
             text = "Cancel Edit",
-            onClick = { resetForm() },
+            onClick = { viewModel.requestCancelEdit(hasEdits) { resetForm() } },
             modifier = Modifier.weight(1f),
             testTag = "dl_cancel_edit",
           )
@@ -748,17 +755,43 @@ fun DailyLedgerScreen(
       },
       onDelete = if (isSheetTabOwned) null else {
         {
-          viewModel.showDialog(
-            AppDialogRequest(
-              title = "Delete Ledger Entry",
-              body = "Move this ${entry.type} record of ${SarimFormat.formatRs(entry.amount)} to Recycle Bin?",
-              tone = DialogTone.PERMANENT,
-              confirmLabel = "Delete",
-              onConfirm = {
-                ledgerViewModel.deleteEntry(entry.id)
-              },
+          val linkMap = JsonCodecs.decodeLedgerLink(entry.linkJson).orEmpty()
+          val linkedTxId = linkMap["txId"]?.toString()?.takeIf { it.isNotBlank() }
+          val linkedSaleId = linkMap["saleId"]?.toString()?.takeIf { it.isNotBlank() }
+          val linkedPayTx = linkedTxId?.let { id -> state.paymentTransactions.firstOrNull { !it.isDeleted && it.id == id } }
+          val linkedSale = linkedSaleId?.let { id -> state.sales.firstOrNull { !it.isDeleted && it.id == id } }
+          val blockMsg = when {
+            linkedPayTx != null -> SarimLinkEngine.getPaymentTxDeleteBlockReason(
+              tx = linkedPayTx,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
             )
-          )
+            linkedSale != null -> SarimLinkEngine.getSaleBlockReason(linkedSale, state.settlements)
+              ?: SarimLinkEngine.getCollectionDeleteBlockReason(linkedSale, state.rawMaterials)
+            else -> null
+          }
+          if (blockMsg != null) {
+            viewModel.showDialog(AppDialogRequest("Cannot Delete Entry", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+          } else {
+            val cascadeNote = when {
+              linkedPayTx != null -> "\n\n↩ The linked payment/expense on Payments tab will also be removed."
+              linkedSale != null -> "\n\n↩ The linked customer record on Sales tab will also be reversed."
+              else -> ""
+            }
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Delete Ledger Entry",
+                body = "Delete this ${entry.type} record of ${SarimFormat.formatRs(entry.amount, privacyHidden = state.hideMoneyFigures)}?$cascadeNote\n\nMoves to Recycle Bin.",
+                tone = DialogTone.PERMANENT,
+                confirmLabel = "Delete",
+                onConfirm = {
+                  ledgerViewModel.deleteEntry(entry.id)
+                },
+              )
+            )
+          }
         }
       },
     )

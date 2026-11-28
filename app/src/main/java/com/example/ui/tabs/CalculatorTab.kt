@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.CalculatorSettlementEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.LineItemBreakdown
@@ -313,13 +314,23 @@ fun CalculatorTab(
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(if (editingSettlementId == null) "Product Quantities" else "Edit Settlement", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             if (editingSettlementId != null) {
+              val origSettle = state.settlements.firstOrNull { it.id == editingSettlementId }
+              val hasEdits = origSettle == null ||
+                sharedNum != origSettle.sharedDeductionKg ||
+                creditQtyNum != origSettle.creditSalesQty ||
+                recoveredNum != origSettle.recoveredCredit ||
+                receivedNum != origSettle.receivedCash ||
+                commPaidTotal != origSettle.commissionPaid ||
+                fieldExpTotal != origSettle.fieldExpenses
               TextButton(
                 onClick = {
-                  editingSettlementId = null
-                  manualFromOverride = false
-                  receivedCashText = ""
-                  commissionItems = emptyList()
-                  expenseItems = emptyList()
+                  viewModel.requestCancelEdit(hasEdits) {
+                    editingSettlementId = null
+                    manualFromOverride = false
+                    receivedCashText = ""
+                    commissionItems = emptyList()
+                    expenseItems = emptyList()
+                  }
                 },
                 modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("btn_cancel_edit_calc"),
               ) { Text("Cancel Edit", color = palette.amber) }
@@ -490,65 +501,84 @@ fun CalculatorTab(
                 (transferTargetRep.takeIf { it in otherReps } ?: otherReps.first())
               } else null
               val currentEditId = editingSettlementId
-              val commitSettlement: (String?) -> Unit = { calcWarn ->
+              val runConfirmSave: () -> Unit = {
                 viewModel.confirmSave(
-"Settlement",
-listOf("Seller" to selectedRepOption, "Date" to SarimFormat.formatDate(toDate), "Total Sold" to SarimFormat.formatKg(totalSoldKg), "Returned" to SarimFormat.formatKg(returnedKg), "Expired" to SarimFormat.formatKg(expiredKg), "Cash Received" to SarimFormat.formatRs(receivedNum)),
-isUpdate = currentEditId != null,
-warning = calcWarn,
-) {
-viewModel.launchSafely(
-                  errorTitle = "Settlement Save Failed",
-                  successMessage = if (currentEditId == null) "Settlement saved for $selectedRepOption" else "Settlement updated for $selectedRepOption",
-                  onSuccess = {
-                    editingSettlementId = null
-                    manualFromOverride = false
-                    receivedCashText = ""
-                    commissionItems = emptyList()
-                    expenseItems = emptyList()
-                  },
+                  "Settlement",
+                  listOf(
+                    "Seller" to selectedRepOption,
+                    "Date" to SarimFormat.formatDate(toDate),
+                    "Total Sold" to SarimFormat.formatKg(totalSoldKg),
+                    "Returned" to SarimFormat.formatKg(returnedKg),
+                    "Expired" to SarimFormat.formatKg(expiredKg),
+                    "Cash Received" to SarimFormat.formatRs(receivedNum, false, hideMoney),
+                  ),
+                  isUpdate = currentEditId != null,
                 ) {
-                  viewModel.repository.saveCalculatorSettlement(
-                    CalculatorSettlementEntity(
-                      id = currentEditId ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_CALC),
-                      repName = selectedRepOption,
-                      fromDateEpoch = fromDate,
-                      toDateEpoch = toDate,
-                      dateEpoch = toDate,
-                      totalSoldKg = totalSoldKg,
-                      returnedKg = returnedKg,
-                      expiredKg = expiredKg,
-                      sharedDeductionKg = sharedNum,
-                      netSoldKg = netSoldKg,
-                      returnStoreKey = if (returnedKg > 0.0 && !useTransfer) returnStoreKey else "",
-                      returnType = if (returnedKg > 0.0) (if (useTransfer) "TRANSFER" else "RETURN") else null,
-                      returnRep = chosenTargetRep,
-                      creditSalesQty = creditQtyNum,
-                      commissionPerUnit = commPerUnit,
-                      commissionPaid = commPaidTotal,
-                      commissionItemsJson = JsonCodecs.encodeLineItems(commissionItems),
-                      recoveredCredit = recoveredNum,
-                      fieldExpenses = fieldExpTotal,
-                      expenseItemsJson = JsonCodecs.encodeLineItems(expenseItems),
-                      receivedCash = receivedNum,
-                      expectedCash = expectedCash,
-                      status = statusLabel.uppercase(),
-                      statusDiff = cashDiff,
-                      grossCommission = grossCommission,
-                      commissionPayable = commPayable,
-                      totalCost = totalCost,
-                      grossRevenue = grossRevenue,
-                      netProfit = grossRevenue - totalCost - fieldExpTotal - grossCommission,
-                      creditIssuedValue = creditValue,
-                      addToLedger = addToLedger,
+                  viewModel.launchSafely(
+                    errorTitle = "Settlement Save Failed",
+                    successMessage = if (currentEditId == null) "Settlement saved for $selectedRepOption" else "Settlement updated for $selectedRepOption",
+                    onSuccess = {
+                      editingSettlementId = null
+                      manualFromOverride = false
+                      receivedCashText = ""
+                      commissionItems = emptyList()
+                      expenseItems = emptyList()
+                    },
+                  ) {
+                    viewModel.repository.saveCalculatorSettlement(
+                      CalculatorSettlementEntity(
+                        id = currentEditId ?: com.example.data.model.SarimUuid.generateUUID(com.example.data.model.SarimUuid.PREFIX_CALC),
+                        repName = selectedRepOption,
+                        fromDateEpoch = fromDate,
+                        toDateEpoch = toDate,
+                        dateEpoch = toDate,
+                        totalSoldKg = totalSoldKg,
+                        returnedKg = returnedKg,
+                        expiredKg = expiredKg,
+                        sharedDeductionKg = sharedNum,
+                        netSoldKg = netSoldKg,
+                        returnStoreKey = if (returnedKg > 0.0 && !useTransfer) returnStoreKey else "",
+                        returnType = if (returnedKg > 0.0) (if (useTransfer) "TRANSFER" else "RETURN") else null,
+                        returnRep = chosenTargetRep,
+                        creditSalesQty = creditQtyNum,
+                        commissionPerUnit = commPerUnit,
+                        commissionPaid = commPaidTotal,
+                        commissionItemsJson = JsonCodecs.encodeLineItems(commissionItems),
+                        recoveredCredit = recoveredNum,
+                        fieldExpenses = fieldExpTotal,
+                        expenseItemsJson = JsonCodecs.encodeLineItems(expenseItems),
+                        receivedCash = receivedNum,
+                        expectedCash = expectedCash,
+                        status = statusLabel.uppercase(),
+                        statusDiff = cashDiff,
+                        grossCommission = grossCommission,
+                        commissionPayable = commPayable,
+                        totalCost = totalCost,
+                        grossRevenue = grossRevenue,
+                        netProfit = grossRevenue - totalCost - fieldExpTotal - grossCommission,
+                        creditIssuedValue = creditValue,
+                        addToLedger = addToLedger,
+                      )
                     )
-                  )
+                  }
                 }
-}
               }
-              commitSettlement(
-                if (statusLabel != "OK") "Cash is ${statusLabel.lowercase()} by ${SarimFormat.formatRs(abs(cashDiff))}." else null
-              )
+              if (abs(cashDiff) > 0.01) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = if (cashDiff < 0) "Cash is Short" else "Cash is Over",
+                    body = viewModel.redactMoney(
+                      "Cash received ${SarimFormat.formatRs(receivedNum)} but expected ${SarimFormat.formatRs(expectedCash)}.\n${if (cashDiff < 0) "Short" else "Over"} by ${SarimFormat.formatRs(abs(cashDiff))}. Save this settlement anyway?",
+                      "Cash received differs from expected (${if (cashDiff < 0) "Short" else "Over"}). Save this settlement anyway?",
+                    ),
+                    tone = if (cashDiff < 0) DialogTone.WARNING else DialogTone.CONFIRM,
+                    confirmLabel = "Save anyway",
+                    onConfirm = { _ -> runConfirmSave() },
+                  )
+                )
+              } else {
+                runConfirmSave()
+              }
             },
           )
         }
@@ -726,39 +756,97 @@ viewModel.launchSafely(
       } else null,
       onDismiss = { sheetSettlement = null },
       onEdit = {
-        editingSettlementId = s.id
-        manualFromOverride = true
-        selectedRepOption = s.repName
-        fromDate = s.fromDateEpoch
-        toDate = s.toDateEpoch
-        sharedQtyText = s.sharedDeductionKg.toString()
-        returnTargetMode = if (s.returnType.equals("TRANSFER", true)) ReturnTargetMode.TRANSFER else ReturnTargetMode.RETURN
-        transferTargetRep = s.returnRep.orEmpty()
-        if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
-        creditSalesQtyText = s.creditSalesQty.toString()
-        commissionPerUnitText = s.commissionPerUnit.toString()
-        commissionItems = commLines
-        recoveredCreditText = s.recoveredCredit.toString()
-        expenseItems = expLines
-        receivedCashText = s.receivedCash.toString()
-        addToLedger = s.addToLedger
+        if (YearCloseMerge.isMergedId(s.id)) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", "Merged opening balance records cannot be edited directly.", tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          editingSettlementId = s.id
+          manualFromOverride = true
+          selectedRepOption = s.repName
+          fromDate = s.fromDateEpoch
+          toDate = s.toDateEpoch
+          sharedQtyText = s.sharedDeductionKg.toString()
+          returnTargetMode = if (s.returnType.equals("TRANSFER", true)) ReturnTargetMode.TRANSFER else ReturnTargetMode.RETURN
+          transferTargetRep = s.returnRep.orEmpty()
+          if (s.returnStoreKey.isNotBlank()) returnStoreKey = s.returnStoreKey
+          creditSalesQtyText = s.creditSalesQty.toString()
+          commissionPerUnitText = s.commissionPerUnit.toString()
+          commissionItems = commLines
+          recoveredCreditText = s.recoveredCredit.toString()
+          expenseItems = expLines
+          receivedCashText = s.receivedCash.toString()
+          addToLedger = s.addToLedger
+        }
       },
       onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = "Delete Settlement",
-            body = "Unlink reconciled sales, reverse return/CHORA changes, and move this settlement to Recycle Bin?",
-            confirmLabel = "Delete",
-            onConfirm = {
-              viewModel.launchSafely(
-                errorTitle = "Delete Failed",
-                successMessage = "Deleted settlement",
-              ) {
-                viewModel.repository.deleteSettlement(s.id)
+        val choraStock = state.rawMaterials.firstOrNull { !it.isDeleted && it.name.equals("CHORA", ignoreCase = true) }?.stockKg ?: 0.0
+        val transferSale = s.transferSaleId?.let { tid -> state.sales.firstOrNull { !it.isDeleted && it.id == tid } }
+        val blockReason = when {
+          YearCloseMerge.isMergedId(s.id) -> "Merged opening balance records cannot be deleted."
+          s.expiredApplied && s.expiredKg > 0.0001 && choraStock + 0.0001 < s.expiredKg ->
+            "Only ${SarimFormat.formatKg(choraStock)} of CHORA is left, but this settlement added ${SarimFormat.formatKg(s.expiredKg)}. Part of it has already been used, so it cannot be removed."
+          transferSale != null && (
+            state.settlements.any { !it.isDeleted && it.id != s.id && (it.id == transferSale.usedInCalcId || transferSale.id in SarimLinkEngine.reconciledAdminSalesIds(listOf(it))) } ||
+              transferSale.creditReceived ||
+              transferSale.partialPaymentReceived > 0.01 ||
+              JsonCodecs.decodeCollectionAllocs(transferSale.collectionAllocsJson).isNotEmpty()
+            ) -> "${s.returnRep ?: "The receiving rep"} already has settlements or payments recorded against this transfer. Remove those first."
+          s.returnedKg > 0.0001 && !s.returnType.equals("TRANSFER", true) && s.returnStoreKey.isNotBlank() -> {
+            val projected = SarimLinkEngine.projectedStoreStockAfterProductionDelete(
+              storeKey = s.returnStoreKey,
+              excludingProdId = s.returnEntryId,
+              production = state.productionEntries,
+              stockTransfers = state.stockTransfers,
+              settlements = state.settlements.filter { it.id != s.id },
+              sales = state.sales,
+            )
+            if (projected < -0.001) {
+              "Cannot delete: store stock on ${s.returnStoreKey} was already sold. Removing the ${SarimFormat.formatKg(s.returnedKg)} return would leave it short by ${SarimFormat.formatKg(abs(projected))}."
+            } else null
+          }
+          else -> null
+        }
+        if (blockReason != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockReason, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          val linkedSalesCount = JsonCodecs.decodeStrings(s.linkedSalesIdsJson).size
+          val linkedRepCount = JsonCodecs.decodeStrings(s.linkedRepSalesIdsJson).size
+          val impactMsg = buildString {
+            append("Delete ${s.repName} settlement (${SarimFormat.dateInput(s.fromDateEpoch)} → ${SarimFormat.dateInput(s.toDateEpoch)})?")
+            val hasImpact = linkedSalesCount > 0 || linkedRepCount > 0 ||
+              (s.returnedKg > 0.0 && s.returnStoreKey.isNotBlank()) || !s.transferSaleId.isNullOrBlank() || s.expiredKg > 0.0
+            if (hasImpact) {
+              append("\n\nThe following cascading changes will occur:")
+              if (linkedSalesCount > 0) append("\n • $linkedSalesCount linked delivery sale(s) will revert to Pending Credit.")
+              if (linkedRepCount > 0) append("\n • $linkedRepCount rep sale(s) will be restored to pending Calculator fields.")
+              if (s.returnedKg > 0.0 && !s.returnType.equals("TRANSFER", true) && s.returnStoreKey.isNotBlank()) {
+                append("\n • ${SarimFormat.formatKg(s.returnedKg)} will be removed from store inventory (return reversal).")
               }
-            },
+              if (!s.transferSaleId.isNullOrBlank()) {
+                append("\n • ${SarimFormat.formatKg(s.returnedKg)} transferred to ${s.returnRep ?: "rep"} will be removed from their sales allocation.")
+              }
+              if (s.expiredKg > 0.0) {
+                append("\n • ${SarimFormat.formatKg(s.expiredKg)} will be removed from CHORA raw material.")
+              }
+            }
+            append("\n\nThis cannot be undone.")
+          }
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Delete ${s.repName} Record",
+              body = impactMsg,
+              tone = DialogTone.PERMANENT,
+              confirmLabel = "Delete",
+              onConfirm = {
+                viewModel.launchSafely(
+                  errorTitle = "Delete Failed",
+                  successMessage = "Deleted settlement",
+                ) {
+                  viewModel.repository.deleteSettlement(s.id)
+                }
+              },
+            )
           )
-        )
+        }
       },
     )
   }
@@ -769,7 +857,8 @@ viewModel.launchSafely(
       caption = "Search or type a category, tap it, add the amount and save. The field shows the total paid.",
       categoryPlaceholder = "Search or type a category (e.g. Fuel)",
       initialItems = expenseItems,
-      knownCategories = listOf("Fuel", "Food", "Toll", "Repair", "Loading"),
+      knownCategories = state.fieldExpenseCategories,
+      onNewCategory = { cat -> viewModel.launchSafely { viewModel.repository.saveCategoryIfNew("field_expense_categories", cat) } },
       onDismiss = { showExpensesPopup = false },
       onSave = { expenseItems = it; showExpensesPopup = false },
     )
@@ -781,7 +870,8 @@ viewModel.launchSafely(
       caption = "Search or type a category, tap it, add the amount and save. The field shows the total paid.",
       categoryPlaceholder = "Search or type a category (e.g. Advance)",
       initialItems = commissionItems,
-      knownCategories = listOf("Advance", "Bonus", "Weekly Payout"),
+      knownCategories = state.commissionCategories,
+      onNewCategory = { cat -> viewModel.launchSafely { viewModel.repository.saveCategoryIfNew("commission_categories", cat) } },
       onDismiss = { showCommissionPopup = false },
       onSave = { commissionItems = it; showCommissionPopup = false },
     )
@@ -795,6 +885,7 @@ private fun LineItemsPopupDialog(
   categoryPlaceholder: String,
   initialItems: List<LineItemBreakdown>,
   knownCategories: List<String>,
+  onNewCategory: (String) -> Unit,
   onDismiss: () -> Unit,
   onSave: (List<LineItemBreakdown>) -> Unit,
 ) {
@@ -802,6 +893,7 @@ private fun LineItemsPopupDialog(
   var items by remember { mutableStateOf(initialItems) }
   var catText by remember { mutableStateOf("") }
   var amtText by remember { mutableStateOf("") }
+  var unsavedWarning by remember { mutableStateOf<String?>(null) }
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -888,9 +980,29 @@ private fun LineItemsPopupDialog(
           }
         }
         Text("Total paid: ${SarimFormat.formatRs(items.sumOf { it.amount })}", color = palette.amber, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+        unsavedWarning?.let { msg ->
+          SarimCallout(msg, palette.amber)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
           SarimSecondaryButton("Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), testTag = "popup_cancel_btn")
-          SarimPrimaryButton("Save", onClick = { onSave(items) }, modifier = Modifier.weight(1f), testTag = "popup_save_btn")
+          SarimPrimaryButton(
+            text = if (unsavedWarning != null) "Save Anyway" else "Save",
+            onClick = {
+              val pendingAmt = SarimFormat.parseSafeDouble(amtText) ?: 0.0
+              if (unsavedWarning == null && catText.isNotBlank() && pendingAmt > 0.0) {
+                unsavedWarning = "You entered \"${catText.trim()}\" (${SarimFormat.formatRs(pendingAmt)}) without tapping Add. Tap Add above first, or tap Save Anyway to skip it."
+              } else {
+                items.forEach { row ->
+                  if (knownCategories.none { it.equals(row.category, ignoreCase = true) }) {
+                    onNewCategory(row.category)
+                  }
+                }
+                onSave(items)
+              }
+            },
+            modifier = Modifier.weight(1f),
+            testTag = "popup_save_btn",
+          )
         }
       }
     }

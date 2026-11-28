@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.RolesHelper
 import com.example.data.model.UserRole
+import com.example.data.repository.SarimLinkEngine
 import com.example.data.repository.SarimSeedHelper
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
@@ -331,10 +332,18 @@ fun StoreManagerScreen(
 
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (editingStoreKey != null) {
+          val origStore = stores.firstOrNull { it.storeKey == editingStoreKey }
+          val hasEdits = origStore == null ||
+            formulas.getOrNull(formulaIndex - 1)?.id != origStore.formulaId ||
+            (SarimFormat.parseSafeDouble(salePriceText) ?: 0.0) != origStore.salePricePerKg
           SarimSecondaryButton(
             text = "Cancel",
             modifier = Modifier.weight(1f),
-            onClick = { editingStoreKey = null; storeName = ""; formulaIndex = 0; salePriceText = "0" },
+            onClick = {
+              viewModel.requestCancelEdit(hasEdits) {
+                editingStoreKey = null; storeName = ""; formulaIndex = 0; salePriceText = "0"
+              }
+            },
           )
         }
         SarimPrimaryButton(
@@ -419,19 +428,31 @@ fun StoreManagerScreen(
           }
           IconButton(
             onClick = {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Store",
-                  body = "Delete store ${st.name}?",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Store Failed") {
-                      viewModel.repository.deleteStore(st.storeKey)
-                    }
-                  },
+              val blockMsg = SarimLinkEngine.storeUsage(
+                storeKey = st.storeKey,
+                production = state.productionEntries,
+                factoryBatches = state.factoryBatches,
+                sales = state.sales,
+                returns = emptyList(),
+                stockTransfers = state.stockTransfers,
+              ).blockMessage(st.name)
+              if (blockMsg != null) {
+                viewModel.showDialog(AppDialogRequest("Cannot Delete Store", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+              } else {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Store",
+                    body = "Delete store ${st.name}? It will no longer appear in Production or Sales.",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Store Failed", successMessage = "Deleted store ${st.name}") {
+                        viewModel.repository.deleteStore(st.storeKey)
+                      }
+                    },
+                  )
                 )
-              )
+              }
             },
           ) {
             Icon(Icons.Rounded.Delete, contentDescription = "Delete store", tint = palette.red)

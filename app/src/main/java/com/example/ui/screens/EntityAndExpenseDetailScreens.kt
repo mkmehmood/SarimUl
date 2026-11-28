@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Search
@@ -22,8 +23,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.PaymentTransactionEntity
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -113,6 +116,52 @@ fun EntityDetailsScreen(
         IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }) {
           Icon(Icons.Rounded.Edit, contentDescription = "Edit entity", tint = palette.cyan)
         }
+        IconButton(
+          onClick = {
+            val blockMsg = SarimLinkEngine.getEntityDeleteBlockReason(
+              entity = entity,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
+            )
+            if (blockMsg != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete Entity",
+                  body = blockMsg,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+            } else {
+              val bal = entity.currentBalance
+              val balNote = if (kotlin.math.abs(bal) > 0.01) {
+                "\nCurrent ${if (bal >= 0) "Payable" else "Receivable"}: ${viewModel.redactMoney(SarimFormat.formatRs(kotlin.math.abs(bal)))}"
+              } else ""
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Entity",
+                  body = "Move ${entity.name} and ${txs.size} linked transaction(s) to Recycle Bin?$balNote",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(
+                      errorTitle = "Delete Failed",
+                      successMessage = "Deleted ${entity.name}",
+                      onSuccess = { viewModel.closeStandalone() },
+                    ) {
+                      viewModel.repository.deletePaymentEntity(entity.id)
+                    }
+                  },
+                )
+              )
+            }
+          }
+        ) {
+          Icon(Icons.Rounded.Delete, contentDescription = "Delete entity", tint = palette.red)
+        }
       }
     }
 
@@ -171,7 +220,43 @@ fun EntityDetailsScreen(
         monthSummary = { "" },
         daySummary = { "" },
         emptySubtitle = "No payment history found for ${entity.name}.",
-        actions = HistoryRecordActions<com.example.data.local.PaymentTransactionEntity>(
+        actions = HistoryRecordActions<PaymentTransactionEntity>(
+          deleteLabel = "Delete",
+          onDelete = { tx ->
+            val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
+              tx = tx,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
+            )
+            if (blockMsg != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete Payment",
+                  body = blockMsg,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+            } else {
+              val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Payment?",
+                  body = "${tx.type.replace("_", " ")} · ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}\nThis will reverse its effect on ${entity.name}'s balance.$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                      viewModel.repository.deletePaymentTransaction(tx.id)
+                    }
+                  },
+                )
+              )
+            }
+          },
           extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
           onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
           dayActionLabel = "Invoice",
@@ -288,31 +373,57 @@ fun ExpenseDetailsScreen(
             viewModel.showDialog(AppDialogRequest("Invalid Amount", "Enter a positive expense amount.", tone = DialogTone.ERROR, cancelLabel = null))
             return@SarimPrimaryButton
           }
-          viewModel.confirmSave(
-"Expense",
-listOf("Expense" to expenseName, "Amount" to quickAmount, "Note" to quickDesc),
-isUpdate = false,
-) {
-viewModel.launchSafely(
-            errorTitle = "Save Expense Failed",
-            successMessage = "Saved $expenseName expense",
-            onSuccess = {
-              quickAmount = ""
-              quickDesc = ""
-            },
-          ) {
-            viewModel.repository.savePaymentTransaction(
-              editingId = null,
-              dateEpoch = System.currentTimeMillis(),
-              type = "EXPENSE",
-              name = expenseName,
-              amount = amt,
-              description = quickDesc,
-              photoUri = "",
-              addToLedger = false,
+          val cashNow = SarimLinkEngine.computeCashInHandBreakdown(
+            sales = state.sales,
+            settlements = state.settlements,
+            payments = state.paymentTransactions,
+            factoryBatches = state.factoryBatches,
+          ).netCash
+          if (amt > cashNow + 0.01) {
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Low Cash in Hand",
+                body = viewModel.redactMoney(
+                  "Insufficient cash in hand.\nAvailable: ${SarimFormat.formatRs(cashNow.coerceAtLeast(0.0))}\nRequired: ${SarimFormat.formatRs(amt)}",
+                  "Insufficient cash in hand.",
+                ),
+                tone = DialogTone.ERROR,
+                confirmLabel = "OK",
+                cancelLabel = null,
+              )
             )
+            return@SarimPrimaryButton
           }
-}
+          viewModel.confirmSave(
+            "Expense",
+            listOf(
+              "Expense" to expenseName,
+              "Amount" to viewModel.redactMoney(SarimFormat.formatRs(amt)),
+              "Note" to quickDesc.ifBlank { "—" },
+            ),
+            isUpdate = false,
+          ) {
+            viewModel.launchSafely(
+              errorTitle = "Save Expense Failed",
+              successMessage = "Saved $expenseName expense",
+              onSuccess = {
+                quickAmount = ""
+                quickDesc = ""
+              },
+            ) {
+              viewModel.repository.savePaymentTransaction(
+                editingId = null,
+                dateEpoch = System.currentTimeMillis(),
+                type = "EXPENSE",
+                name = expenseName,
+                amount = amt,
+                description = quickDesc,
+                photoUri = "",
+                addToLedger = false,
+              )
+              viewModel.repository.saveCategoryIfNew("categories", expenseName)
+            }
+          }
         },
       )
       Text("* Adds a new expense record under \"$expenseName\" for today's date.", color = palette.textMuted, fontSize = 11.5.sp)
@@ -342,7 +453,43 @@ viewModel.launchSafely(
         monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         emptySubtitle = "No expense records for $expenseName in this range.",
-        actions = HistoryRecordActions<com.example.data.local.PaymentTransactionEntity>(
+        actions = HistoryRecordActions<PaymentTransactionEntity>(
+          deleteLabel = "Delete",
+          onDelete = { tx ->
+            val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
+              tx = tx,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
+            )
+            if (blockMsg != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete Expense",
+                  body = blockMsg,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+            } else {
+              val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Expense?",
+                  body = "$expenseName · ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                      viewModel.repository.deletePaymentTransaction(tx.id)
+                    }
+                  },
+                )
+              )
+            }
+          },
           extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
           onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
         ),
@@ -354,22 +501,52 @@ viewModel.launchSafely(
         text = "Delete All Expenses",
         modifier = Modifier.fillMaxWidth(),
         onClick = {
-          viewModel.showDialog(
-            AppDialogRequest(
-              title = "Delete All Expenses",
-              body = "Delete all $expenseName expense records?",
-              tone = DialogTone.PERMANENT,
-              confirmLabel = "Delete All",
-              onConfirm = {
-                viewModel.launchSafely(
-                  errorTitle = "Delete Failed",
-                  onSuccess = { viewModel.closeStandalone() },
-                ) {
-                  viewModel.repository.deleteAllExpensesByName(expenseName)
-                }
-              },
+          val allNameTxs = state.paymentTransactions.filter {
+            !it.isDeleted && it.type == "EXPENSE" && it.entityOrExpenseName.equals(expenseName, ignoreCase = true)
+          }
+          val blockMsg = allNameTxs.firstNotNullOfOrNull { tx ->
+            SarimLinkEngine.getPaymentTxDeleteBlockReason(
+              tx = tx,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
             )
-          )
+          }
+          if (blockMsg != null) {
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Cannot Delete All Expenses",
+                body = blockMsg,
+                tone = DialogTone.ERROR,
+                confirmLabel = "OK",
+                cancelLabel = null,
+              )
+            )
+          } else {
+            val totalAmt = allNameTxs.sumOf { it.amount }
+            val linkedCount = allNameTxs.count { it.addToLedger && !it.ledgerId.isNullOrBlank() }
+            val minDate = allNameTxs.minOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
+            val maxDate = allNameTxs.maxOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
+            val ledgerLine = if (linkedCount > 0) "\n$linkedCount linked Daily Ledger entry/entries will also be removed." else ""
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Delete All Expenses",
+                body = "Delete ${allNameTxs.size} $expenseName expense record(s) totaling ${viewModel.redactMoney(SarimFormat.formatRs(totalAmt))} ($minDate to $maxDate)?$ledgerLine\n\nMoves to Recycle Bin for 90 days.",
+                tone = DialogTone.PERMANENT,
+                confirmLabel = "Delete All",
+                onConfirm = {
+                  viewModel.launchSafely(
+                    errorTitle = "Delete Failed",
+                    successMessage = "Deleted all $expenseName expenses",
+                    onSuccess = { viewModel.closeStandalone() },
+                  ) {
+                    viewModel.repository.deleteAllExpensesByName(expenseName)
+                  }
+                },
+              )
+            )
+          }
         },
       )
     }

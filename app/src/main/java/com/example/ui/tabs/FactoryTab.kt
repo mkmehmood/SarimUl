@@ -15,16 +15,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.backup.YearCloseMerge
 import com.example.data.local.FactoryBatchEntity
 import com.example.data.local.FormulaEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
 import com.example.data.repository.FormulaCalculator
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import com.example.util.DialogTone
 import com.example.util.SarimDisplayNames
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
@@ -128,7 +131,13 @@ fun FactoryTab(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
           Text(if (editingBatchId == null) "New Production Entry" else "Edit Factory Batch", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           if (editingBatchId != null) {
-            TextButton(onClick = { editingBatchId = null; unitsText = "1" }) {
+            val origBatch = state.factoryBatches.firstOrNull { it.id == editingBatchId }
+            val hasEdits = origBatch == null ||
+              selectedFormulaId != origBatch.formulaId ||
+              unitsInt != origBatch.unitsProduced.toInt().coerceAtLeast(1)
+            TextButton(onClick = {
+              viewModel.requestCancelEdit(hasEdits) { editingBatchId = null; unitsText = "1" }
+            }) {
               Text("Cancel Edit", color = palette.amber)
             }
           }
@@ -233,19 +242,51 @@ fun FactoryTab(
               return@SarimPrimaryButton
             }
             val editId = editingBatchId
-            viewModel.confirmSave(
-"Production",
-listOf("Formula" to selectedFormula.name, "Units" to unitsInt.toString(), "Date" to SarimFormat.formatDate(factoryDate)),
-isUpdate = editId != null,
-) {
-viewModel.launchSafely(
-              errorTitle = "Batch Save Failed",
-              successMessage = if (editId == null) "Factory batch saved for ${selectedFormula.name}" else "Factory batch updated for ${selectedFormula.name}",
-              onSuccess = { editingBatchId = null; unitsText = "1" },
-            ) {
-              viewModel.repository.saveFactoryBatch(factoryDate, selectedFormula, unitsInt.toDouble(), editingId = editId)
+            val origBatch = editId?.let { id -> state.factoryBatches.firstOrNull { it.id == id } }
+            val matsById = state.rawMaterials.filter { !it.isDeleted }.associateBy { it.id }
+            val formulasById = liveFormulas.associateBy { it.id }
+            val restoredByMatId = origBatch?.let { ob ->
+              JsonCodecs.decodeFormulaMaterialsUsed(ob.materialsUsedJson)
+                .groupBy { it.id }
+                .mapValues { (_, list) -> list.sumOf { it.quantity } }
+            }.orEmpty()
+            val neededFlattened = FormulaCalculator.flattenRawMaterials(selectedFormula, unitsInt.toDouble(), formulasById, matsById)
+            val stockShortages = neededFlattened.mapNotNull { (matId, needKg) ->
+              val mat = matsById[matId]
+              if (mat == null) {
+                "• Material ($matId): not in inventory"
+              } else {
+                val available = mat.stockKg + (restoredByMatId[matId] ?: 0.0)
+                if (available + 1e-6 < needKg) {
+                  "• ${mat.name}: need ${SarimFormat.formatKg(needKg)}, available ${SarimFormat.formatKg(available)} (short ${SarimFormat.formatKg(needKg - available)})"
+                } else null
+              }
             }
-}
+            if (stockShortages.isNotEmpty()) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Insufficient Stock!",
+                  body = "Not enough raw materials to produce $unitsInt unit(s) of ${selectedFormula.name}:\n\n${stockShortages.joinToString("\n")}",
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+              return@SarimPrimaryButton
+            }
+            viewModel.confirmSave(
+              "Production",
+              listOf("Formula" to selectedFormula.name, "Units" to unitsInt.toString(), "Date" to SarimFormat.formatDate(factoryDate)),
+              isUpdate = editId != null,
+            ) {
+              viewModel.launchSafely(
+                errorTitle = "Batch Save Failed",
+                successMessage = if (editId == null) "Factory batch saved for ${selectedFormula.name}" else "Factory batch updated for ${selectedFormula.name}",
+                onSuccess = { editingBatchId = null; unitsText = "1" },
+              ) {
+                viewModel.repository.saveFactoryBatch(factoryDate, selectedFormula, unitsInt.toDouble(), editingId = editId)
+              }
+            }
           },
         )
       }
@@ -435,28 +476,66 @@ viewModel.launchSafely(
       } else null,
       onDismiss = { sheetBatch = null },
       onEdit = {
-        editingBatchId = b.id
-        factoryDate = b.dateEpoch
-        selectedFormulaId = b.formulaId
-        unitsText = b.unitsProduced.toInt().coerceAtLeast(1).toString()
+        val formula = state.formulas.firstOrNull { !it.isDeleted && it.id == b.formulaId }
+        val blockReason = when {
+          YearCloseMerge.isMergedId(b.id) -> "Merged opening balance records cannot be edited directly."
+          else -> SarimLinkEngine.getFactoryBatchDeleteBlockReason(b, formula, state.factoryBatches, state.productionEntries)
+            ?.replace("Cannot delete batch:", "Cannot edit batch:")
+        }
+        if (blockReason != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockReason, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          editingBatchId = b.id
+          factoryDate = b.dateEpoch
+          selectedFormulaId = b.formulaId
+          unitsText = b.unitsProduced.toInt().coerceAtLeast(1).toString()
+        }
       },
       deleteLabel = "Delete & Restore",
       onDelete = {
-        viewModel.showDialog(
-          AppDialogRequest(
-            title = "Delete Factory Batch",
-            body = "Restore raw materials and move this ${b.formulaName} batch to Recycle Bin?",
-            confirmLabel = "Delete",
-            onConfirm = {
-              viewModel.launchSafely(
-                errorTitle = "Delete Failed",
-                successMessage = "Deleted factory batch",
-              ) {
-                viewModel.repository.deleteFactoryBatch(b.id)
-              }
-            },
+        val formula = state.formulas.firstOrNull { !it.isDeleted && it.id == b.formulaId }
+        val blockReason = when {
+          YearCloseMerge.isMergedId(b.id) -> "Merged opening balance records cannot be deleted."
+          else -> SarimLinkEngine.getFactoryBatchDeleteBlockReason(b, formula, state.factoryBatches, state.productionEntries)
+        }
+        if (blockReason != null) {
+          viewModel.showDialog(AppDialogRequest("Action Not Allowed", blockReason, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+        } else {
+          val restoreLines = usedMats.joinToString("\n") { mat ->
+            val matName = SarimDisplayNames.materialName(mat.id, mat.name, state.rawMaterials, state.formulas)
+            " • $matName: ${SarimFormat.formatKg(mat.quantity)} restored"
+          }
+          val msg = buildString {
+            append("Delete this factory production batch permanently?")
+            append("\nFormula: ${b.formulaName}")
+            append("\nDate: ${SarimFormat.dateInput(b.dateEpoch)}")
+            append("\nUnits Produced: ${SarimFormat.formatQty(b.unitsProduced, 1)}")
+            if (b.totalCost > 0.0) append("\nTotal Cost: ${SarimFormat.formatRs(b.totalCost, false, hideMoney)}")
+            if (restoreLines.isNotBlank()) {
+              append("\n\n↩ Raw materials restored to inventory:\n$restoreLines")
+            } else {
+              append("\n\n↩ Raw materials used in this batch will be restored to inventory.")
+            }
+            append("\n\n⚠ Sales already made from this batch will NOT be reversed — but available stock will change.")
+            append("\n\nThis cannot be undone.")
+          }
+          viewModel.showDialog(
+            AppDialogRequest(
+              title = "Delete Factory Production",
+              body = msg,
+              tone = DialogTone.PERMANENT,
+              confirmLabel = "Delete",
+              onConfirm = {
+                viewModel.launchSafely(
+                  errorTitle = "Delete Failed",
+                  successMessage = "Deleted factory batch",
+                ) {
+                  viewModel.repository.deleteFactoryBatch(b.id)
+                }
+              },
+            )
           )
-        )
+        }
       },
     )
   }

@@ -44,6 +44,9 @@ class InMemorySarimDao : SarimDao {
   override suspend fun getKvByUserKey(userKey: String): KvStoreEntity? = kv.values.firstOrNull { it.userKey == userKey }
   override suspend fun getAllKv(): List<KvStoreEntity> = kv.values.toList()
   override fun observeAllKvKeys(): Flow<List<String>> = flowOf(kv.keys.sorted())
+  override fun observeCategoryAndRepKv(): Flow<List<KvStoreEntity>> = flowOf(
+    kv.values.filter { it.userKey in setOf("categories", "field_expense_categories", "commission_categories", "reps") }
+  )
   override suspend fun getKvMetaAll(): List<KvMetaRow> = kv.values.sortedBy { it.fullKey }.map {
     KvMetaRow(it.fullKey, it.userKey, it.uid, it.collection, it.rowType, it.encrypted, it.ts, it.createdAt, it.value?.length ?: 0, it.value?.toByteArray()?.size ?: 0, it.value == null)
   }

@@ -24,10 +24,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.local.JsonCodecs
+import com.example.data.local.RawMaterialPurchaseEntity
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import com.example.util.DialogChoice
 import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
@@ -191,10 +194,35 @@ fun AddEntityScreen(
           text = "Delete",
           modifier = Modifier.weight(1f),
           onClick = {
+            val blockReason = SarimLinkEngine.getEntityDeleteBlockReason(
+              entity = editingEntity,
+              allTxs = state.paymentTransactions,
+              sales = state.sales,
+              settlements = state.settlements,
+              factoryBatches = state.factoryBatches,
+            )
+            if (blockReason != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete Entity",
+                  body = blockReason,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
+              )
+              return@SarimDangerButton
+            }
+            val linkedCount = state.paymentTransactions.count { !it.isDeleted && it.entityId == editingEntity.id }
+            val balNote = if (kotlin.math.abs(editingEntity.currentBalance) > 0.01) {
+              val kind = if (editingEntity.currentBalance >= 0) "Payable" else "Receivable"
+              "\nBalance ($kind): ${viewModel.redactMoney(SarimFormat.formatRs(kotlin.math.abs(editingEntity.currentBalance)))}"
+            } else ""
+            val txNote = if (linkedCount > 0) "\nLinked transactions: $linkedCount" else ""
             viewModel.showDialog(
               AppDialogRequest(
                 title = "Delete Entity",
-                body = "Permanently delete ${editingEntity.name}?",
+                body = "Move ${editingEntity.name} to Recycle Bin?$balNote$txNote",
                 tone = DialogTone.PERMANENT,
                 confirmLabel = "Delete",
                 onConfirm = {
@@ -280,6 +308,10 @@ fun AddRawMaterialScreen(
   val materials = remember(state.rawMaterials) { state.rawMaterials.filter { !it.isDeleted } }
   val initialMat = remember(materialId, materials) { materialId?.let { id -> materials.firstOrNull { it.id == id } } }
 
+  var editingLotId by remember { mutableStateOf<String?>(null) }
+  val editingLot = remember(editingLotId, state.purchases) {
+    editingLotId?.let { id -> state.purchases.firstOrNull { it.id == id && !it.isDeleted } }
+  }
   var materialName by remember(initialMat) { mutableStateOf(initialMat?.name ?: "") }
   var dateEpoch by remember { mutableLongStateOf(System.currentTimeMillis()) }
   var unitName by remember(initialMat) { mutableStateOf(initialMat?.unitName ?: "bag") }
@@ -290,6 +322,30 @@ fun AddRawMaterialScreen(
   var existingSupplierName by remember { mutableStateOf("") }
   var newSupplierName by remember { mutableStateOf("") }
   var newSupplierPhone by remember { mutableStateOf("") }
+
+  fun clearEditForm() {
+    editingLotId = null
+    qtyText = ""
+    costPerUnitText = ""
+    supplierMode = "NONE"
+    existingSupplierName = ""
+    newSupplierName = ""
+    newSupplierPhone = ""
+  }
+
+  fun loadLotIntoEditor(p: RawMaterialPurchaseEntity) {
+    editingLotId = p.id
+    materialName = p.materialName
+    dateEpoch = p.dateEpoch
+    unitName = p.unitName
+    qtyText = p.unitsBought.toString()
+    weightPerUnitText = p.weightPerUnitKg.toString()
+    costPerUnitText = p.costPerUnit.toString()
+    supplierMode = p.supplierMode.ifBlank { "NONE" }
+    existingSupplierName = p.supplierName.orEmpty()
+    newSupplierName = ""
+    newSupplierPhone = ""
+  }
 
   val matchedMaterial = remember(materialName, materials) {
     materials.firstOrNull { it.name.equals(materialName.trim(), ignoreCase = true) }
@@ -323,15 +379,47 @@ fun AddRawMaterialScreen(
             .padding(horizontal = 16.dp, vertical = 10.dp),
           horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-          if (matchedMaterial != null) {
+          if (editingLot != null) {
+            SarimSecondaryButton(
+              text = "Cancel Edit",
+              modifier = Modifier.weight(1f),
+              onClick = {
+                viewModel.requestCancelEdit(hasChanges = true) {
+                  clearEditForm()
+                }
+              },
+            )
+          } else if (matchedMaterial != null) {
             SarimDangerButton(
               text = "Delete Material",
               modifier = Modifier.weight(1f),
               onClick = {
+                val usedFormulas = state.formulas.filter { f ->
+                  !f.isDeleted && JsonCodecs.decodeIngredients(f.ingredientsJson).any {
+                    it.refType.equals("MATERIAL", ignoreCase = true) && it.refId == matchedMaterial.id
+                  }
+                }
+                if (usedFormulas.isNotEmpty()) {
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Cannot Delete Material",
+                      body = "${matchedMaterial.name} is still used in formula(s): ${usedFormulas.joinToString { it.name }}. Remove it from those formulas first.",
+                      tone = DialogTone.ERROR,
+                      confirmLabel = "OK",
+                      cancelLabel = null,
+                    )
+                  )
+                  return@SarimDangerButton
+                }
+                val matLots = state.purchases.filter { !it.isDeleted && it.materialId == matchedMaterial.id }
+                val totalVal = matchedMaterial.stockKg * matchedMaterial.avgCostPerKg
+                val supPayableNote = if (matchedMaterial.pendingSupplierAmount > 0.01) {
+                  "\nPending supplier payables reversed: ${viewModel.redactMoney(SarimFormat.formatRs(matchedMaterial.pendingSupplierAmount))}"
+                } else ""
                 viewModel.showDialog(
                   AppDialogRequest(
                     title = "Delete Material",
-                    body = "Delete ${matchedMaterial.name} from inventory?",
+                    body = "Delete ${matchedMaterial.name} from inventory?\nIn Stock: ${SarimFormat.formatKg(matchedMaterial.stockKg)} (${viewModel.redactMoney(SarimFormat.formatRs(totalVal))})\nPurchase lots removed: ${matLots.size}$supPayableNote\n\nMoves to Recycle Bin for 90 days.",
                     tone = DialogTone.PERMANENT,
                     confirmLabel = "Delete",
                     onConfirm = {
@@ -349,7 +437,7 @@ fun AddRawMaterialScreen(
             )
           }
           SarimPrimaryButton(
-            text = "Save Purchase",
+            text = if (editingLot != null) "Update Purchase" else "Save Purchase",
             modifier = Modifier.weight(1f),
             testTag = "save_purchase_btn",
             onClick = {
@@ -410,33 +498,63 @@ fun AddRawMaterialScreen(
                 }
               }
 
-              viewModel.confirmSave(
-"Inventory Item",
-listOf("Material" to cleanMat, "Quantity" to unitsBought.toString(), "Unit" to unitName, "Cost" to costPerUnit.toString()),
-isUpdate = false,
-) {
-viewModel.launchSafely(
-                errorTitle = "Purchase Save Failed",
-                successMessage = "Saved raw material purchase ($cleanMat)",
-                onSuccess = {
-                  qtyText = ""
-                  costPerUnitText = ""
-                },
-              ) {
-                viewModel.repository.saveRawMaterialPurchase(
-                  materialName = cleanMat,
-                  dateEpoch = dateEpoch,
-                  unitName = unitName,
-                  unitsBought = unitsBought,
-                  weightPerUnitKg = wtPerUnit,
-                  costPerUnit = costPerUnit,
-                  supplierMode = supplierMode,
-                  existingSupplier = selectedExistingSupplier,
-                  newSupplierName = newSupplierName,
-                  newSupplierPhone = newSupplierPhone,
-                )
+              fun executePurchaseSave(adjustPayable: Boolean) {
+                viewModel.launchSafely(
+                  errorTitle = "Purchase Save Failed",
+                  successMessage = if (editingLot != null) "Updated purchase ($cleanMat)" else "Saved raw material purchase ($cleanMat)",
+                  onSuccess = { clearEditForm() },
+                ) {
+                  viewModel.repository.saveRawMaterialPurchase(
+                    materialName = cleanMat,
+                    dateEpoch = dateEpoch,
+                    unitName = unitName,
+                    unitsBought = unitsBought,
+                    weightPerUnitKg = wtPerUnit,
+                    costPerUnit = costPerUnit,
+                    supplierMode = supplierMode,
+                    existingSupplier = selectedExistingSupplier,
+                    newSupplierName = newSupplierName,
+                    newSupplierPhone = newSupplierPhone,
+                    editingLotId = editingLot?.id,
+                    adjustSupplierPayable = adjustPayable,
+                  )
+                }
               }
-}
+
+              if (editingLot != null &&
+                editingLot.supplierMode == "EXISTING" &&
+                supplierMode == "EXISTING" &&
+                !editingLot.supplierId.isNullOrBlank() &&
+                selectedExistingSupplier?.id == editingLot.supplierId &&
+                kotlin.math.abs(totalAmt - editingLot.totalAmount) > 0.01
+              ) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Update Supplier Payable?",
+                    body = "Purchase total changed from ${viewModel.redactMoney(SarimFormat.formatRs(editingLot.totalAmount))} to ${viewModel.redactMoney(SarimFormat.formatRs(totalAmt))} for ${selectedExistingSupplier.name}.\n\nUpdate their payable balance as well?",
+                    tone = DialogTone.CONFIRM,
+                    choices = listOf(
+                      DialogChoice("adjust", "Update Payable", "Adjust supplier balance to match the new total"),
+                      DialogChoice("keep", "Keep Old Payable", "Update stock and cost without changing supplier balance"),
+                    ),
+                    cancelLabel = "Cancel",
+                    onChoiceSelected = { choice -> executePurchaseSave(adjustPayable = choice == "adjust") },
+                  )
+                )
+              } else {
+                viewModel.confirmSave(
+                  "Inventory Item",
+                  listOf(
+                    "Material" to cleanMat,
+                    "Quantity" to "${SarimFormat.formatQty(unitsBought, 2)} $unitName (${SarimFormat.formatKg(stockKgAdd)})",
+                    "Cost / Unit" to viewModel.redactMoney(SarimFormat.formatRs(costPerUnit)),
+                    "Total" to viewModel.redactMoney(SarimFormat.formatRs(totalAmt)),
+                  ),
+                  isUpdate = editingLot != null,
+                ) {
+                  executePurchaseSave(adjustPayable = true)
+                }
+              }
             },
           )
         }
@@ -622,25 +740,45 @@ viewModel.launchSafely(
           monthSummary = { items -> "${SarimFormat.formatKg(items.sumOf { it.item.totalKg })} · ${SarimFormat.formatRs(items.sumOf { it.item.totalAmount }, showSymbol = false, privacyHidden = state.hideMoneyFigures)}" },
           daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.totalKg }) },
           emptySubtitle = "No purchases recorded yet.",
-          actions = HistoryRecordActions<com.example.data.local.RawMaterialPurchaseEntity>(
+          actions = HistoryRecordActions<RawMaterialPurchaseEntity>(
+            editLabel = "Edit",
+            onEdit = { p -> loadLotIntoEditor(p) },
             deleteLabel = "Delete Purchase",
             onDelete = { p ->
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Purchase Lot",
-                  body = "Deduct ${SarimFormat.formatKg(p.totalKg)} from ${p.materialName} and move this purchase to Recycle Bin?",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(
-                      errorTitle = "Delete Purchase Failed",
-                      successMessage = "Deleted purchase lot",
-                    ) {
-                      viewModel.repository.deletePurchaseLot(p.id)
-                    }
-                  },
+              val lotMat = materials.firstOrNull { it.id == p.materialId } ?: matchedMaterial
+              val blockMsg = SarimLinkEngine.getPurchaseLotDeleteBlockReason(p, lotMat)
+              if (blockMsg != null) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Cannot Delete Purchase Lot",
+                    body = blockMsg,
+                    tone = DialogTone.ERROR,
+                    confirmLabel = "OK",
+                    cancelLabel = null,
+                  )
                 )
-              )
+              } else {
+                val payableNote = if (!p.supplierId.isNullOrBlank() && p.totalPayable > 0.01) {
+                  "\nSupplier payable reduced by: ${viewModel.redactMoney(SarimFormat.formatRs(p.totalPayable))}"
+                } else ""
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Delete Purchase Lot",
+                    body = "Deduct ${SarimFormat.formatKg(p.totalKg)} from ${p.materialName}$payableNote and move this purchase to Recycle Bin?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(
+                        errorTitle = "Delete Purchase Failed",
+                        successMessage = "Deleted purchase lot",
+                        onSuccess = { if (editingLotId == p.id) clearEditForm() },
+                      ) {
+                        viewModel.repository.deletePurchaseLot(p.id)
+                      }
+                    },
+                  )
+                )
+              }
             },
           ),
         )

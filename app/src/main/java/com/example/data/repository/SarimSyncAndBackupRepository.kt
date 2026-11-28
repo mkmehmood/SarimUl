@@ -2069,6 +2069,9 @@ class SarimSyncAndBackupRepository(
   private suspend fun removeTombstoneAndEnqueueCloudDelete(docId: String, now: Long) =
     recycleRestoreEngine.removeTombstoneAndEnqueueCloudDelete(docId, now)
 
+  suspend fun previewRecycleRestore(item: RecycleBinRecord): RecycleRestorePreview =
+    recycleRestoreEngine.previewRecycleRestore(item)
+
   suspend fun restoreRecycleItem(item: RecycleBinRecord) =
     recycleRestoreEngine.restoreRecycleItem(item)
 
@@ -2114,6 +2117,19 @@ class SarimSyncAndBackupRepository(
 
   suspend fun emptyRecycleBin() {
     getRecycleBinItems().forEach { deleteForeverRecycleItem(it) }
+  }
+
+  suspend fun emptyRecycleBinFiltered(items: List<RecycleBinRecord>) {
+    if (items.isEmpty()) return
+    val allDeletions = dao.getAllDeletions()
+    val groupByRecId = allDeletions.associateBy({ it.recordId.ifBlank { it.id } }, { it.groupId })
+    val selectedIds = items.map { it.id }.toSet()
+    val selectedGroups = selectedIds.mapNotNull { groupByRecId[it] }.filter { it.isNotBlank() }.toSet()
+    val allRecycle = getRecycleBinItems()
+    val targets = allRecycle.filter { rec ->
+      rec.id in selectedIds || (groupByRecId[rec.id] in selectedGroups)
+    }
+    (targets.ifEmpty { items }).forEach { deleteForeverRecycleItem(it) }
   }
 
   private suspend fun recordDedupDeletion(collection: String, docId: String, now: Long) {
@@ -2307,8 +2323,16 @@ class SarimSyncAndBackupRepository(
     for (k in BACKUP_STRING_LISTS) {
       root.put(k, JSONArray(JsonCodecs.decodeStrings(dao.getKvByUserKey(k)?.value ?: "[]")))
     }
-    root.put("photos", JSONObject())
-    root.put("photostamps", JSONObject())
+    val photosObj = JSONObject()
+    val photoStampsObj = JSONObject()
+    dao.getAllActivePhotos().forEach { ph ->
+      if (ph.photoKey.isNotBlank() && !ph.data.isNullOrBlank()) {
+        photosObj.put(ph.photoKey, ph.data)
+        photoStampsObj.put(ph.photoKey, ph.updatedAt)
+      }
+    }
+    root.put("photos", photosObj)
+    root.put("photostamps", photoStampsObj)
 
     return root.toString(2)
   }
@@ -2334,6 +2358,57 @@ class SarimSyncAndBackupRepository(
     )
     dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_timestamp", userKey = "${userKey}_timestamp", collection = userKey, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
     dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_dirty", userKey = "${userKey}_dirty", collection = userKey, rowType = "meta", value = "1", ts = now, createdAt = now))
+  }
+
+  /** Replace stored list (case-insensitive dedup) for year-close restore parity. */
+  suspend fun replaceKvStringList(userKey: String, incoming: List<String>) {
+    val existing = dao.getKvByUserKey(userKey)
+    val next = incoming.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
+    val now = System.currentTimeMillis()
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = userKey,
+        userKey = userKey,
+        collection = if (userKey == "reps") SarimWebSchema.COL_SETTINGS else userKey,
+        rowType = "settings",
+        value = JsonCodecs.encodeStrings(next),
+        ts = now,
+        createdAt = existing?.createdAt ?: now,
+      )
+    )
+    dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_timestamp", userKey = "${userKey}_timestamp", collection = userKey, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
+    dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_dirty", userKey = "${userKey}_dirty", collection = userKey, rowType = "meta", value = "1", ts = now, createdAt = now))
+  }
+
+  /** Merge backup `photos` & `photostamps` into Room so backup/restore preserves transaction photos. */
+  suspend fun mergeBackupPhotos(root: JSONObject, markPending: Boolean = true): Int {
+    val photosObj = root.optJSONObject("photos") ?: return 0
+    val stampsObj = root.optJSONObject("photostamps")
+    val existing = dao.getAllPhotos().associateBy { it.photoKey }
+    val now = System.currentTimeMillis()
+    var count = 0
+    val keys = photosObj.keys()
+    while (keys.hasNext()) {
+      val k = keys.next()
+      val data = photosObj.optString(k, "")
+      if (k.isBlank() || data.isBlank()) continue
+      val stamp = stampsObj?.optLong(k, now)?.takeIf { it > 0L } ?: now
+      val cur = existing[k]
+      if (cur == null || cur.deleted || stamp >= cur.updatedAt) {
+        dao.upsertPhoto(
+          PhotoRecordEntity(
+            photoKey = k,
+            docId = SarimWebSchema.photoDocId(k),
+            data = data,
+            deleted = false,
+            updatedAt = stamp,
+            syncPending = markPending,
+          )
+        )
+        count++
+      }
+    }
+    return count
   }
 
   /**

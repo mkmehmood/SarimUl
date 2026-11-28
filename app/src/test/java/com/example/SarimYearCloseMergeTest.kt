@@ -98,4 +98,39 @@ class SarimYearCloseMergeTest {
     val all = BackupRestoreLogic.planYearCloseRestore(current, backup, setOf("s2"), false, 500, emptySet())
     assertEquals(listOf("s1", "s2", "post1"), all.replaceData["sales"]!!.map { it["id"] })
   }
+
+  @Test fun mergeRestoreFiltersRepNamesOutOfCustomersAndYearCloseReplacesInventory() {
+    val mergePlan = BackupRestoreLogic.planMergeRestore(
+      local = emptyMap(),
+      backup = mapOf(
+        "customers" to listOf(
+          mapOf("id" to "c_rep", "name" to "Farman", "updatedAt" to 100L),
+          mapOf("id" to "c_dir", "name" to "Noor Trader", "updatedAt" to 100L),
+        )
+      ),
+      deleted = emptySet(),
+      repNames = setOf("farman"),
+    )
+    assertEquals(listOf("c_dir"), mergePlan.toApply["customers"]!!.map { it["id"] })
+
+    val closeRestore = BackupRestoreLogic.planYearCloseRestore(
+      current = mapOf(
+        "inventory" to listOf(mapOf("id" to "m_post", "name" to "Post Close Mat", "createdAt" to 900L)),
+        "entities" to listOf(mapOf("id" to "e_post", "name" to "Post Ent", "createdAt" to 900L)),
+        "clients" to listOf(mapOf("id" to "cl_post", "name" to "New Rep Client", "createdAt" to 900L)),
+      ),
+      backup = mapOf(
+        "inventory" to listOf(mapOf("id" to "m_old", "name" to "Pre Close Mat", "createdAt" to 100L)),
+        "entities" to listOf(mapOf("id" to "e_old", "name" to "Pre Ent", "createdAt" to 100L)),
+        "clients" to listOf(mapOf("id" to "cl_old", "name" to "Old Rep Client", "createdAt" to 100L)),
+      ),
+      deleted = emptySet(),
+      honourPostCloseDeletions = true,
+      backupCreatedAt = 500L,
+      repNames = setOf("Farman"),
+    )
+    assertEquals(listOf("m_old"), closeRestore.replaceData["inventory"]!!.map { it["id"] })
+    assertEquals(listOf("e_old"), closeRestore.replaceData["entities"]!!.map { it["id"] })
+    assertEquals(setOf("cl_old", "cl_post"), closeRestore.replaceData["clients"]!!.map { it["id"] }.toSet())
+  }
 }
