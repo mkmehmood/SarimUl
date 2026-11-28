@@ -153,31 +153,31 @@ object StatementShare {
     closing: String,
   ): String {
     val out = mutableListOf<String>()
-    fun add(t: String) = out.add(if (t.isEmpty()) "" else RLM + t)
-    add("*گل اینڈ زبیر نسوار ڈیلرز*")
-    add("${kind.urduTitle} · $rangeLabel")
-    add("")
-    add("نام: $name")
-    if (phone.isNotBlank() && phone != "N/A") add("فون: $LRM$phone$LRM")
-    add("تاریخ اجراء: $dateLabel")
+    fun emit(t: String) = out.add(if (t.isEmpty()) "" else RLM + t)
+    emit("*گل اینڈ زبیر نسوار ڈیلرز*")
+    emit("${kind.urduTitle} · $rangeLabel")
+    emit("")
+    emit("نام: $name")
+    if (phone.isNotBlank() && phone != "N/A") emit("فون: $LRM$phone$LRM")
+    emit("تاریخ اجراء: $dateLabel")
     if (lines.isNotEmpty()) {
-      add("")
-      add("------------------------")
+      emit("")
+      emit("------------------------")
       lines.forEach { r ->
-        val parts = buildList {
+        val parts = buildList<String> {
           add(URDU_KIND[r.type] ?: r.type)
           if (r.details.isNotBlank() && r.type != "OPENING") add(r.details)
           if (r.debit.isNotBlank()) add("بل: ${r.debit}")
           if (r.credit.isNotBlank()) add("وصولی: ${r.credit}")
           if (r.balance.isNotBlank()) add("بقایا: ${r.balance}")
         }
-        add("\u2022 ${r.date} | ${parts.joinToString(" | ")}")
+        emit("\u2022 ${r.date} | ${parts.joinToString(" | ")}")
       }
     }
     if (closing.isNotBlank()) {
-      add("")
-      add("------------------------")
-      add("*کل بقایا: $closing*")
+      emit("")
+      emit("------------------------")
+      emit("*کل بقایا: $closing*")
     }
     return out.joinToString("\n")
   }
