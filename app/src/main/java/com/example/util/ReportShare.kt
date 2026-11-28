@@ -18,7 +18,7 @@ data class ReportSpec(
   val summary: List<Pair<String, String>>,
   val closingLabel: String,
   val closingValue: String,
-  val accent: Int = Color.rgb(6, 78, 59),
+  val accent: Int = Color.rgb(40, 167, 69),
   val phone: String = "",
   /** Overrides the "Generated" stamp; defaults to today's date. */
   val generatedLabel: String? = null,

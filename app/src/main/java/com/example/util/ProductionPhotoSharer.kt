@@ -22,7 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Port of web `modules/prod-photos.js`: renders a dark slate metadata caption footer onto each
+ * Port of web `modules/prod-photos.js`: renders a statement-green metadata caption footer onto each
  * production photo (Date, Store, Gross/Container/Net weight, and Value/Cost/Profit unless redacted),
  * saves JPEG files into cache, copies summary text to the clipboard, and shares multi-file intents.
  */
@@ -43,22 +43,37 @@ object ProductionPhotoSharer {
     }
   }
 
+  /** Statement-style (Urdu, RTL) message shared with the photos: same builder as statements / SMS. */
   fun formatSummaryText(entries: List<ProductionEntryEntity>, privacyHidden: Boolean): String =
     entries.joinToString("\n\n") { entry ->
       val dateLabel = entry.dateStr.ifBlank { SarimFormat.dateInput(entry.dateEpoch) }
       val storeLabel = entry.storeName.ifBlank { entry.storeKey }
-      buildList {
-        add("Date: $dateLabel")
-        add("Store: $storeLabel")
-        add("Gross Weight: ${SarimFormat.formatKg(entry.grossWeightKg)}")
-        add("Container: ${SarimFormat.formatKg(entry.containerWeightKg)}")
-        add("Net Weight: ${SarimFormat.formatKg(entry.netWeightKg)}")
+      val columns = listOf(
+        PdfColumn("Item", 100f),
+        PdfColumn("Value", 100f, right = true),
+      )
+      val rows = buildList {
+        add(listOf("Gross Weight", SarimFormat.formatKg(entry.grossWeightKg)))
+        add(listOf("Container", SarimFormat.formatKg(entry.containerWeightKg)))
+        add(listOf("Net Weight", SarimFormat.formatKg(entry.netWeightKg)))
         if (!privacyHidden) {
-          add("Total Value: ${SarimFormat.formatRs(entry.totalValue, false, false)}")
-          add("Formula Cost: ${SarimFormat.formatRs(entry.totalFormulaCost, false, false)}")
-          add("Net Profit: ${SarimFormat.formatRs(entry.totalProfit, false, false)}")
+          add(listOf("Total Value", SarimFormat.formatRs(entry.totalValue, false, false)))
+          add(listOf("Formula Cost", SarimFormat.formatRs(entry.totalFormulaCost, false, false)))
+          add(listOf("Net Profit", SarimFormat.formatRs(entry.totalProfit, false, false)))
         }
-      }.joinToString("\n")
+      }
+      StatementShare.buildReportText(
+        title = "Production Record",
+        name = storeLabel,
+        phone = "",
+        dateLabel = dateLabel,
+        rangeLabel = dateLabel,
+        columns = columns,
+        rows = rows,
+        summary = emptyList(),
+        closingLabel = "",
+        closingValue = "",
+      )
     }
 
   suspend fun createCaptionedFiles(
@@ -72,7 +87,7 @@ object ProductionPhotoSharer {
     for (entry in entries) {
       val uris = JsonCodecs.decodeStrings(entry.photoUrisJson)
       if (uris.isEmpty()) continue
-      val captionLines = buildCaptionLines(entry, privacyHidden)
+      val captionLines = listOf("GULL AND ZUBAIR NASWAR DEALERS") + buildCaptionLines(entry, privacyHidden)
       val safeStore = entry.storeName.ifBlank { entry.storeKey }.replace(Regex("\\W+"), "")
       val safeDate = entry.dateStr.ifBlank { SarimFormat.dateInput(entry.dateEpoch) }
       for (uriStr in uris) {
@@ -183,12 +198,12 @@ object ProductionPhotoSharer {
     val fontSize = (targetW * 0.031f).coerceIn(20f, 38f)
 
     val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.parseColor("#F8FAFC")
+      color = Color.WHITE
       textSize = fontSize
       isFakeBoldText = true
     }
     val subPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.parseColor("#CBD5E1")
+      color = Color.WHITE
       textSize = fontSize * 0.88f
     }
 
@@ -208,10 +223,10 @@ object ProductionPhotoSharer {
     val imgRect = android.graphics.Rect(0, 0, targetW, targetH)
     c.drawBitmap(src, null, imgRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
 
-    val bandPaint = Paint().apply { color = Color.parseColor("#0F172A") }
+    val bandPaint = Paint().apply { color = Color.rgb(40, 167, 69) } // statement banner green
     c.drawRect(0f, targetH.toFloat(), targetW.toFloat(), (targetH + bandH).toFloat(), bandPaint)
 
-    val accentPaint = Paint().apply { color = Color.parseColor("#10B981") }
+    val accentPaint = Paint().apply { color = Color.rgb(30, 126, 52) }
     c.drawRect(0f, targetH.toFloat(), targetW.toFloat(), targetH + 4f, accentPaint)
 
     var y = targetH + pad + fontSize

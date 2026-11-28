@@ -391,6 +391,7 @@ object StatementShare {
     "Payment Entities — Balances & Ledger" to "ادائیگی اینٹٹیز — بقایا اور لیجر",
     "Expenses — Transaction Records" to "اخراجات — لین دین کا ریکارڈ",
     "Daily Ledger Cashbook" to "روزانہ لیجر کیش بک",
+    "Production Record" to "پروڈکشن ریکارڈ",
   )
   private val URDU_RANGES = mapOf(
     "All Time" to "تمام وقت", "Today" to "آج", "This Week" to "اس ہفتے", "This Month" to "اس مہینے", "This Year" to "اس سال",
