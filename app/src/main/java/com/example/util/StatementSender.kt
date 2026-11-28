@@ -68,32 +68,19 @@ object StatementSender {
       PdfColumn(if (isEntity) "Payment In" else "Credit (Rcvd)", 84f, right = true),
       PdfColumn("Balance", 84f, right = true),
     )
-    val rows = spec.lines.map { listOf(it.date, it.type.replace('_', ' '), it.details, it.debit, it.credit, it.balance) }
-    val pdf = PdfExporter.createStatementPdf(
-      context = context,
-      fileBaseName = base,
-      kindTitle = spec.kind.pdfTitle,
+    val report = ReportSpec(
+      fileBase = base,
+      title = spec.kind.pdfTitle,
       name = spec.name,
-      phone = spec.phone,
       rangeLabel = spec.rangeLabel,
-      generatedLabel = generated,
       columns = columns,
-      rows = rows,
+      rows = spec.lines.map { listOf(it.date, it.type.replace('_', ' '), it.details, it.debit, it.credit, it.balance) },
       summary = spec.summary,
       closingLabel = spec.closingLabel,
       closingValue = spec.closingValue,
       accent = accent(spec.kind),
-    ).getOrElse { return it.localizedMessage ?: "Unable to create the statement." }
-
-    return when (format) {
-      StatementFormat.PDF ->
-        if (DirectShare.shareViaChooser(context, pdf, "application/pdf", spec.kind.pdfTitle) == ShareOutcome.FAILED) "Unable to share the statement." else null
-      StatementFormat.PDF_WHATSAPP ->
-        if (DirectShare.shareFiles(context, listOf(pdf), "application/pdf", spec.phone, title = spec.kind.pdfTitle) == ShareOutcome.FAILED) "Unable to share the statement." else null
-      else -> {
-        val imgs = PdfExporter.pdfToJpegs(context, pdf, base).getOrElse { return it.localizedMessage ?: "Unable to create the statement image." }
-        if (DirectShare.shareFiles(context, imgs, "image/jpeg", spec.phone, title = spec.kind.pdfTitle) == ShareOutcome.FAILED) "Unable to share the statement." else null
-      }
-    }
+      phone = spec.phone,
+    )
+    return ReportSender.sendFile(context, report, format, generated)
   }
 }

@@ -468,26 +468,16 @@ fun ExpenseDetailsScreen(
       return
     }
     val nowMs = System.currentTimeMillis()
-    com.example.util.PdfExporter.createExpenseCategoryPdf(
-      context = context,
-      expenseName = expenseName,
-      rangeLabel = rangeOptions[rangeIndex],
-      generatedLabel = "${SarimFormat.formatDate(nowMs)} ${SarimFormat.formatClock(nowMs)}",
-      expenses = txs,
-      privacyHidden = hide,
-    ).fold(
-      onSuccess = { pdfFile ->
-        val out = com.example.util.DirectShare.shareViaChooser(
-          context = context,
-          file = pdfFile,
-          mime = "application/pdf",
-          title = "Expense Report — $expenseName",
-        )
-        if (out == com.example.util.ShareOutcome.FAILED) {
-          viewModel.postStatus("Unable to share expense PDF")
-        }
-      },
-      onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Failed to export PDF") },
+    com.example.ui.components.shareReportChoices(
+      viewModel,
+      context,
+      com.example.util.PdfExporter.expenseCategorySpec(
+        expenseName = expenseName,
+        rangeLabel = rangeOptions[rangeIndex],
+        generatedLabel = "${SarimFormat.formatDate(nowMs)} ${SarimFormat.formatClock(nowMs)}",
+        expenses = txs,
+        privacyHidden = hide,
+      ),
     )
   }
 
