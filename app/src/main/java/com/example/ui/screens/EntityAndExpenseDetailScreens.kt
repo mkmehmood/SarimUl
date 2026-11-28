@@ -87,27 +87,19 @@ fun EntityDetailsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    SarimCard {
-      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        InitialsAvatar(entity.name, palette.cyan, sizeDp = 48.dp, badgeText = entity.ledgerPage)
+    SarimCollapsibleHeaderCard(
+      tonalAccent = palette.cyan,
+      initiallyExpanded = false,
+      collapseDescription = entity.name,
+      headerContent = {
+        InitialsAvatar(entity.name, palette.cyan, sizeDp = 44.dp, badgeText = entity.ledgerPage)
         Column(modifier = Modifier.weight(1f)) {
-          Text(entity.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+          Text(entity.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           Text(
-            "${txs.size} transactions · ${entity.phone.ifBlank { entity.wallet.ifBlank { "Payee / Partner" } }}",
+            "${txs.size} transactions",
             color = palette.textMuted,
-            fontSize = 12.sp,
-            modifier = Modifier.testTag("manageEntityStats").then(
-              if (entity.phone.isBlank()) Modifier else Modifier.combinedClickable(
-                onClick = {
-                  runCatching {
-                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                  }.onFailure { viewModel.postStatus("No dialer app available") }
-                },
-                onLongClick = {
-                  if (!DirectShare.openWhatsAppChat(context, entity.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
-                },
-              )
-            ),
+            fontSize = 11.5.sp,
+            modifier = Modifier.testTag("manageEntityStats"),
           )
         }
         IconButton(onClick = { showStatementFlow = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
@@ -163,19 +155,48 @@ fun EntityDetailsScreen(
         ) {
           Icon(Icons.Rounded.Delete, contentDescription = "Delete entity", tint = palette.red)
         }
+      },
+    ) {
+      val contactDetail = entity.phone.ifBlank { entity.wallet.ifBlank { "Payee / Partner" } }
+      Text(
+        text = contactDetail,
+        color = if (entity.phone.isNotBlank()) palette.cyan else palette.textMuted,
+        fontSize = 13.sp,
+        modifier = if (entity.phone.isBlank()) Modifier else Modifier.combinedClickable(
+          onClick = {
+            runCatching {
+              context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }.onFailure { viewModel.postStatus("No dialer app available") }
+          },
+          onLongClick = {
+            if (!DirectShare.openWhatsAppChat(context, entity.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+          },
+        ),
+      )
+      if (entity.wallet.isNotBlank()) {
+        Text("Wallet: ${entity.wallet}", color = palette.textMuted, fontSize = 12.sp)
+      }
+      if (entity.ledgerPage.isNotBlank()) {
+        Text("Ledger Page: ${entity.ledgerPage}", color = palette.textMuted, fontSize = 12.sp)
       }
     }
 
-    SarimCard(tonalAccent = palette.purple) {
-      val bal = entity.currentBalance
-      Text("ENTITY BALANCE", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    val entityBal = entity.currentBalance
+    SarimCollapsibleCard(
+      title = "ENTITY BALANCE",
+      subtitle = if (entityBal >= 0) "Payable (we owe them)" else "Receivable (they owe us)",
+      badgeText = SarimFormat.formatRs(kotlin.math.abs(entityBal), privacyHidden = state.hideMoneyFigures),
+      badgeColor = if (entityBal >= 0) palette.amber else palette.green,
+      tonalAccent = palette.purple,
+      initiallyExpanded = false,
+    ) {
       Text(
-        SarimFormat.formatRs(kotlin.math.abs(bal), privacyHidden = state.hideMoneyFigures),
-        color = if (bal >= 0) palette.amber else palette.green,
+        SarimFormat.formatRs(kotlin.math.abs(entityBal), privacyHidden = state.hideMoneyFigures),
+        color = if (entityBal >= 0) palette.amber else palette.green,
         style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
       )
       Text(
-        if (bal >= 0) "Payable (we owe them)" else "Receivable (they owe us)",
+        if (entityBal >= 0) "Payable (we owe them)" else "Receivable (they owe us)",
         color = palette.textMuted,
         fontSize = 12.sp,
       )
@@ -197,8 +218,13 @@ fun EntityDetailsScreen(
       testTagPrefix = "entity_filter",
     )
 
-    SarimCard {
-      Text("History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    SarimCollapsibleCard(
+      title = "History",
+      badgeText = "${filtered.size}",
+      badgeColor = palette.cyan,
+      tonalAccent = palette.cyan,
+      initiallyExpanded = false,
+    ) {
       AccordionHistoryList(
         records = filtered.map { tx ->
           HistoryRecordDisplay(
@@ -326,8 +352,14 @@ fun ExpenseDetailsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    SarimCard(tonalAccent = palette.red) {
-      Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+    SarimCollapsibleCard(
+      title = expenseName,
+      subtitle = "${txs.size} expense entries",
+      badgeText = SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures),
+      badgeColor = palette.red,
+      tonalAccent = palette.red,
+      initiallyExpanded = false,
+    ) {
       Text(
         "Total: ${SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
         color = palette.red,
@@ -430,8 +462,13 @@ fun ExpenseDetailsScreen(
       Text("* Adds a new expense record under \"$expenseName\" for today's date.", color = palette.textMuted, fontSize = 11.5.sp)
     }
 
-    SarimCard {
-      Text("History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    SarimCollapsibleCard(
+      title = "History",
+      badgeText = "${txs.size}",
+      badgeColor = palette.red,
+      tonalAccent = palette.red,
+      initiallyExpanded = false,
+    ) {
       AccordionHistoryList(
         records = txs.map { tx ->
           HistoryRecordDisplay(

@@ -294,10 +294,15 @@ fun PaymentsTab(
         val quickRatio = if (currentLiabilities > 0.01) String.format("%.2f", (snap.cashInHandBalance + snap.directReceivables + snap.repReceivables) / currentLiabilities) else "—"
         val cashRatio = if (currentLiabilities > 0.01) String.format("%.2f", snap.cashInHandBalance / currentLiabilities) else "—"
 
-        SarimCard(tonalAccent = palette.green) {
-          Text("ECONOMIC HEALTH DASHBOARD", color = palette.green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
+        SarimCollapsibleCard(
+          title = "ECONOMIC HEALTH DASHBOARD",
+          subtitle = "Operating Cash Flow",
+          badgeText = SarimFormat.formatRs(snap.cashInHandBalance),
+          badgeColor = palette.green,
+          tonalAccent = palette.green,
+          initiallyExpanded = false,
+        ) {
           Text(SarimFormat.formatRs(snap.cashInHandBalance), color = palette.green, style = TabularNumberStyle.copy(fontSize = 26.sp, fontWeight = FontWeight.Bold))
-          Text("Operating Cash Flow", color = palette.textMuted, fontSize = 11.5.sp)
 
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           HealthLine("Cash in Hand", SarimFormat.formatRs(snap.cashInHandBalance), palette.green)
@@ -339,8 +344,14 @@ fun PaymentsTab(
           cutoffEpoch = cutoff,
         )
 
-        SarimCard(tonalAccent = palette.cyan) {
-          Text("CASH IN HAND TRACKER", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.8.sp)
+        SarimCollapsibleCard(
+          title = "CASH IN HAND TRACKER",
+          subtitle = trackerPeriod.label,
+          badgeText = SarimFormat.formatRs(breakdown.netCash),
+          badgeColor = if (breakdown.netCash >= 0) palette.green else palette.red,
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(TimePeriod.entries, trackerPeriod, { it.label }, { trackerPeriod = it })
           HealthLine("Sales Tab Cash", SarimFormat.formatRs(breakdown.salesCash), palette.green)
           HealthLine("Collections Cash", SarimFormat.formatRs(breakdown.collectionsCash), palette.green)
@@ -368,9 +379,12 @@ fun PaymentsTab(
 
       // 4. Unified Records
       item {
-        SarimCard {
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Unified Records", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Unified Records",
+          subtitle = "${unifiedMode.label} · ${unifiedPeriod.label}",
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+          headerActions = {
             IconButton(
               onClick = {
                 val nowLabel = SarimFormat.formatDate(System.currentTimeMillis())
@@ -413,7 +427,8 @@ fun PaymentsTab(
               },
               modifier = Modifier.size(48.dp).testTag("unified_records_pdf_btn"),
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export PDF", tint = palette.cyan) }
-          }
+          },
+        ) {
           SarimTextField(value = unifiedSearch, onValueChange = { unifiedSearch = it }, label = "", placeholder = "Search...", leadingIcon = Icons.Rounded.Search)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimPopoverSelector(
@@ -517,43 +532,49 @@ fun PaymentsTab(
 
       // 5. Payment History Accordion
       item {
-        Text("Payment History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        val records = state.paymentTransactions.map { p ->
-          val isIn = p.type == "PAYMENT_IN"
-          HistoryRecordDisplay(
-            item = p,
-            dateEpoch = p.dateEpoch,
-            title = p.entityOrExpenseName,
-            subtitle = p.description.ifBlank { p.type },
-            amountText = SarimFormat.formatRs(p.amount, false, hideMoney),
-            amountColor = if (isIn) palette.green else palette.red,
-            chipText = p.type.replace("_", " "),
-            chipColor = if (isIn) palette.green else palette.red,
-            detailMetrics = buildList {
-              add("Type" to p.type.replace("_", " "))
-              add("Date" to SarimFormat.dateInput(p.dateEpoch))
-              add("Amount" to SarimFormat.formatRs(p.amount, true, hideMoney))
-              add("Daily Ledger" to if (p.addToLedger) "Linked" else "Not linked")
+        SarimCollapsibleCard(
+          title = "Payment History",
+          badgeText = "${state.paymentTransactions.size}",
+          badgeColor = palette.cyan,
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
+          val records = state.paymentTransactions.map { p ->
+            val isIn = p.type == "PAYMENT_IN"
+            HistoryRecordDisplay(
+              item = p,
+              dateEpoch = p.dateEpoch,
+              title = p.entityOrExpenseName,
+              subtitle = p.description.ifBlank { p.type },
+              amountText = SarimFormat.formatRs(p.amount, false, hideMoney),
+              amountColor = if (isIn) palette.green else palette.red,
+              chipText = p.type.replace("_", " "),
+              chipColor = if (isIn) palette.green else palette.red,
+              detailMetrics = buildList {
+                add("Type" to p.type.replace("_", " "))
+                add("Date" to SarimFormat.dateInput(p.dateEpoch))
+                add("Amount" to SarimFormat.formatRs(p.amount, true, hideMoney))
+                add("Daily Ledger" to if (p.addToLedger) "Linked" else "Not linked")
+              },
+              detailNote = if (p.description.isNotBlank()) "Note: ${p.description}" else "",
+            )
+          }
+          AccordionHistoryList(
+            records = records,
+            yearSummary = { "" },
+            monthSummary = { items ->
+              val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
+              val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
+              "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
             },
-            detailNote = if (p.description.isNotBlank()) "Note: ${p.description}" else "",
+            daySummary = { items ->
+              val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
+              val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
+              "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
+            },
+            onItemClick = { rec -> sheetPayment = rec.item },
           )
         }
-        AccordionHistoryList(
-          records = records,
-          yearSummary = { "" },
-          monthSummary = { items ->
-            val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
-            val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
-            "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
-          },
-          daySummary = { items ->
-            val inTot = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
-            val outTot = items.filter { it.item.type != "PAYMENT_IN" }.sumOf { it.item.amount }
-            "In ${SarimFormat.formatRs(inTot, false, hideMoney)} · Out ${SarimFormat.formatRs(outTot, false, hideMoney)}"
-          },
-          onItemClick = { rec -> sheetPayment = rec.item },
-        )
       }
     }
   }

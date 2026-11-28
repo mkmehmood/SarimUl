@@ -123,32 +123,15 @@ fun CustomerDetailsScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     // Customer Profile Header
-    SarimCard {
-      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        InitialsAvatar(customer.name, palette.amber, sizeDp = 50.dp, badgeText = customer.ledgerPage)
+    SarimCollapsibleHeaderCard(
+      initiallyExpanded = false,
+      collapseDescription = customer.name,
+      headerContent = {
+        InitialsAvatar(customer.name, palette.amber, sizeDp = 46.dp, badgeText = customer.ledgerPage)
         Column(modifier = Modifier.weight(1f)) {
-          Text(customer.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+          Text(customer.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           if (customer.phone.isNotBlank()) {
-            Text(
-              customer.phone,
-              color = palette.cyan,
-              fontSize = 13.sp,
-              modifier = Modifier.combinedClickable(
-                onClick = {
-                  runCatching {
-                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${customer.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                  }.onFailure {
-                    viewModel.postStatus("No dialer app available")
-                  }
-                },
-                onLongClick = {
-                  if (!DirectShare.openWhatsAppChat(context, customer.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
-                },
-              ),
-            )
-          }
-          if (customer.address.isNotBlank()) {
-            Text(customer.address, color = palette.textMuted, fontSize = 11.5.sp)
+            Text(customer.phone, color = palette.cyan, fontSize = 12.sp)
           }
         }
         Box {
@@ -186,12 +169,46 @@ fun CustomerDetailsScreen(
             )
           }
         }
+      },
+    ) {
+      if (customer.phone.isNotBlank()) {
+        Text(
+          "Tap to Call · Long-press for WhatsApp: ${customer.phone}",
+          color = palette.cyan,
+          fontSize = 13.sp,
+          modifier = Modifier.combinedClickable(
+            onClick = {
+              runCatching {
+                context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${customer.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              }.onFailure {
+                viewModel.postStatus("No dialer app available")
+              }
+            },
+            onLongClick = {
+              if (!DirectShare.openWhatsAppChat(context, customer.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+            },
+          ),
+        )
+      } else {
+        Text("No phone number saved", color = palette.textMuted, fontSize = 12.sp)
+      }
+      if (customer.address.isNotBlank()) {
+        Text("Address: ${customer.address}", color = palette.textMuted, fontSize = 12.sp)
+      }
+      if (customer.ledgerPage.isNotBlank()) {
+        Text("Ledger Page: ${customer.ledgerPage}", color = palette.textMuted, fontSize = 12.sp)
       }
     }
 
     // Balance card
-    SarimCard(tonalAccent = palette.amber) {
-      Text("CURRENT DEBT", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    SarimCollapsibleCard(
+      title = "CURRENT DEBT",
+      subtitle = "$pctReceived% received",
+      badgeText = SarimFormat.formatRs(customer.currentCredit, privacyHidden = state.hideMoneyFigures),
+      badgeColor = palette.amber,
+      tonalAccent = palette.amber,
+      initiallyExpanded = false,
+    ) {
       Text(
         SarimFormat.formatRs(customer.currentCredit, privacyHidden = state.hideMoneyFigures),
         color = palette.amber,
@@ -302,69 +319,77 @@ fun CustomerDetailsScreen(
         )
       }
     }
-    AccordionHistoryList(
-      records = records,
-      yearSummary = { "" },
-      monthSummary = { list ->
-        val sold = list.sumOf { it.item.quantityKg }
-        val soldVal = list.filter { it.item.mode == "SALE" }.sumOf { it.item.totalValue }
-        val recVal = list.filter { it.item.mode == "COLLECTION" || (it.item.mode == "SALE" && it.item.paymentType == "CASH") }.sumOf {
-          if (it.item.mode == "COLLECTION") (it.item.amountReceived.takeIf { a -> a > 0.0 } ?: it.item.totalValue) else it.item.totalValue
-        }
-        "${SarimFormat.formatKg(sold)} sold · Sold ${SarimFormat.formatRs(soldVal, privacyHidden = hide)} · Received ${SarimFormat.formatRs(recVal, privacyHidden = hide)}"
-      },
-      daySummary = { "" },
-      emptyTitle = "No customer history",
-      emptySubtitle = "Transactions with ${customer.name} appear here.",
-      actions = HistoryRecordActions(
-        onDelete = { tx ->
-          val blockMsg = if (YearCloseMerge.isMergedId(tx.id)) {
-            "Merged opening balance records cannot be deleted."
-          } else {
-            SarimLinkEngine.getSaleBlockReason(tx, state.settlements)
-              ?: SarimLinkEngine.getCollectionDeleteBlockReason(tx, state.rawMaterials)
+    SarimCollapsibleCard(
+      title = "Transaction History",
+      badgeText = "${records.size}",
+      badgeColor = palette.cyan,
+      tonalAccent = palette.cyan,
+      initiallyExpanded = false,
+    ) {
+      AccordionHistoryList(
+        records = records,
+        yearSummary = { "" },
+        monthSummary = { list ->
+          val sold = list.sumOf { it.item.quantityKg }
+          val soldVal = list.filter { it.item.mode == "SALE" }.sumOf { it.item.totalValue }
+          val recVal = list.filter { it.item.mode == "COLLECTION" || (it.item.mode == "SALE" && it.item.paymentType == "CASH") }.sumOf {
+            if (it.item.mode == "COLLECTION") (it.item.amountReceived.takeIf { a -> a > 0.0 } ?: it.item.totalValue) else it.item.totalValue
           }
-          if (blockMsg != null) {
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Cannot Delete",
-                body = blockMsg,
-                tone = DialogTone.ERROR,
-                confirmLabel = "OK",
-                cancelLabel = null,
-              )
-            )
-          } else {
-            val dispAmt = when {
-              tx.isRepReturn -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
-              tx.mode == "COLLECTION" || tx.mode == "MONEY_OUT" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
-              else -> tx.totalValue
+          "${SarimFormat.formatKg(sold)} sold · Sold ${SarimFormat.formatRs(soldVal, privacyHidden = hide)} · Received ${SarimFormat.formatRs(recVal, privacyHidden = hide)}"
+        },
+        daySummary = { "" },
+        emptyTitle = "No customer history",
+        emptySubtitle = "Transactions with ${customer.name} appear here.",
+        actions = HistoryRecordActions(
+          onDelete = { tx ->
+            val blockMsg = if (YearCloseMerge.isMergedId(tx.id)) {
+              "Merged opening balance records cannot be deleted."
+            } else {
+              SarimLinkEngine.getSaleBlockReason(tx, state.settlements)
+                ?: SarimLinkEngine.getCollectionDeleteBlockReason(tx, state.rawMaterials)
             }
-            val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
-            viewModel.showDialog(
-              AppDialogRequest(
-                title = "Delete Transaction",
-                body = "Customer: ${customer.name}\nType: ${tx.mode.replace("_", " ")}\nAmount: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
-                tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete",
-                onConfirm = {
-                  viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                    viewModel.repository.deleteSale(tx.id)
-                  }
-                },
+            if (blockMsg != null) {
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Cannot Delete",
+                  body = blockMsg,
+                  tone = DialogTone.ERROR,
+                  confirmLabel = "OK",
+                  cancelLabel = null,
+                )
               )
-            )
-          }
-        },
-        dayActionLabel = "Invoice",
-        onDayAction = { dayItems ->
-          val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
-          val data = StatementData.salesDayInvoice(stmtKind, customer, custSales, dayKey, hide)
-          if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
-          else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
-        },
-      ),
-    )
+            } else {
+              val dispAmt = when {
+                tx.isRepReturn -> tx.returnValue.takeIf { it > 0.0 } ?: tx.totalValue
+                tx.mode == "COLLECTION" || tx.mode == "MONEY_OUT" -> tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue
+                else -> tx.totalValue
+              }
+              val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
+              viewModel.showDialog(
+                AppDialogRequest(
+                  title = "Delete Transaction",
+                  body = "Customer: ${customer.name}\nType: ${tx.mode.replace("_", " ")}\nAmount: ${viewModel.redactMoney(SarimFormat.formatRs(dispAmt))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
+                  tone = DialogTone.PERMANENT,
+                  confirmLabel = "Delete",
+                  onConfirm = {
+                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                      viewModel.repository.deleteSale(tx.id)
+                    }
+                  },
+                )
+              )
+            }
+          },
+          dayActionLabel = "Invoice",
+          onDayAction = { dayItems ->
+            val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
+            val data = StatementData.salesDayInvoice(stmtKind, customer, custSales, dayKey, hide)
+            if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+            else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
+          },
+        ),
+      )
+    }
     Spacer(Modifier.height(24.dp))
   }
 

@@ -182,11 +182,16 @@ viewModel.launchSafely(
       toneColor = palette.cyan,
     )
 
-    SarimCard {
-      Text("Transfer History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      val transfers = remember(state.stockTransfers) {
-        state.stockTransfers.filter { !it.isDeleted }.sortedByDescending { it.dateEpoch }
-      }
+    val transfers = remember(state.stockTransfers) {
+      state.stockTransfers.filter { !it.isDeleted }.sortedByDescending { it.dateEpoch }
+    }
+    SarimCollapsibleCard(
+      title = "Transfer History",
+      badgeText = "${transfers.size}",
+      badgeColor = palette.cyan,
+      tonalAccent = palette.cyan,
+      initiallyExpanded = false,
+    ) {
       AccordionHistoryList(
         records = transfers.map { t ->
           HistoryRecordDisplay(
@@ -417,11 +422,16 @@ viewModel.launchSafely(
       toneColor = palette.amber,
     )
 
-    SarimCard {
-      Text("Transfer History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      val list = remember(state.paymentTransfers) {
-        state.paymentTransfers.filter { !it.isDeleted }.sortedByDescending { it.dateEpoch }
-      }
+    val list = remember(state.paymentTransfers) {
+      state.paymentTransfers.filter { !it.isDeleted }.sortedByDescending { it.dateEpoch }
+    }
+    SarimCollapsibleCard(
+      title = "Transfer History",
+      badgeText = "${list.size}",
+      badgeColor = palette.purple,
+      tonalAccent = palette.purple,
+      initiallyExpanded = false,
+    ) {
       AccordionHistoryList(
         records = list.map { t ->
           HistoryRecordDisplay(
@@ -513,26 +523,21 @@ fun ApprovalsScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     // Hero card
-    SarimCard(tonalAccent = if (pending.isEmpty()) palette.green else palette.amber) {
+    SarimCollapsibleCard(
+      title = if (pending.isEmpty()) "All caught up" else "Pending Approvals",
+      badgeText = if (pending.isEmpty()) "0" else "${pending.size}",
+      badgeColor = if (pending.isEmpty()) palette.green else palette.amber,
+      tonalAccent = if (pending.isEmpty()) palette.green else palette.amber,
+      initiallyExpanded = false,
+    ) {
       if (pending.isEmpty()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          SarimChip("All caught up", palette.green)
-          Text("No staff requests waiting for approval.", color = palette.textMuted, fontSize = 13.sp)
-        }
+        Text("No staff requests waiting for approval.", color = palette.textMuted, fontSize = 13.sp)
       } else {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              SarimChip("${pending.size}", palette.amber)
-              Text("waiting for approval", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
-            Text("Review staff submissions before committing to books.", color = palette.textMuted, fontSize = 12.sp)
-          }
-        }
+        Text(
+          "Review staff submissions before committing to books. ${pending.size} request(s) awaiting decision.",
+          color = palette.textMuted,
+          fontSize = 12.5.sp,
+        )
       }
     }
 
@@ -648,12 +653,11 @@ fun ApprovalsScreen(
       SarimEmptyState("No matches", "Nothing matches your search or filter.")
     } else {
       filtered.forEach { req: ApprovalRequestEntity ->
-        SarimCard(tonalAccent = palette.amber) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
+        SarimCollapsibleHeaderCard(
+          tonalAccent = palette.amber,
+          initiallyExpanded = false,
+          collapseDescription = "${req.submittedBy} ${req.category} request",
+          headerContent = {
             Column(modifier = Modifier.weight(1f)) {
               Text("${req.submittedBy} · ${req.category}", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
               Text("${req.actionKind} · ${req.targetSummary}", color = palette.textMuted, fontSize = 12.sp)
@@ -663,7 +667,8 @@ fun ApprovalsScreen(
               color = palette.amber,
               style = TabularNumberStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
             )
-          }
+          },
+        ) {
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimSecondaryButton(
               text = "Approve",

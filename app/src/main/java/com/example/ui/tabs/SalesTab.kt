@@ -770,36 +770,37 @@ fun SalesTab(
       val filteredCusts = directCustomers.filter {
         custSearchFilter.isBlank() || it.name.contains(custSearchFilter, ignoreCase = true) || it.phone.contains(custSearchFilter)
       }
-      SarimCard {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-          Column {
-            Text("CUSTOMERS", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.8.sp)
-            Text("${directCustomers.size} active", color = palette.textMuted, fontSize = 11.5.sp)
+      SarimCollapsibleCard(
+        title = "CUSTOMERS",
+        subtitle = "${directCustomers.size} active",
+        badgeText = "${directCustomers.size}",
+        badgeColor = palette.cyan,
+        tonalAccent = palette.cyan,
+        initiallyExpanded = false,
+        headerActions = {
+          IconButton(
+            onClick = {
+              com.example.util.CustomerListPdf.create(
+                context,
+                fileName = "All_Customers_List.pdf",
+                title = "All Customers — Complete List",
+                rows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales),
+                privacyHidden = hideMoney,
+              ).fold(
+                onSuccess = { f ->
+                  if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "All Customers — Complete List") == com.example.util.ShareOutcome.FAILED) {
+                    viewModel.postStatus("Unable to share the customer list")
+                  }
+                },
+                onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
+              )
+            },
+          ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
+          IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.CustomerEdit(null)) }) {
+            Icon(Icons.Rounded.Add, contentDescription = "Add customer", tint = palette.green)
           }
-          Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            IconButton(
-              onClick = {
-                com.example.util.CustomerListPdf.create(
-                  context,
-                  fileName = "All_Customers_List.pdf",
-                  title = "All Customers — Complete List",
-                  rows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales),
-                  privacyHidden = hideMoney,
-                ).fold(
-                  onSuccess = { f ->
-                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "All Customers — Complete List") == com.example.util.ShareOutcome.FAILED) {
-                      viewModel.postStatus("Unable to share the customer list")
-                    }
-                  },
-                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
-                )
-              },
-            ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
-            IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.CustomerEdit(null)) }) {
-              Icon(Icons.Rounded.Add, contentDescription = "Add customer", tint = palette.green)
-            }
-          }
-        }
+        },
+      ) {
         SarimTextField(
           value = custSearchFilter,
           onValueChange = { custSearchFilter = it },
@@ -857,8 +858,12 @@ fun SalesTab(
           !it.isRepSale && !it.isRepReturn && !it.isRepTransfer &&
             !SarimLinkEngine.isRepLinkedAdminSale(it) && it.mode == "SALE" && it.dateEpoch >= cutoff
         }
-        SarimCard {
-          Text("Direct Sales Analytics", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Direct Sales Analytics",
+          subtitle = analyticsPeriod.label,
+          tonalAccent = palette.green,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(
             listOf(TimePeriod.WEEKLY, TimePeriod.MONTHLY, TimePeriod.YEARLY, TimePeriod.ALL_TIME),
             analyticsPeriod,
@@ -887,14 +892,17 @@ fun SalesTab(
       val collTotal = periodColls.sumOf { it.amountReceived.takeIf { a -> a > 0.0 } ?: it.totalValue }
       val cashIncl = periodSales.filter { it.paymentType == "CASH" }.sumOf { it.totalValue } + collTotal
       val pendingCredits = periodSales.filter { it.paymentType == "CREDIT" }.sumOf { it.totalValue }
+      val margin = if (totalVal > 0.01) ((totalProfit / totalVal) * 100.0).toInt() else 0
 
-      SarimCard {
+      SarimCollapsibleCard(
+        title = "${summaryPeriod.label} Direct Sales",
+        subtitle = SarimFormat.formatRs(totalVal, true, hideMoney),
+        badgeText = "$margin% margin",
+        badgeColor = palette.green,
+        tonalAccent = palette.green,
+        initiallyExpanded = false,
+      ) {
         SarimToggleGroup(TimePeriod.entries, summaryPeriod, { it.label }, { summaryPeriod = it })
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-          Text("${summaryPeriod.label} Direct Sales", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-          val margin = if (totalVal > 0.01) ((totalProfit / totalVal) * 100.0).toInt() else 0
-          SarimChip("$margin% margin", palette.green)
-        }
         Text(
           SarimFormat.formatRs(totalVal, true, hideMoney),
           color = palette.green,
@@ -914,61 +922,67 @@ fun SalesTab(
 
     // 4. Sales History Accordion
     item {
-      Text("Sales History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-      Spacer(Modifier.height(6.dp))
       val directTx = state.sales.filter { !it.isRepSale }
-      val records = directTx.map { s ->
-        val isRepLink = SarimLinkEngine.isRepLinkedAdminSale(s)
-        val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
-        val isReconciledRet = s.isRepReturn && s.id in reconciledReturns
-        val dispAmt = displaySaleAmount(s)
-        val chipLabel = when {
-          s.isRepReturn -> if (isReconciledRet) "RECONCILED RET" else "REP RETURN"
-          s.isRepTransfer -> "TRANSFER"
-          s.mode == "COLLECTION" -> "COLLECTION"
-          s.mode == "MONEY_OUT" -> "MONEY OUT"
-          isRepLink -> if (s.creditReceived) "CALC SETTLED" else "REP LINKED"
-          s.paymentType == "CASH" -> "PAID"
-          s.creditReceived -> "SETTLED"
-          else -> "PENDING"
+      SarimCollapsibleCard(
+        title = "Sales History",
+        badgeText = "${directTx.size}",
+        badgeColor = palette.cyan,
+        tonalAccent = palette.cyan,
+        initiallyExpanded = false,
+      ) {
+        val records = directTx.map { s ->
+          val isRepLink = SarimLinkEngine.isRepLinkedAdminSale(s)
+          val isCash = s.paymentType == "CASH" || s.mode == "COLLECTION"
+          val isReconciledRet = s.isRepReturn && s.id in reconciledReturns
+          val dispAmt = displaySaleAmount(s)
+          val chipLabel = when {
+            s.isRepReturn -> if (isReconciledRet) "RECONCILED RET" else "REP RETURN"
+            s.isRepTransfer -> "TRANSFER"
+            s.mode == "COLLECTION" -> "COLLECTION"
+            s.mode == "MONEY_OUT" -> "MONEY OUT"
+            isRepLink -> if (s.creditReceived) "CALC SETTLED" else "REP LINKED"
+            s.paymentType == "CASH" -> "PAID"
+            s.creditReceived -> "SETTLED"
+            else -> "PENDING"
+          }
+          val chipColor = when {
+            s.isRepReturn -> if (isReconciledRet) palette.green else palette.cyan
+            s.isRepTransfer -> palette.purple
+            isCash || s.creditReceived -> palette.green
+            isRepLink -> palette.cyan
+            else -> palette.amber
+          }
+          val subtitle = when {
+            s.isRepReturn -> "Exp ${SarimFormat.formatKg(s.expiredQtyKg)} · Ret ${SarimFormat.formatKg(s.returnedQtyKg)}"
+            s.isRepTransfer -> "${SarimFormat.formatKg(s.quantityKg)} · From ${s.repTransferFrom ?: "Rep"}"
+            s.mode == "SALE" -> "${SarimFormat.formatKg(s.quantityKg)} · ${s.storeName}${if (isRepLink) " · Rep" else ""}"
+            else -> s.mode
+          }
+          HistoryRecordDisplay(
+            item = s,
+            dateEpoch = s.dateEpoch,
+            title = s.customerName,
+            subtitle = subtitle,
+            amountText = SarimFormat.formatRs(dispAmt, true, hideMoney),
+            amountColor = if (isCash || s.creditReceived || s.isRepReturn) palette.green else palette.amber,
+            chipText = chipLabel,
+            chipColor = chipColor,
+            showStripe = !s.creditReceived && !s.isRepReturn && s.mode == "SALE" && s.paymentType == "CREDIT",
+            detailMetrics = buildSaleMetrics(s, hideMoney),
+          )
         }
-        val chipColor = when {
-          s.isRepReturn -> if (isReconciledRet) palette.green else palette.cyan
-          s.isRepTransfer -> palette.purple
-          isCash || s.creditReceived -> palette.green
-          isRepLink -> palette.cyan
-          else -> palette.amber
-        }
-        val subtitle = when {
-          s.isRepReturn -> "Exp ${SarimFormat.formatKg(s.expiredQtyKg)} · Ret ${SarimFormat.formatKg(s.returnedQtyKg)}"
-          s.isRepTransfer -> "${SarimFormat.formatKg(s.quantityKg)} · From ${s.repTransferFrom ?: "Rep"}"
-          s.mode == "SALE" -> "${SarimFormat.formatKg(s.quantityKg)} · ${s.storeName}${if (isRepLink) " · Rep" else ""}"
-          else -> s.mode
-        }
-        HistoryRecordDisplay(
-          item = s,
-          dateEpoch = s.dateEpoch,
-          title = s.customerName,
-          subtitle = subtitle,
-          amountText = SarimFormat.formatRs(dispAmt, true, hideMoney),
-          amountColor = if (isCash || s.creditReceived || s.isRepReturn) palette.green else palette.amber,
-          chipText = chipLabel,
-          chipColor = chipColor,
-          showStripe = !s.creditReceived && !s.isRepReturn && s.mode == "SALE" && s.paymentType == "CREDIT",
-          detailMetrics = buildSaleMetrics(s, hideMoney),
+        AccordionHistoryList(
+          records = records,
+          yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
+          monthSummary = { items ->
+            "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
+          },
+          daySummary = { items ->
+            "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
+          },
+          onItemClick = { rec -> sheetSale = rec.item },
         )
       }
-      AccordionHistoryList(
-        records = records,
-        yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
-        monthSummary = { items ->
-          "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
-        },
-        daySummary = { items ->
-          "${SarimFormat.formatKg(items.sumOf { it.item.quantityKg })} sold · ${SarimFormat.formatRs(items.sumOf { displaySaleAmount(it.item) }, false, hideMoney)}"
-        },
-        onItemClick = { rec -> sheetSale = rec.item },
-      )
     }
     }  // end admin-only block
   }

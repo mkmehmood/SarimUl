@@ -82,11 +82,13 @@ fun FormulaStoreScreen(
 
           SarimHistoryCard(
             title = "${formula.name.ifBlank { "Untitled" }} (1 Unit)",
+            subtitle = "${SarimFormat.formatKg(desc.weight)} · ${rs(desc.perUnit)}/u",
+            amountText = rs(desc.perKg),
             avatarName = formula.name.ifBlank { "Untitled" },
             tagText = "${SarimFormat.formatQty(formula.unitsAvailable, 1)} avail",
             tone = if (desc.problems.isNotEmpty()) HistoryTone.BAD else HistoryTone.GOOD,
-            collapsible = false,
-            onClick = { viewModel.openStandalone(StandaloneScreen.FormulaEdit(formula.id)) },
+            collapsible = true,
+            initiallyOpen = false,
           ) {
             if (ingredients.isEmpty()) {
               Text("No ingredients.", color = palette.textMuted, fontSize = 12.5.sp)
@@ -135,9 +137,16 @@ fun FormulaStoreScreen(
             val footerParts = buildList {
               if (usedByStores.isNotEmpty()) add("Used by ${usedByStores.joinToString(", ")}")
               if (linkedInFormulas.isNotEmpty()) add("Linked in ${linkedInFormulas.joinToString(", ")}")
-              add("Tap to edit")
             }
-            Text(footerParts.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
+            if (footerParts.isNotEmpty()) {
+              Text(footerParts.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
+            }
+            SarimSecondaryButton(
+              text = "Edit Formula",
+              modifier = Modifier.fillMaxWidth(),
+              testTag = "edit_formula_${formula.id}",
+              onClick = { viewModel.openStandalone(StandaloneScreen.FormulaEdit(formula.id)) },
+            )
           }
         }
       }
@@ -423,7 +432,14 @@ fun FormulaEditScreen(
       )
     }
 
-    SarimCard(tonalAccent = palette.green) {
+    SarimCollapsibleCard(
+      title = "Live Cost Summary",
+      subtitle = "Unit Weight ${SarimFormat.formatKg(liveSummary.unitWeightKg)}",
+      badgeText = SarimFormat.formatRs(liveSummary.totalCostPerUnit, privacyHidden = state.hideMoneyFigures),
+      badgeColor = palette.green,
+      tonalAccent = palette.green,
+      initiallyExpanded = false,
+    ) {
       SummaryLine("Unit Weight", SarimFormat.formatKg(liveSummary.unitWeightKg))
       SummaryLine("Raw Material Cost per Unit", SarimFormat.formatRs(liveSummary.rawMaterialCostPerUnit, privacyHidden = state.hideMoneyFigures))
       if (liveSummary.linkedAdditionalCost > 0.0) {

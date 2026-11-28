@@ -197,8 +197,12 @@ fun CalculatorTab(
       val compReps = (reps + periodSettlements.map { it.repName }).distinct()
 
       item {
-        SarimCard {
-          Text("Comparison", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        SarimCollapsibleCard(
+          title = "Comparison Filters",
+          subtitle = "${compPeriod.label} · ${compMetric.label}",
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(
             listOf(TimePeriod.WEEKLY, TimePeriod.MONTHLY, TimePeriod.YEARLY, TimePeriod.ALL_TIME),
             compPeriod,
@@ -215,8 +219,12 @@ fun CalculatorTab(
       }
 
       item {
-        SarimCard {
-          Text("COMPETITION", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+        SarimCollapsibleCard(
+          title = "COMPETITION",
+          subtitle = compMetric.label,
+          tonalAccent = palette.green,
+          initiallyExpanded = false,
+        ) {
           if (compReps.isEmpty()) {
             SarimEmptyState("No data yet", "Add a Sales Representative account or save a settlement to compare.")
           } else {
@@ -234,8 +242,12 @@ fun CalculatorTab(
       }
 
       item {
-        SarimCard {
-          Text("MARKET COMPOSITION", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+        SarimCollapsibleCard(
+          title = "MARKET COMPOSITION",
+          subtitle = compPeriod.label,
+          tonalAccent = palette.purple,
+          initiallyExpanded = false,
+        ) {
           if (compReps.isEmpty() || periodSettlements.isEmpty()) {
             SarimEmptyState("No composition", "Nothing recorded in this period")
           } else {
@@ -252,8 +264,13 @@ fun CalculatorTab(
 
       if (compReps.isNotEmpty()) {
         item {
-          SarimCard {
-            Text("Representative Metrics", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          SarimCollapsibleCard(
+            title = "Representative Metrics",
+            badgeText = "${compReps.size} reps",
+            badgeColor = palette.cyan,
+            tonalAccent = palette.cyan,
+            initiallyExpanded = false,
+          ) {
             Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
               Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -608,8 +625,14 @@ fun CalculatorTab(
       val repSettlements = state.settlements.filter { it.repName == selectedRepOption }
       val periodFiltered = repSettlements.filter { it.dateEpoch >= SarimMetricsEngine.periodStart(overviewPeriod) }
       item {
-        SarimCard {
-          Text("Performance Overview ($selectedRepOption)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Performance Overview ($selectedRepOption)",
+          subtitle = "${overviewPeriod.label} · Net ${SarimFormat.formatKg(periodFiltered.sumOf { it.netSoldKg })}",
+          badgeText = SarimFormat.formatRs(periodFiltered.sumOf { it.netProfit }, false, hideMoney),
+          badgeColor = palette.emerald,
+          tonalAccent = palette.emerald,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(TimePeriod.entries, overviewPeriod, { it.label }, { overviewPeriod = it })
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Total Sold", SarimFormat.formatKg(periodFiltered.sumOf { it.totalSoldKg }), Modifier.weight(1f), palette.cyan)
@@ -688,8 +711,12 @@ fun CalculatorTab(
               referenceDateEpoch = System.currentTimeMillis(),
             )
           }
-          SarimCard {
-            Text("Performance Chart ($selectedRepOption)", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          SarimCollapsibleCard(
+            title = "Performance Chart ($selectedRepOption)",
+            subtitle = "${indChartPeriod.label} · ${indChartMetric.label}",
+            tonalAccent = palette.cyan,
+            initiallyExpanded = false,
+          ) {
             SarimToggleGroup(
               options = listOf(TimePeriod.WEEKLY, TimePeriod.MONTHLY, TimePeriod.YEARLY, TimePeriod.ALL_TIME),
               selected = indChartPeriod,
@@ -726,74 +753,84 @@ fun CalculatorTab(
         val totalIssued = repSettlements.sumOf { it.creditIssuedValue }
         val totalRec = repSettlements.sumOf { it.recoveredCredit }
         val debt = (totalIssued - totalRec).coerceAtLeast(0.0)
-        SarimCard {
-          Text("Market debt tracker", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Market debt tracker",
+          badgeText = SarimFormat.formatRs(debt, true, hideMoney),
+          badgeColor = if (debt > 0.01) palette.red else palette.green,
+          tonalAccent = if (debt > 0.01) palette.red else palette.green,
+          initiallyExpanded = false,
+        ) {
           Text(SarimFormat.formatRs(debt, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.Bold))
           SplitRatioBar("Recovered", totalRec, palette.green, "Outstanding", debt, palette.red, privacyHidden = hideMoney)
         }
       }
 
       item {
-        Text("Calculator History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        SarimTextField(
-          value = calcHistSearch,
-          onValueChange = { calcHistSearch = it },
-          label = "",
-          placeholder = "Search date, status, or item...",
-          leadingIcon = Icons.Rounded.Search,
-          testTag = "calc_history_search",
-        )
-        Spacer(Modifier.height(8.dp))
-        val q = calcHistSearch.trim()
-        val filteredSettlements = if (q.isBlank()) repSettlements else repSettlements.filter { s ->
-          s.repName.contains(q, ignoreCase = true) ||
-            s.status.contains(q, ignoreCase = true) ||
-            SarimFormat.dateInput(s.dateEpoch).contains(q, ignoreCase = true) ||
-            SarimFormat.formatDate(s.dateEpoch).contains(q, ignoreCase = true) ||
-            (s.returnRep?.contains(q, ignoreCase = true) == true) ||
-            s.expenseItemsJson.contains(q, ignoreCase = true) ||
-            s.commissionItemsJson.contains(q, ignoreCase = true)
-        }
-        val records = filteredSettlements.map { s ->
-          val sc = when (s.status) {
-            "OK" -> palette.green
-            "SHORT" -> palette.red
-            else -> palette.amber
+        SarimCollapsibleCard(
+          title = "Calculator History",
+          badgeText = "${repSettlements.size}",
+          badgeColor = palette.cyan,
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
+          SarimTextField(
+            value = calcHistSearch,
+            onValueChange = { calcHistSearch = it },
+            label = "",
+            placeholder = "Search date, status, or item...",
+            leadingIcon = Icons.Rounded.Search,
+            testTag = "calc_history_search",
+          )
+          val q = calcHistSearch.trim()
+          val filteredSettlements = if (q.isBlank()) repSettlements else repSettlements.filter { s ->
+            s.repName.contains(q, ignoreCase = true) ||
+              s.status.contains(q, ignoreCase = true) ||
+              SarimFormat.dateInput(s.dateEpoch).contains(q, ignoreCase = true) ||
+              SarimFormat.formatDate(s.dateEpoch).contains(q, ignoreCase = true) ||
+              (s.returnRep?.contains(q, ignoreCase = true) == true) ||
+              s.expenseItemsJson.contains(q, ignoreCase = true) ||
+              s.commissionItemsJson.contains(q, ignoreCase = true)
           }
-          HistoryRecordDisplay(
-            item = s,
-            dateEpoch = s.dateEpoch,
-            title = "${s.repName} · ${s.status}",
-            subtitle = "Net ${SarimFormat.formatKg(s.netSoldKg)} · Rev ${SarimFormat.formatRs(s.grossRevenue, false, hideMoney)}",
-            amountText = SarimFormat.formatRs(s.receivedCash, true, hideMoney),
-            amountColor = sc,
-            chipText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
-            chipColor = sc,
-            detailMetrics = buildList {
-              add("Total Sold" to SarimFormat.formatKg(s.totalSoldKg))
-              add("Returned" to SarimFormat.formatKg(s.returnedKg))
-              if (s.returnType.equals("TRANSFER", true) && !s.returnRep.isNullOrBlank()) {
-                add("Transfer To" to s.returnRep)
-              }
-              add("Expired" to SarimFormat.formatKg(s.expiredKg))
-              add("Net Sold" to SarimFormat.formatKg(s.netSoldKg))
-              add("Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney))
-              add("Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney))
-              add("Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney))
-              add("Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney))
-              add("Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney))
-              add("Comm Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney))
-            },
+          val records = filteredSettlements.map { s ->
+            val sc = when (s.status) {
+              "OK" -> palette.green
+              "SHORT" -> palette.red
+              else -> palette.amber
+            }
+            HistoryRecordDisplay(
+              item = s,
+              dateEpoch = s.dateEpoch,
+              title = "${s.repName} · ${s.status}",
+              subtitle = "Net ${SarimFormat.formatKg(s.netSoldKg)} · Rev ${SarimFormat.formatRs(s.grossRevenue, false, hideMoney)}",
+              amountText = SarimFormat.formatRs(s.receivedCash, true, hideMoney),
+              amountColor = sc,
+              chipText = if (s.status == "OK") "PERFECT MATCH" else "${s.status}: ${SarimFormat.formatRs(abs(s.statusDiff), false, hideMoney)}",
+              chipColor = sc,
+              detailMetrics = buildList {
+                add("Total Sold" to SarimFormat.formatKg(s.totalSoldKg))
+                add("Returned" to SarimFormat.formatKg(s.returnedKg))
+                if (s.returnType.equals("TRANSFER", true) && !s.returnRep.isNullOrBlank()) {
+                  add("Transfer To" to s.returnRep)
+                }
+                add("Expired" to SarimFormat.formatKg(s.expiredKg))
+                add("Net Sold" to SarimFormat.formatKg(s.netSoldKg))
+                add("Gross Revenue" to SarimFormat.formatRs(s.grossRevenue, false, hideMoney))
+                add("Net Profit" to SarimFormat.formatRs(s.netProfit, false, hideMoney))
+                add("Expected Cash" to SarimFormat.formatRs(s.expectedCash, false, hideMoney))
+                add("Cash Received" to SarimFormat.formatRs(s.receivedCash, false, hideMoney))
+                add("Field Expenses" to SarimFormat.formatRs(s.fieldExpenses, false, hideMoney))
+                add("Comm Paid" to SarimFormat.formatRs(s.commissionPaid, false, hideMoney))
+              },
+            )
+          }
+          AccordionHistoryList(
+            records = records,
+            yearSummary = { "" },
+            monthSummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
+            daySummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
+            onItemClick = { rec -> sheetSettlement = rec.item },
           )
         }
-        AccordionHistoryList(
-          records = records,
-          yearSummary = { "" },
-          monthSummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
-          daySummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
-          onItemClick = { rec -> sheetSettlement = rec.item },
-        )
       }
     }
   }

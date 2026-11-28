@@ -309,8 +309,7 @@ fun FactoryTab(
       item {
         val availFormula = availFormulas.firstOrNull { it.id == availFormulaId } ?: availFormulas.firstOrNull()
         if (availFormula == null) {
-          SarimCard {
-            Text("Units Available", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          SarimCollapsibleCard(title = "Units Available", tonalAccent = palette.green, initiallyExpanded = false) {
             FormulaChoice(emptyList(), null) {}
           }
           return@item
@@ -322,8 +321,14 @@ fun FactoryTab(
         val salePrice = linkedStore?.salePricePerKg ?: 400.0
         val estProfitTotal = (availFormula.unitsAvailable * unitWeight * salePrice) - (availFormula.unitsAvailable * costPerUnit)
 
-        SarimCard {
-          Text("Units Available", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Units Available",
+          subtitle = availFormula.name,
+          badgeText = "${SarimFormat.formatQty(availFormula.unitsAvailable, 1)} u",
+          badgeColor = palette.green,
+          tonalAccent = palette.green,
+          initiallyExpanded = false,
+        ) {
           FormulaChoice(availFormulas, availFormula) { availFormulaId = it.id }
           SarimFieldLabel("UNITS")
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -352,8 +357,14 @@ fun FactoryTab(
             InventorySort.TOTAL_VALUE -> if (invAsc) base.sortedBy { it.stockKg * it.avgCostPerKg } else base.sortedByDescending { it.stockKg * it.avgCostPerKg }
           }
         }
-        SarimCard {
-          Text("Raw Material Inventory", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Raw Material Inventory",
+          subtitle = "${state.rawMaterials.size} materials",
+          badgeText = SarimFormat.formatRs(state.rawMaterials.sumOf { it.stockKg * it.avgCostPerKg }, false, hideMoney),
+          badgeColor = palette.cyan,
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(
             InventorySort.entries,
             invSort,
@@ -397,8 +408,14 @@ fun FactoryTab(
       item {
         val cutoff = SarimMetricsEngine.periodStart(summaryPeriod)
         val batches = state.factoryBatches.filter { it.dateEpoch >= cutoff }
-        SarimCard(tonalAccent = palette.cyan) {
-          Text("Performance Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SarimCollapsibleCard(
+          title = "Performance Summary",
+          subtitle = "${summaryPeriod.label} · ${SarimFormat.formatQty(batches.sumOf { it.unitsProduced }, 1)} u",
+          badgeText = SarimFormat.formatRs(batches.sumOf { it.totalCost }, false, hideMoney),
+          badgeColor = palette.cyan,
+          tonalAccent = palette.cyan,
+          initiallyExpanded = false,
+        ) {
           SarimToggleGroup(TimePeriod.entries, summaryPeriod, { it.label }, { summaryPeriod = it })
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Total Cost", SarimFormat.formatRs(batches.sumOf { it.totalCost }, false, hideMoney), Modifier.weight(1f), palette.red)
@@ -434,34 +451,40 @@ fun FactoryTab(
 
       // 5. Recent Production Activity Accordion
       item {
-        Text("Recent Production Activity", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        val records = state.factoryBatches.map { b ->
-          HistoryRecordDisplay(
-            item = b,
-            dateEpoch = b.dateEpoch,
-            title = b.formulaName,
-            subtitle = "${SarimFormat.formatQty(b.unitsProduced, 1)} units · ${SarimFormat.formatKg(b.outputKg)}",
-            amountText = SarimFormat.formatRs(b.totalCost, true, hideMoney),
-            amountColor = palette.red,
-            showDots = true,
-            detailMetrics = listOf(
-              "Units Produced" to SarimFormat.formatQty(b.unitsProduced, 2),
-              "Output kg" to SarimFormat.formatKg(b.outputKg),
-              "Raw Used kg" to SarimFormat.formatKg(b.rawUsedKg),
-              "Materials Cost" to SarimFormat.formatRs(b.materialsCost, false, hideMoney),
-              "Additional Cost" to SarimFormat.formatRs(b.additionalCost, false, hideMoney),
-              "Cost / Unit" to SarimFormat.formatRs(b.costPerUnit, false, hideMoney),
-            ),
+        SarimCollapsibleCard(
+          title = "Recent Production Activity",
+          badgeText = "${state.factoryBatches.size}",
+          badgeColor = palette.purple,
+          tonalAccent = palette.purple,
+          initiallyExpanded = false,
+        ) {
+          val records = state.factoryBatches.map { b ->
+            HistoryRecordDisplay(
+              item = b,
+              dateEpoch = b.dateEpoch,
+              title = b.formulaName,
+              subtitle = "${SarimFormat.formatQty(b.unitsProduced, 1)} units · ${SarimFormat.formatKg(b.outputKg)}",
+              amountText = SarimFormat.formatRs(b.totalCost, true, hideMoney),
+              amountColor = palette.red,
+              showDots = true,
+              detailMetrics = listOf(
+                "Units Produced" to SarimFormat.formatQty(b.unitsProduced, 2),
+                "Output kg" to SarimFormat.formatKg(b.outputKg),
+                "Raw Used kg" to SarimFormat.formatKg(b.rawUsedKg),
+                "Materials Cost" to SarimFormat.formatRs(b.materialsCost, false, hideMoney),
+                "Additional Cost" to SarimFormat.formatRs(b.additionalCost, false, hideMoney),
+                "Cost / Unit" to SarimFormat.formatRs(b.costPerUnit, false, hideMoney),
+              ),
+            )
+          }
+          AccordionHistoryList(
+            records = records,
+            yearSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+            monthSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+            daySummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+            onItemClick = { rec -> sheetBatch = rec.item },
           )
         }
-        AccordionHistoryList(
-          records = records,
-          yearSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
-          monthSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
-          daySummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
-          onItemClick = { rec -> sheetBatch = rec.item },
-        )
       }
     }
   }
