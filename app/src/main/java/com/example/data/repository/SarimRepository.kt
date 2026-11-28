@@ -3326,6 +3326,14 @@ class SarimRepository(
     return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
   }
 
+  /** Web `_doRestoreMerge`: a backup's `settings` replace the local ones when they differ. */
+  suspend fun applyBackupSettings(incoming: JSONObject): Boolean {
+    if (incoming.length() == 0) return false
+    if (readSettingsObject().toString() == incoming.toString()) return false
+    writeSettingsObject(incoming, System.currentTimeMillis())
+    return true
+  }
+
   /** Reverse of a year close (web `_doYearCloseRestore`): put the counters back to the backup's snapshot. */
   suspend fun restoreYearCloseMeta(count: Int, lastAt: Long?, lastDate: String?) {
     val now = System.currentTimeMillis()

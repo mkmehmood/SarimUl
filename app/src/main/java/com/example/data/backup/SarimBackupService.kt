@@ -195,18 +195,38 @@ class SarimBackupService(
       }
       filtered.put(SarimWebSchema.COL_FORMULAS, out)
     }
-    val localLedgerIds = dao.getAllDailyLedger().map { it.id }.toSet()
+    // Daily ledger: add new entries and take newer copies (web `mergeNewestById`).
+    val localLedgerVersions = dao.getAllDailyLedger().associate { it.id to it.updatedAt.toDouble() }
     (root.optJSONArray(SarimWebSchema.COL_DAILY_LEDGER) ?: root.optJSONArray("ledger"))?.let { arr ->
       val out = JSONArray()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
         val lid = o.optString("id")
-        if (lid.isNotBlank() && lid !in localLedgerIds && lid !in deleted) out.put(o)
+        if (lid.isBlank() || lid in deleted) continue
+        val localVersion = localLedgerVersions[lid]
+        if (localVersion == null || BackupRestoreLogic.versionMs(SarimWebSchema.jsonObjectToMap(o)) > localVersion) out.put(o)
       }
       filtered.put(SarimWebSchema.COL_DAILY_LEDGER, out)
     }
+    // Reference lists carried by the web backup.
+    for (k in listOf("categories", "field_expense_categories", "commission_categories", "reps", "costs", "adjustment", "tracking")) {
+      root.opt(k)?.let { filtered.put(k, it) }
+    }
 
     syncRepo.restoreBackupJson(filtered.toString(), markPending = true).getOrThrow()
+
+    // Formulas this device already has: merge their saved calculations and apply costs / factor / units.
+    root.optJSONArray(SarimWebSchema.COL_FORMULAS)?.let { arr ->
+      for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val fid = o.optString("id")
+        if (fid.isBlank() || fid !in localFormulaIds || fid in deleted) continue
+        val calcs = SarimWebSchema.jsonObjectToMap(o)["savedCalcs"] as? List<*> ?: continue
+        syncRepo.mergeSavedCalcs(fid, o.optString("name"), calcs)
+      }
+    }
+    syncRepo.applyFactoryFeeds(root)
+    root.optJSONObject("settings")?.let { repository.applyBackupSettings(it) }
     return RestoreSummary(plan.added, plan.updated, plan.skipped, isYearClose = false)
   }
 

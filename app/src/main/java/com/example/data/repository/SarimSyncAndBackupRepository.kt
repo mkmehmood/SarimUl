@@ -2224,22 +2224,19 @@ class SarimSyncAndBackupRepository(
       }
     })
 
+    // Same shape the web writes: formulas[] with ingredients/savedCalcs plus the defaults/costs/adjustment/tracking maps.
+    val formulaCfg = SarimWebSchema.formulasConfigDocPayload(
+      formulas = dao.getAllFormulas().filter { !it.isDeleted },
+      savedCalcs = mixCalcs,
+      materials = mats.associateBy { it.id },
+      ts = System.currentTimeMillis(),
+    )
     root.put(SarimWebSchema.COL_FORMULAS, JSONArray().apply {
-      dao.getAllFormulas().filter { !it.isDeleted }.forEach { f ->
-        put(JSONObject().apply {
-          put("id", f.id); put("name", f.name)
-          put("additionalCost", f.additionalCostPerUnit); put("additionalCostPerUnit", f.additionalCostPerUnit)
-          put("factor", f.costAdjustmentFactor); put("costAdjustmentFactor", f.costAdjustmentFactor)
-          put("ingredientsJson", f.ingredientsJson)
-          put("unitsAvailable", f.unitsAvailable); put("unitsUsed", f.unitsUsed)
-          put("savedCalcs", JSONArray().apply {
-            calcsByFormula[f.id].orEmpty().forEach { sc ->
-              put(JSONObject(SarimMixCalcRecords.toWebRecord(sc)))
-            }
-          })
-        })
-      }
+      (formulaCfg["formulas"] as? List<*>).orEmpty().forEach { f -> (f as? Map<*, *>)?.let { put(JSONObject(it)) } }
     })
+    listOf("defaults", "costs", "adjustment", "tracking").forEach { k ->
+      root.put(k, JSONObject((formulaCfg[k] as? Map<*, *>) ?: emptyMap<String, Any?>()))
+    }
 
     root.put(SarimWebSchema.COL_FACTORY, JSONArray().apply {
       dao.getAllFactoryBatches().filter { !it.isDeleted }.forEach { put(JSONObject(SarimWebSchema.factoryBatchToMap(it))) }
@@ -2297,14 +2294,110 @@ class SarimSyncAndBackupRepository(
           put("type", l.type); put("amount", l.amount); put("mode", l.mode)
           put("toMode", l.toMode); put("party", l.party); put("ref", l.refNo)
           put("note", l.note); put("category", l.category); put("scope", l.scope)
-          put("timestamp", l.dateEpoch); put("updatedAt", l.updatedAt)
+          put("sourceType", l.sourceType); put("sourceId", l.sourceId)
+          JsonCodecs.decodeLedgerLink(l.linkJson)?.takeIf { it.isNotEmpty() }?.let { put("link", JSONObject(it)) }
+          put("timestamp", l.dateEpoch); put("createdAt", l.createdAt); put("updatedAt", l.updatedAt)
         })
       }
     })
     // Legacy v1 compatibility key
     root.put("ledger", root.getJSONArray(SarimWebSchema.COL_DAILY_LEDGER))
 
+    // Web `collectAuxBackupFields`: category lists, rep names and the (device-local) photo maps.
+    for (k in BACKUP_STRING_LISTS) {
+      root.put(k, JSONArray(JsonCodecs.decodeStrings(dao.getKvByUserKey(k)?.value ?: "[]")))
+    }
+    root.put("photos", JSONObject())
+    root.put("photostamps", JSONObject())
+
     return root.toString(2)
+  }
+
+  private val BACKUP_CATEGORY_KEYS = listOf("categories", "field_expense_categories", "commission_categories")
+  private val BACKUP_STRING_LISTS = BACKUP_CATEGORY_KEYS + "reps"
+
+  private fun jsonStrings(arr: JSONArray): List<String> =
+    (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+
+  /** Union of the stored list and [incoming] (case-insensitive), flagged for sync like any local edit. */
+  private suspend fun mergeKvStrings(userKey: String, incoming: List<String>) {
+    val existing = dao.getKvByUserKey(userKey)
+    val local = JsonCodecs.decodeStrings(existing?.value ?: "[]")
+    val merged = (local + incoming).map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
+    if (merged == local) return
+    val now = System.currentTimeMillis()
+    dao.upsertKv(
+      KvStoreEntity(
+        fullKey = userKey, userKey = userKey, collection = SarimWebSchema.COL_SETTINGS.takeIf { userKey == "reps" } ?: userKey,
+        rowType = "settings", value = JsonCodecs.encodeStrings(merged), ts = now, createdAt = existing?.createdAt ?: now,
+      )
+    )
+    dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_timestamp", userKey = "${userKey}_timestamp", collection = userKey, rowType = "meta", value = now.toString(), ts = now, createdAt = now))
+    dao.upsertKv(KvStoreEntity(fullKey = "${userKey}_dirty", userKey = "${userKey}_dirty", collection = userKey, rowType = "meta", value = "1", ts = now, createdAt = now))
+  }
+
+  /**
+   * One web `savedCalcs[]` record -> [SavedMixCalcEntity]. With [onlyIfNewer] an existing local calc is
+   * kept unless the backup copy is newer (web `mergeNewestById`).
+   */
+  private suspend fun upsertWebSavedCalc(sc: Map<*, *>, formulaId: String, formulaName: String, onlyIfNewer: Boolean): Boolean {
+    val web = LinkedHashMap<String, Any?>(sc.entries.associate { it.key.toString() to it.value })
+    val scId = SarimWebSchema.str(web["id"]).trim()
+    val scName = SarimWebSchema.str(web["name"]).trim()
+    if (scId.isBlank() || scName.isBlank()) return false
+    if (onlyIfNewer) {
+      val existing = dao.getAllMixCalcs().firstOrNull { it.id == scId }
+      val incomingTs = SarimWebSchema.parseEpoch(web["updatedAt"] ?: web["createdAt"] ?: 0L)
+      if (existing != null && !existing.isDeleted && incomingTs <= existing.updatedAt) return false
+    }
+    val kindRaw = SarimWebSchema.str(web["kind"])
+    val isFix = kindRaw == "fix" || kindRaw == SarimMixCalcRecords.KIND_FIX
+    web["kind"] = if (isFix) "fix" else "batch"
+    if (isFix && web["remaining"] == null) web["remaining"] = web["inputValue"]
+    if (!isFix && web["totalWeight"] == null) web["totalWeight"] = web["inputValue"]
+    dao.upsertMixCalc(
+      SavedMixCalcEntity(
+        id = scId,
+        kind = if (isFix) SarimMixCalcRecords.KIND_FIX else SarimMixCalcRecords.KIND_BATCH,
+        name = scName,
+        formulaId = formulaId,
+        formulaName = formulaName,
+        unit = SarimWebSchema.str(web["unit"]).ifBlank { if (isFix) "g" else "kg" },
+        mode = if (isFix) "CORRECTION" else SarimFormulaEngine.normalizeMode(SarimWebSchema.str(web["mode"])),
+        inputValue = SarimMixCalcRecords.inputValueOf(web),
+        summaryText = SarimWebSchema.str(web["summaryText"]),
+        detailsJson = SarimMixCalcRecords.detailsJsonOf(web),
+        syncPending = true,
+        createdAt = SarimWebSchema.parseEpoch(web["createdAt"] ?: System.currentTimeMillis()),
+        updatedAt = SarimWebSchema.parseEpoch(web["updatedAt"] ?: System.currentTimeMillis()),
+      )
+    )
+    return true
+  }
+
+  /** Merge-restore for formulas this device already has: add/refresh their saved calculations. */
+  suspend fun mergeSavedCalcs(formulaId: String, formulaName: String, calcs: List<*>): Int =
+    calcs.count { (it as? Map<*, *>)?.let { m -> upsertWebSavedCalc(m, formulaId, formulaName, onlyIfNewer = true) } == true }
+
+  /**
+   * Web restores `costs` / `adjustment` / `tracking` from the backup. Android keeps those values on the
+   * formula itself, so apply them to formulas that already exist here.
+   */
+  suspend fun applyFactoryFeeds(root: JSONObject): Int {
+    val costs = root.optJSONObject("costs"); val adj = root.optJSONObject("adjustment"); val tracking = root.optJSONObject("tracking")
+    if (costs == null && adj == null && tracking == null) return 0
+    val now = System.currentTimeMillis()
+    var changed = 0
+    dao.getAllFormulas().filter { !it.isDeleted }.forEach { f ->
+      var next = f
+      if (costs != null && costs.has(f.id)) next = next.copy(additionalCostPerUnit = costs.optDouble(f.id, f.additionalCostPerUnit))
+      if (adj != null && adj.has(f.id)) next = next.copy(costAdjustmentFactor = adj.optDouble(f.id, f.costAdjustmentFactor))
+      tracking?.optJSONObject(f.id)?.let { t ->
+        next = next.copy(unitsAvailable = t.optDouble("available", f.unitsAvailable), unitsUsed = t.optDouble("used", f.unitsUsed))
+      }
+      if (next != f) { dao.upsertFormula(next.copy(syncPending = true, updatedAt = now)); changed++ }
+    }
+    return changed
   }
 
   suspend fun restoreBackupJson(raw: String, markPending: Boolean = true): Result<Int> {
@@ -2377,40 +2470,17 @@ class SarimSyncAndBackupRepository(
             FormulaEntity(
               id = id,
               name = name,
-              additionalCostPerUnit = o.optDouble("additionalCostPerUnit", o.optDouble("additionalCost", 0.0)),
-              costAdjustmentFactor = o.optDouble("costAdjustmentFactor", o.optDouble("factor", 1.0)),
+              additionalCostPerUnit = o.optDouble("additionalCostPerUnit", o.optDouble("additionalCost", root.optJSONObject("costs")?.optDouble(id, 0.0) ?: 0.0)),
+              costAdjustmentFactor = o.optDouble("costAdjustmentFactor", o.optDouble("factor", root.optJSONObject("adjustment")?.optDouble(id, 1.0) ?: 1.0)),
               ingredientsJson = ingJson,
-              unitsAvailable = o.optDouble("unitsAvailable", 0.0),
-              unitsUsed = o.optDouble("unitsUsed", 0.0),
+              // Web keeps units available / used in the separate `tracking` map.
+              unitsAvailable = if (o.has("unitsAvailable")) o.optDouble("unitsAvailable", 0.0) else root.optJSONObject("tracking")?.optJSONObject(id)?.optDouble("available", 0.0) ?: 0.0,
+              unitsUsed = if (o.has("unitsUsed")) o.optDouble("unitsUsed", 0.0) else root.optJSONObject("tracking")?.optJSONObject(id)?.optDouble("used", 0.0) ?: 0.0,
               syncPending = markPending,
             )
           )
           (SarimWebSchema.jsonObjectToMap(o)["savedCalcs"] as? List<*>).orEmpty().forEach { raw ->
-            val sc = raw as? Map<*, *> ?: return@forEach
-            val web = LinkedHashMap<String, Any?>(sc.entries.associate { it.key.toString() to it.value })
-            val scId = SarimWebSchema.str(web["id"]).trim()
-            val scName = SarimWebSchema.str(web["name"]).trim()
-            if (scId.isBlank() || scName.isBlank()) return@forEach
-            val kindRaw = SarimWebSchema.str(web["kind"])
-            val isFix = kindRaw == "fix" || kindRaw == SarimMixCalcRecords.KIND_FIX
-            web["kind"] = if (isFix) "fix" else "batch"
-            if (isFix && web["remaining"] == null) web["remaining"] = web["inputValue"]
-            if (!isFix && web["totalWeight"] == null) web["totalWeight"] = web["inputValue"]
-            dao.upsertMixCalc(
-              SavedMixCalcEntity(
-                id = scId,
-                kind = if (isFix) SarimMixCalcRecords.KIND_FIX else SarimMixCalcRecords.KIND_BATCH,
-                name = scName,
-                formulaId = id,
-                formulaName = name,
-                unit = SarimWebSchema.str(web["unit"]).ifBlank { if (isFix) "g" else "kg" },
-                mode = if (isFix) "CORRECTION" else SarimFormulaEngine.normalizeMode(SarimWebSchema.str(web["mode"])),
-                inputValue = SarimMixCalcRecords.inputValueOf(web),
-                summaryText = SarimWebSchema.str(web["summaryText"]),
-                detailsJson = SarimMixCalcRecords.detailsJsonOf(web),
-                syncPending = true,
-              )
-            )
+            (raw as? Map<*, *>)?.let { upsertWebSavedCalc(it, id, name, onlyIfNewer = false) }
           }
           restoredCount++
         }
@@ -2507,6 +2577,18 @@ class SarimSyncAndBackupRepository(
       SarimWebPullMappers.jsonObjectToMapList(ledgerArr).forEach { m ->
         SarimWebPullMappers.mapToDailyLedger(m)?.let {
           dao.upsertLedgerEntry(it.copy(syncPending = markPending)); restoredCount++
+        }
+      }
+
+      // Category lists: union with what this device already has (web `mergeStringLists`).
+      for (k in BACKUP_CATEGORY_KEYS) {
+        root.optJSONArray(k)?.let { arr -> mergeKvStrings(k, jsonStrings(arr)) }
+      }
+      // Rep names: only filled in when this device has none yet (web `fillEmptyRepList`).
+      root.optJSONArray("reps")?.let { arr ->
+        val incoming = jsonStrings(arr)
+        if (incoming.isNotEmpty() && JsonCodecs.decodeStrings(dao.getKvByUserKey("reps")?.value ?: "[]").isEmpty()) {
+          mergeKvStrings("reps", incoming)
         }
       }
 
