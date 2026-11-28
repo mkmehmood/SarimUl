@@ -13,6 +13,12 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.material.icons.rounded.Calculate
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +73,57 @@ private fun calcRows(calc: SavedMixCalcEntity): List<Triple<String, Double, Bool
   }
 }
 
+private fun savedWhen(ts: Long): String =
+  java.text.SimpleDateFormat("dd MMM yyyy hh:mm a", java.util.Locale.US).format(java.util.Date(ts)).uppercase()
+
+private fun num3(v: Double): String = String.format(java.util.Locale.US, "%.3f", Math.round(v * 1000) / 1000.0)
+
+/** Web `.hc-card` background: dots for batches, diagonal stripes for corrections. */
+private fun Modifier.savedCalcPattern(color: Color, stripes: Boolean): Modifier = drawBehind {
+  if (stripes) {
+    val gap = 16.dp.toPx()
+    var x = -size.height
+    while (x < size.width) {
+      drawLine(color.copy(alpha = 0.16f), Offset(x, size.height), Offset(x + size.height, 0f), strokeWidth = 5.dp.toPx())
+      x += gap
+    }
+  } else {
+    val gap = 18.dp.toPx()
+    var y = gap / 2
+    while (y < size.height) {
+      var x = gap / 2
+      while (x < size.width) {
+        drawCircle(color.copy(alpha = 0.30f), radius = 1.2.dp.toPx(), center = Offset(x, y))
+        x += gap
+      }
+      y += gap
+    }
+  }
+}
+
+@Composable
+private fun SavedCalcTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+  val palette = LocalSarimPalette.current
+  Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.32f)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+      Text(label.uppercase(), color = palette.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+      Text(value, color = color, style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
+    }
+  }
+}
+
+@Composable
+private fun SavedCalcTileGrid(tiles: List<Triple<String, String, Color>>) {
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    tiles.chunked(2).forEach { pair ->
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        pair.forEach { (l, v, c) -> SavedCalcTile(l, v, c, Modifier.weight(1f)) }
+        if (pair.size == 1) Spacer(Modifier.weight(1f))
+      }
+    }
+  }
+}
+
 @Composable
 private fun SavedCalcCard(
   title: String,
@@ -80,56 +137,99 @@ private fun SavedCalcCard(
   onDeleted: (String) -> Unit,
 ) {
   val palette = LocalSarimPalette.current
-  SarimCard {
-    Text("$title (${calcs.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Text("${title.uppercase()} ${if (calcs.isEmpty()) "" else "(${calcs.size})"}".trim(), color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp)
     if (calcs.isEmpty()) {
       Text(emptyText, color = palette.textMuted, fontSize = 12.5.sp)
-    } else {
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        calcs.forEach { calc ->
-          val rows = calcRows(calc)
-          val isFix = calc.kind == SarimMixCalcRecords.KIND_FIX
-          SarimHistoryCard(
-            title = calc.name,
-            subtitle = listOf(SarimFormat.formatDate(calc.updatedAt), calc.summaryText).filter { it.isNotBlank() }.joinToString(" · "),
-            tagText = if (isFix) "Correction" else "Batch",
-            tone = if (isFix) HistoryTone.WARN else HistoryTone.INFO,
-          ) {
-            rows.forEach { (n, v, fix) ->
-              HistoryKeyValueRow(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, calc.unit)} ${calc.unit}")
+    }
+    calcs.forEach { calc ->
+      val d = SarimMixCalcRecords.details(calc)
+      val isFix = calc.kind == SarimMixCalcRecords.KIND_FIX
+      val tone = if (isFix) palette.amber else palette.cyan
+      val unit = calc.unit
+      val rows = calcRows(calc)
+      fun amt(v: Any?) = "${fmtAmt(SarimMixCalcRecords.num(v), unit)} $unit"
+      val headAmount = if (isFix) amt(d["addTotal"] ?: 0.0) else amt(d["totalWeight"] ?: calc.inputValue)
+      val tiles: List<Triple<String, String, Color>> = if (isFix) {
+        listOf(
+          Triple("Remaining batch", amt(d["remaining"]), palette.cyan),
+          Triple("New total", amt(d["requiredTotal"]), palette.green),
+          Triple("Total to add", amt(d["addTotal"]), palette.red),
+        )
+      } else {
+        listOf(
+          Triple("Units", num3(SarimMixCalcRecords.num(d["units"])), palette.cyan),
+          Triple("Total batch weight", amt(d["totalWeight"] ?: calc.inputValue), palette.green),
+        )
+      }
+      val shape = RoundedCornerShape(28.dp)
+      Surface(
+        modifier = Modifier.fillMaxWidth().clip(shape),
+        shape = shape,
+        color = palette.surface,
+        border = BorderStroke(1.5.dp, tone.copy(alpha = 0.65f)),
+      ) {
+        Column(
+          modifier = Modifier.savedCalcPattern(tone, stripes = isFix).padding(14.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.35f)) {
+              Icon(Icons.Rounded.Calculate, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.padding(12.dp).size(26.dp))
             }
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              HistorySheetButton(
-                text = "Delete",
-                kind = SheetButtonKind.DANGER,
-                modifier = Modifier.weight(1f),
-                onClick = {
-                  viewModel.showDialog(
-                    AppDialogRequest(
-                      title = deleteTitle,
-                      body = "$deleteBody (${calc.name})?",
-                      tone = DialogTone.PERMANENT,
-                      confirmLabel = "Delete",
-                      onConfirm = {
-                        viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
-                          viewModel.repository.deleteMixCalc(calc.id)
-                          onDeleted(calc.id)
-                        }
-                      },
-                    )
+            Column(modifier = Modifier.weight(1f)) {
+              Text(calc.name, color = palette.textPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, maxLines = 2)
+              Text(savedWhen(calc.updatedAt), color = palette.textMuted, fontSize = 12.sp)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Text(headAmount, color = tone, style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
+              Surface(shape = RoundedCornerShape(50), color = tone.copy(alpha = 0.18f)) {
+                Text(if (isFix) "CORRECTION" else "BATCH", color = tone, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp))
+              }
+            }
+          }
+          HorizontalDivider(color = palette.border)
+          Box(
+            Modifier.fillMaxWidth().height(1.dp).drawBehind {
+              drawLine(tone.copy(alpha = 0.55f), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
+            },
+          )
+          if (d.isEmpty()) {
+            if (calc.summaryText.isNotBlank()) Text(calc.summaryText, color = palette.textMuted, fontSize = 12.5.sp)
+          } else {
+            SavedCalcTileGrid(tiles)
+            if (rows.isNotEmpty()) {
+              Surface(shape = RoundedCornerShape(22.dp), color = palette.green.copy(alpha = 0.08f), border = BorderStroke(1.dp, palette.green.copy(alpha = 0.35f))) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                  Text(if (isFix) "INGREDIENTS TO ADD" else "REQUIRED INGREDIENTS", color = palette.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
+                  SavedCalcTileGrid(rows.map { (n, v, fix) -> Triple(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, unit)} $unit", palette.cyan) })
+                }
+              }
+            }
+          }
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SarimSecondaryButton(text = "Edit", onClick = { onOpen(calc) }, modifier = Modifier.weight(1f), testTag = "saved_calc_edit")
+            SarimDangerButton(
+              text = "Delete",
+              modifier = Modifier.weight(1f),
+              testTag = "saved_calc_delete",
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = deleteTitle,
+                    body = "$deleteBody (${calc.name})?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
+                        viewModel.repository.deleteMixCalc(calc.id)
+                        onDeleted(calc.id)
+                      }
+                    },
                   )
-                },
-              )
-              HistorySheetButton(
-                text = "Edit",
-                kind = SheetButtonKind.PRIMARY,
-                modifier = Modifier.weight(3f),
-                onClick = { onOpen(calc) },
-              )
-            }
+                )
+              },
+            )
           }
         }
       }
