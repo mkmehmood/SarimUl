@@ -27,6 +27,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
@@ -44,6 +45,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOf
@@ -350,6 +352,7 @@ class FirebaseSyncManager(
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
           val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
           auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+          LoginRateLimiter.recordSuccess()
           cachedWorkspaceUid = null
           onAuthSuccess()
         } else {
@@ -388,6 +391,7 @@ class FirebaseSyncManager(
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
           val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
           auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+          LoginRateLimiter.recordSuccess()
           cachedWorkspaceUid = null
           onAuthSuccess()
         } else {
@@ -418,6 +422,7 @@ class FirebaseSyncManager(
         } finally {
           cachedWorkspaceUid = null
           runCatching { _auth?.signOut() }
+          LoginRateLimiter.recordSuccess()
           onSignOutComplete()
         }
       }
@@ -428,15 +433,32 @@ class FirebaseSyncManager(
     if (!isFirebaseConfigured) {
       return Result.failure(IllegalStateException("Firebase is not configured. Add app/google-services.json or continue in Offline Mode."))
     }
+    if (LoginRateLimiter.isLockedOut()) {
+      return Result.failure(IllegalStateException(LoginRateLimiter.lockoutMessage()))
+    }
+    val backoff = LoginRateLimiter.backoffMs()
+    if (backoff > 0L) {
+      delay(backoff)
+      if (LoginRateLimiter.isLockedOut()) {
+        return Result.failure(IllegalStateException(LoginRateLimiter.lockoutMessage()))
+      }
+    }
     return try {
       val res = auth.signInWithEmailAndPassword(email.trim(), password).await()
       val user = res.user ?: return Result.failure(IllegalStateException("Sign-in did not return a user account."))
       cachedWorkspaceUid = null
+      LoginRateLimiter.recordSuccess()
       Result.success(user)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
-      Result.failure(IllegalStateException(mapAuthError(e)))
+      // A dropped connection is not a wrong password, so it does not count toward the lockout.
+      if (e !is FirebaseNetworkException) LoginRateLimiter.recordFailure()
+      Result.failure(
+        IllegalStateException(
+          if (LoginRateLimiter.isLockedOut()) LoginRateLimiter.lockoutMessage(accountLocked = true) else mapAuthError(e)
+        )
+      )
     }
   }
 

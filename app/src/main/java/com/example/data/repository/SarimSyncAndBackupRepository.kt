@@ -83,6 +83,7 @@ class SarimSyncAndBackupRepository(
   val uuidRegistry: UuidSyncRegistry = UuidSyncRegistry(RoomKvStorePersistence(dao, safeReader)),
 ) {
   private val recycleRestoreEngine = SarimRecycleRestoreEngine(dao, uuidRegistry)
+  val failedOps = FailedOpsQueue(dao, safeReader)
   var onRemoteActivityAlerts: ((List<RemoteActivityAlert>) -> Unit)? = null
   private val notifiedActivityIds = Collections.synchronizedSet(LinkedHashSet<String>())
 
@@ -365,7 +366,13 @@ class SarimSyncAndBackupRepository(
 
       // 1. Drain local ndapp_outbox queue first (gated members route into /pending)
       val outboxWritesByCol = linkedMapOf<String, Int>()
+      // Anything parked for 30 minutes gets a fresh retry budget (web `_scheduleDlqAutoRetry`).
+      runCatching { failedOps.requeueDue(now) }
       safeReader.getOutboxAllOnce().forEach { op ->
+        // Exponential backoff between attempts: 2s, 4s, 8s … capped at 30s (web `processQueue`).
+        if (op.attempts > 0 && op.lastAttempt > 0L && now - op.lastAttempt < FailedOpsQueue.backoffMs(op.attempts)) {
+          return@forEach
+        }
         val isEditFlag = uuidRegistry.wasDownloaded(op.collection, op.docId)
         val res = syncManager.drainOutboxOp(
           op = op,
@@ -402,7 +409,14 @@ class SarimSyncAndBackupRepository(
             synced++
           }
         } else {
-          dao.bumpOutboxAttempt(op.id, now)
+          val err = res.exceptionOrNull()
+          if (FailedOpsQueue.isTransientNetworkError(err)) {
+            // Offline / weak signal: not the upload's fault, so it does not count toward the limit.
+          } else if (op.attempts + 1 >= FailedOpsQueue.MAX_RETRIES) {
+            failedOps.add(op, err?.message?.take(300).orEmpty(), now)
+          } else {
+            dao.bumpOutboxAttempt(op.id, now)
+          }
         }
       }
       outboxWritesByCol.forEach { (col, writes) ->

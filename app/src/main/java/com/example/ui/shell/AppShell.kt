@@ -201,7 +201,7 @@ fun AppShell(
           }
 
           // Offline / Pending Sync slim banner
-          if (!state.isOnline || state.isOfflineSession || state.pendingSyncCount > 0) {
+          if (!state.isOnline || state.isOfflineSession || state.pendingSyncCount > 0 || state.failedOps.isNotEmpty()) {
             val scheme = MaterialTheme.colorScheme
             Row(
               modifier = Modifier
@@ -220,19 +220,28 @@ fun AppShell(
                     .background(if (!state.isOnline || state.isOfflineSession) palette.amber else palette.green),
                 )
                 Text(
-                  text = if (!state.isOnline || state.isOfflineSession) {
-                    "Offline — changes saved locally"
-                  } else {
-                    "Cloud connected — tap to sync"
+                  text = when {
+                    !state.isOnline || state.isOfflineSession -> "Offline — changes saved locally"
+                    state.pendingSyncCount == 0 && state.failedOps.isNotEmpty() -> "All caught up — some uploads need attention"
+                    else -> "Cloud connected — tap to sync"
                   },
                   color = palette.textMuted,
                   fontSize = 11.5.sp,
                 )
               }
-              SarimChip(
-                text = "${state.pendingSyncCount} pending",
-                color = if (state.pendingSyncCount > 0) palette.amber else palette.green,
-              )
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (state.failedOps.isNotEmpty()) {
+                  SarimChip(
+                    text = "${state.failedOps.size} failed op${if (state.failedOps.size != 1) "s" else ""}",
+                    color = palette.red,
+                    modifier = Modifier.clickable { viewModel.openFailedOps() }.testTag("failed_ops_badge"),
+                  )
+                }
+                SarimChip(
+                  text = "${state.pendingSyncCount} pending",
+                  color = if (state.pendingSyncCount > 0) palette.amber else palette.green,
+                )
+              }
             }
             HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.4f))
           }

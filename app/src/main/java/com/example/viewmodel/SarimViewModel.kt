@@ -19,6 +19,8 @@ import com.example.ui.navigation.SarimRoute
 import com.example.util.AppDialogRequest
 import com.example.util.DialogCheckbox
 import com.example.util.DialogTone
+import com.example.util.DirectShare
+import com.example.util.ShareOutcome
 import com.example.util.FeedbackManager
 import com.example.util.LocationHelper
 import com.example.util.SarimFormat
@@ -50,6 +52,9 @@ data class SarimUiState(
   val prefs: UserPrefs = UserPrefs(),
   val isOnline: Boolean = true,
   val pendingSyncCount: Int = 0,
+  /** Uploads that exhausted their retries (web "Failed Uploads"). */
+  val failedOps: List<FailedOp> = emptyList(),
+  val showFailedOps: Boolean = false,
   val isSyncing: Boolean = false,
   val isAccountActionBusy: Boolean = false,
   val overviewRange: OverviewRange = OverviewRange.M6,
@@ -505,6 +510,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           storedReps = storedReps,
         )
         val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
+        val failedNow = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
         val bin = runCatching { syncRepo.getRecycleBinItems() }.getOrDefault(emptyList())
         val structSnap = runCatching { syncRepo.getDatabaseStructureSnapshot(lastLiveDiagnostics) }.getOrNull()
         val struct = structSnap?.collections ?: runCatching { syncRepo.getDatabaseStructure(lastLiveDiagnostics) }.getOrDefault(emptyList())
@@ -513,6 +519,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           prefs = prefs,
           isOnline = isNetworkConnected(),
           pendingSyncCount = pending,
+          failedOps = failedNow,
           salesReps = snap.repsList,
           operatingCategories = opCats,
           fieldExpenseCategories = fieldCats,
@@ -553,6 +560,8 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
               prefs = bundle.prefs,
               isOnline = bundle.isOnline,
               pendingSyncCount = bundle.pendingSyncCount,
+              failedOps = bundle.failedOps,
+              showFailedOps = current.showFailedOps && bundle.failedOps.isNotEmpty(),
               salesReps = bundle.salesReps,
               operatingCategories = bundle.operatingCategories,
               fieldExpenseCategories = bundle.fieldExpenseCategories,
@@ -1726,8 +1735,11 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     _uiState.update { it.copy(statusMessage = null) }
   }
 
+  private val ownActionNotifier by lazy { com.example.util.OwnActionNotifier(getApplication()) }
+
   fun postStatus(msg: String) {
     _uiState.update { it.copy(statusMessage = msg) }
+    runCatching { ownActionNotifier.notifyStatus(msg) }
   }
 
   fun launchSafely(
@@ -1746,6 +1758,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
+        runCatching { ownActionNotifier.notifyFailure(errorTitle, e.localizedMessage.orEmpty()) }
         showDialog(
           AppDialogRequest(
             title = errorTitle,
@@ -1839,6 +1852,63 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun openFailedOps() {
+    if (_uiState.value.failedOps.isNotEmpty()) _uiState.update { it.copy(showFailedOps = true) }
+  }
+
+  fun closeFailedOps() {
+    _uiState.update { it.copy(showFailedOps = false) }
+  }
+
+  private fun reloadFailedOps(message: String? = null) {
+    viewModelScope.launch {
+      val failed = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
+      val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
+      _uiState.update { it.copy(failedOps = failed, pendingSyncCount = pending, showFailedOps = it.showFailedOps && failed.isNotEmpty()) }
+      message?.let { postStatus(it) }
+    }
+  }
+
+  fun retryFailedOp(id: String) {
+    viewModelScope.launch {
+      val ok = runCatching { syncRepo.failedOps.retry(id) }.getOrDefault(false)
+      reloadFailedOps(if (ok) "Operation re-queued for upload" else null)
+      if (ok && isNetworkConnected() && !_uiState.value.isOfflineSession) syncDataNow()
+    }
+  }
+
+  fun dismissFailedOp(id: String) {
+    viewModelScope.launch {
+      runCatching { syncRepo.failedOps.dismiss(id) }
+      reloadFailedOps("Failed operation dismissed")
+    }
+  }
+
+  fun dismissAllFailedOps() {
+    viewModelScope.launch {
+      runCatching { syncRepo.failedOps.dismissAll() }
+      reloadFailedOps("All failed operations cleared")
+    }
+  }
+
+  /** Writes the failed operations as JSON and opens the share sheet (web "Export JSON"). */
+  fun exportFailedOps(context: android.content.Context) {
+    viewModelScope.launch {
+      val json = runCatching { syncRepo.failedOps.exportJson() }.getOrNull()
+      if (json.isNullOrBlank() || json == "[]") {
+        postStatus("No failed operations to export")
+        return@launch
+      }
+      val file = runCatching {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        java.io.File(dir, "failed_operations_${SarimFormat.dateInput(System.currentTimeMillis())}.json").also { it.writeText(json) }
+      }.getOrNull()
+      if (file == null || DirectShare.shareViaChooser(context, file, "application/json", "Failed operations") == ShareOutcome.FAILED) {
+        postStatus("Unable to export failed operations")
+      }
+    }
+  }
+
   fun refreshDiagnostics(includeCloudDiagnostics: Boolean = false) {
     viewModelScope.launch {
       try {
@@ -1851,12 +1921,15 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           }
         }
         val pending = syncRepo.countPendingSync()
+        val failed = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
         val bin = syncRepo.getRecycleBinItems()
         val structSnap = syncRepo.getDatabaseStructureSnapshot(lastLiveDiagnostics)
         _uiState.update {
           it.copy(
             isOnline = isNetworkConnected(),
             pendingSyncCount = pending,
+            failedOps = failed,
+            showFailedOps = it.showFailedOps && failed.isNotEmpty(),
             recycleBinItems = bin,
             dbStructure = structSnap.collections,
             dbStructureSnapshot = structSnap,
@@ -2048,6 +2121,7 @@ private data class ObservedDataBundle(
   val prefs: UserPrefs,
   val isOnline: Boolean,
   val pendingSyncCount: Int,
+  val failedOps: List<FailedOp>,
   val salesReps: List<String>,
   val operatingCategories: List<String>,
   val fieldExpenseCategories: List<String>,

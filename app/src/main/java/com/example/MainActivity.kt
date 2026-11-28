@@ -18,6 +18,7 @@ import com.example.data.remote.SarimPush
 import com.example.data.remote.authStateFlow
 import com.example.ui.components.FullScreenPhotoViewer
 import com.example.ui.components.GlassAlertDialog
+import com.example.ui.components.FailedOpsDialog
 import com.example.ui.components.InvoiceShareHost
 import com.example.ui.shell.*
 import com.example.ui.theme.SarimTheme
@@ -162,6 +163,9 @@ class MainActivity : ComponentActivity() {
         }
 
         InvoiceShareHost(state = state, viewModel = viewModel)
+        if (state.showFailedOps && state.failedOps.isNotEmpty()) {
+          FailedOpsDialog(ops = state.failedOps, viewModel = viewModel)
+        }
 
         state.activeDialog?.let { req ->
           GlassAlertDialog(
