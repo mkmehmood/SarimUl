@@ -76,6 +76,7 @@ object ProductionPhotoSharer {
     context: Context,
     entries: List<ProductionEntryEntity>,
     privacyHidden: Boolean,
+    resolve: (suspend (String) -> String?)? = null,
   ): List<File> = withContext(Dispatchers.IO) {
     val dir = File(context.cacheDir, "photos").apply { mkdirs() }
     val outFiles = mutableListOf<File>()
@@ -86,8 +87,18 @@ object ProductionPhotoSharer {
       val captionLines = listOf("GULL AND ZUBAIR NASWAR DEALERS") + buildCaptionLines(entry, privacyHidden)
       val safeStore = entry.storeName.ifBlank { entry.storeKey }.replace(Regex("\\W+"), "")
       val safeDate = entry.dateStr.ifBlank { SarimFormat.dateInput(entry.dateEpoch) }
-      for (uriStr in uris) {
-        val src = decodeSourceBitmap(context, uriStr) ?: continue
+      for ((idx, uriStr) in uris.withIndex()) {
+        // Direct data / URI first; then the photo store (web-synced entries hold photo keys, and
+        // Android mirrors every attached photo under "prod:<id>:<index>").
+        var src = decodeSourceBitmap(context, uriStr)
+        if (src == null && resolve != null) {
+          for (key in listOf(uriStr, "prod:${entry.id}:$idx")) {
+            val data = resolve(key) ?: continue
+            src = decodeSourceBitmap(context, data)
+            if (src != null) break
+          }
+        }
+        if (src == null) continue
         val captioned = renderCaptionedBitmap(src, captionLines)
         if (captioned !== src) src.recycle()
         counter++
@@ -108,9 +119,12 @@ object ProductionPhotoSharer {
     context: Context,
     entries: List<ProductionEntryEntity>,
     privacyHidden: Boolean,
+    resolve: (suspend (String) -> String?)? = null,
   ): Result<Pair<Int, ShareOutcome>> = runCatching {
-    val files = createCaptionedFiles(context, entries, privacyHidden)
-    require(files.isNotEmpty()) { "No readable photos found on the selected production record(s)." }
+    val files = createCaptionedFiles(context, entries, privacyHidden, resolve)
+    require(files.isNotEmpty()) {
+      "The saved photo(s) can no longer be read (the original file was removed). Re-attach the photo to this record and try again."
+    }
     val summary = formatSummaryText(entries.filter { JsonCodecs.decodeStrings(it.photoUrisJson).isNotEmpty() }, privacyHidden)
     withContext(Dispatchers.Main) {
       runCatching {
@@ -129,8 +143,9 @@ object ProductionPhotoSharer {
   }
 
   private fun decodeSourceBitmap(context: Context, uriStr: String): Bitmap? {
-    val trimmed = uriStr.trim()
-    if (trimmed.isEmpty()) return null
+    val raw = uriStr.trim()
+    if (raw.isEmpty()) return null
+    val trimmed = if (raw.startsWith("/")) "file://$raw" else raw
     return runCatching {
       val rawBytes: ByteArray? = if (trimmed.startsWith("data:", ignoreCase = true)) {
         val comma = trimmed.indexOf(',')

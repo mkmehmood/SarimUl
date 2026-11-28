@@ -10,6 +10,9 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.util.AppLockGuard
+import com.example.util.PhotoStore
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -183,7 +186,15 @@ fun PhotoAttachmentBar(
 ) {
   val context = LocalContext.current
   val palette = LocalSarimPalette.current
+  val photoScope = rememberCoroutineScope()
   var showInAppCamera by remember { mutableStateOf(false) }
+  // Copy every attached photo into a permanent data URL so it stays readable after restart / cache clean.
+  val addPhotos: (List<String>) -> Unit = { raw ->
+    photoScope.launch {
+      val saved = withContext(kotlinx.coroutines.Dispatchers.IO) { raw.map { PhotoStore.toDataUrl(context, it) } }
+      onAddUris(saved)
+    }
+  }
   fun reportError(msg: String) {
     if (onError != null) {
       onError(msg)
@@ -196,7 +207,7 @@ fun PhotoAttachmentBar(
     contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 6),
   ) { uris ->
     if (uris.isNotEmpty()) {
-      onAddUris(uris.map { it.toString() })
+      addPhotos(uris.map { it.toString() })
     }
   }
 
@@ -288,7 +299,7 @@ fun PhotoAttachmentBar(
       onDismiss = { showInAppCamera = false },
       onCaptured = { uriStr ->
         showInAppCamera = false
-        onAddUris(listOf(uriStr))
+        addPhotos(listOf(uriStr))
       },
       onOpenGallery = launchGallery,
       onError = { msg ->

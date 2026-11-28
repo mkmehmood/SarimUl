@@ -458,7 +458,7 @@ viewModel.launchSafely(
       val triggerMultiPhotoShare: (List<ProductionEntryEntity>) -> Unit = { chosen ->
         scope.launch {
           viewModel.postStatus("Preparing captioned photos…")
-          ProductionPhotoSharer.shareCaptionedPhotos(context, chosen, hideMoney).fold(
+          ProductionPhotoSharer.shareCaptionedPhotos(context, chosen, hideMoney) { viewModel.repository.photoData(it) }.fold(
             onSuccess = { (count, outcome) ->
               if (outcome == ShareOutcome.FAILED) {
                 viewModel.postStatus("Unable to open the share sheet")
@@ -619,7 +619,7 @@ viewModel.launchSafely(
               sheetEntry = null
               scope.launch {
                 viewModel.postStatus("Preparing captioned photos…")
-                ProductionPhotoSharer.shareCaptionedPhotos(context, listOf(p), hideMoney).fold(
+                ProductionPhotoSharer.shareCaptionedPhotos(context, listOf(p), hideMoney) { viewModel.repository.photoData(it) }.fold(
                   onSuccess = { (count, outcome) ->
                     if (outcome == ShareOutcome.FAILED) {
                       viewModel.postStatus("Unable to open the share sheet")
