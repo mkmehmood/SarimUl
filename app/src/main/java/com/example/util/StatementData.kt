@@ -20,6 +20,10 @@ data class DayInvoiceData(
   val dueLabel: String,
   val dueText: String,
   val dueNegative: Boolean,
+  /** Opening balance, sold and received of the day: drive the dial arc (web `invoicePaperHtml`). */
+  val opening: Double = 0.0,
+  val sold: Double = 0.0,
+  val got: Double = 0.0,
 )
 
 /**
@@ -36,6 +40,13 @@ object StatementData {
   fun inRange(epoch: Long, from: Long, to: Long): Boolean = epoch >= SarimFormat.startOfDay(from) && epoch <= endOfDay(to)
 
   private fun rs(v: Double, hide: Boolean) = SarimFormat.formatRs(v, privacyHidden = hide)
+  private fun amt(v: Double, hide: Boolean) = SarimFormat.formatRs(v, showSymbol = false, privacyHidden = hide)
+  private fun ibalText(b: Double, hide: Boolean) = when {
+    abs(b) < 0.01 -> "SETTLED"
+    b > 0 -> amt(b, hide)
+    else -> "${amt(-b, hide)} CR"
+  }
+  private fun kgNum(v: Double) = SarimFormat.formatQty(v, 3)
   private fun saleOrder() = compareBy<SaleTransactionEntity>({ it.dateEpoch }, { it.createdAt })
   private fun payOrder() = compareBy<PaymentTransactionEntity>({ it.dateEpoch }, { it.createdAt })
 
@@ -207,19 +218,40 @@ object StatementData {
     val opening = sorted.lastOrNull { SarimFormat.dateInput(it.dateEpoch) < dayKey }?.balanceAfter ?: 0.0
     val closing = day.last().balanceAfter
     val lines = day.map { t ->
-      val isCollection = t.mode == "COLLECTION"
-      val title = when {
-        t.isRepReturn -> "Return"
-        isCollection -> "Payment"
-        t.mode == "MONEY_OUT" -> "Money out"
-        t.paymentType == "CASH" -> "Cash sale"
-        else -> "Credit sale"
+      val isReturn = t.isRepReturn || t.mode == "REP_RETURN" || t.paymentType == "REP_RETURN"
+      val isPartial = t.paymentType == "PARTIAL_PAYMENT"
+      val isCollection = t.mode == "COLLECTION" || isPartial
+      val isOldDebt = t.transactionType == "OLD_DEBT"
+      fun at(price: Double) = if (price > 0.0) " @${amt(price, hide)}" else ""
+      when {
+        isReturn -> {
+          val e = t.expiredQtyKg; val r = t.returnedQtyKg
+          InvoiceLine(
+            if (e > 0) "Return | Expired credit" else "Return",
+            if (e > 0) "${kgNum(r)} kg | ${kgNum(e)} kg${at(t.returnUnitPrice)}" else "${kgNum(r)} kg${at(t.returnUnitPrice)}",
+            amt(t.returnValue.takeIf { it > 0.0 } ?: t.totalValue, hide), incoming = true,
+          )
+        }
+        isCollection -> {
+          val pay = t.amountReceived.takeIf { it > 0.0 } ?: t.totalValue
+          val expV = t.expiredValue
+          InvoiceLine(
+            if (isPartial) "Partial payment" else if (expV > 0) "Payment | Expired credit" else "Collection",
+            if (isPartial) "Payment received" else if (expV > 0) "${amt(pay, hide)} | ${kgNum(t.expiredQtyKg)} kg${at(t.expiredUnitPrice)}"
+            else if (kind == StatementKind.REP) "Bulk payment" else "Amount received",
+            amt(pay + expV, hide), incoming = true,
+          )
+        }
+        t.mode == "MONEY_OUT" -> InvoiceLine("Money out", t.notes.ifBlank { "Paid out to customer" }, amt(t.totalValue.takeIf { it > 0.0 } ?: t.amountReceived, hide))
+        isOldDebt -> InvoiceLine("Old debt", t.notes.ifBlank { "Previous balance" }, amt(t.totalValue, hide))
+        else -> InvoiceLine(
+          if (t.paymentType == "CASH") "Cash sale" else "Credit sale",
+          "${kgNum(t.quantityKg)} kg @ ${amt(t.pricePerKg, hide)}",
+          amt(t.totalValue, hide),
+        )
       }
-      val amt = if (isCollection) (t.amountReceived.takeIf { it > 0.0 } ?: t.totalValue)
-      else if (t.mode == "MONEY_OUT") (t.totalValue.takeIf { it > 0.0 } ?: t.amountReceived)
-      else t.totalValue
-      InvoiceLine(title, saleDetails(t, hide), rs(amt, hide), incoming = isCollection)
     }
+    val sold = day.filter { it.mode == "SALE" && !(it.isRepReturn || it.paymentType == "REP_RETURN") }.sumOf { it.totalValue }
     val got = day.sumOf { t ->
       when {
         t.mode == "COLLECTION" -> t.amountReceived.takeIf { it > 0.0 } ?: t.totalValue
@@ -238,12 +270,15 @@ object StatementData {
       phone = customer.phone,
       dayKey = dayKey,
       dateLabel = SarimFormat.formatDate(day.first().dateEpoch),
-      previous = if (abs(opening) >= 0.01) balText(opening, hide) else null,
+      previous = if (abs(opening) >= 0.01) ibalText(opening, hide) else null,
       lines = lines,
-      totals = listOf(InvoiceLine("Received", "", rs(got, hide))),
+      totals = listOf(InvoiceLine("Received", "", amt(got, hide))),
       dueLabel = dueLabel,
-      dueText = balText(closing, hide),
+      dueText = ibalText(closing, hide),
       dueNegative = closing < -0.005,
+      opening = opening,
+      sold = sold,
+      got = got,
     )
   }
 
@@ -263,11 +298,11 @@ object StatementData {
     val totalOut = day.filter { it.first.type == "PAYMENT_OUT" }.sumOf { it.first.amount }
     val lines = day.map { (t, _) ->
       val isIn = t.type == "PAYMENT_IN"
-      InvoiceLine(if (isIn) "Payment in" else "Payment out", t.description, rs(t.amount, hide), incoming = isIn)
+      InvoiceLine(if (isIn) "Payment in" else "Payment out", t.description, amt(t.amount, hide), incoming = isIn)
     }
     val totals = buildList {
-      if (totalIn > 0.005) add(InvoiceLine("Total in", "", rs(totalIn, hide)))
-      if (totalOut > 0.005) add(InvoiceLine("Total out", "", rs(totalOut, hide)))
+      if (totalIn > 0.005) add(InvoiceLine("Total in", "", amt(totalIn, hide)))
+      if (totalOut > 0.005) add(InvoiceLine("Total out", "", amt(totalOut, hide)))
     }
     return DayInvoiceData(
       kind = StatementKind.ENTITY,
@@ -275,11 +310,11 @@ object StatementData {
       phone = entity.phone,
       dayKey = dayKey,
       dateLabel = SarimFormat.formatDate(day.first().first.dateEpoch),
-      previous = if (abs(opening) >= 0.01) entityBalText(opening, hide) else null,
+      previous = if (abs(opening) >= 0.01) (if (opening < 0) "${amt(-opening, hide)} REC" else amt(opening, hide)) else null,
       lines = lines,
       totals = totals,
       dueLabel = if (closing < -0.005) "Receivable" else "Balance",
-      dueText = if (closing < -0.005) "${rs(-closing, hide)} REC" else rs(maxOf(0.0, closing), hide),
+      dueText = if (closing < -0.005) "${amt(-closing, hide)} REC" else amt(maxOf(0.0, closing), hide),
       dueNegative = false,
     )
   }
@@ -299,6 +334,11 @@ object StatementData {
       dueText = data.dueText,
       greeting = data.kind.greeting,
       dueNegative = data.dueNegative,
+      progress = run {
+        val owed = maxOf(0.0, data.opening) + data.sold
+        if (owed > 0.005) (data.got / owed).coerceIn(0.0, 1.0).toFloat() else 1f
+      },
+      showProgress = data.kind != StatementKind.ENTITY,
     ).getOrElse { return it.localizedMessage ?: "Unable to share invoice" }
     return if (DirectShare.shareFiles(context, listOf(png), "image/png", data.phone, title = "Invoice") == ShareOutcome.FAILED) "Unable to share invoice" else null
   }
