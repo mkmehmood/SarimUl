@@ -2307,7 +2307,7 @@ class SarimSyncAndBackupRepository(
     return root.toString(2)
   }
 
-  suspend fun restoreBackupJson(raw: String): Result<Int> {
+  suspend fun restoreBackupJson(raw: String, markPending: Boolean = true): Result<Int> {
     return try {
       val root = JSONObject(raw)
       var restoredCount = 0
@@ -2315,7 +2315,7 @@ class SarimSyncAndBackupRepository(
       // Stores (v1 storeKey/salePricePerKg OR web key/salePrice)
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_STORES)).forEach { m ->
         SarimWebPullMappers.mapToStore(m)?.let { s ->
-          dao.upsertStore(s.copy(syncPending = true))
+          dao.upsertStore(s.copy(syncPending = markPending))
           restoredCount++
         }
       }
@@ -2330,11 +2330,11 @@ class SarimSyncAndBackupRepository(
           }
           if (isLot) {
             SarimWebPullMappers.mapToPurchaseLot(id, m)?.let {
-              dao.upsertPurchase(it.copy(syncPending = true)); restoredCount++
+              dao.upsertPurchase(it.copy(syncPending = markPending)); restoredCount++
             }
           } else {
             SarimWebPullMappers.mapToMaterial(id, m)?.let {
-              dao.upsertRawMaterial(it.copy(syncPending = true)); restoredCount++
+              dao.upsertRawMaterial(it.copy(syncPending = markPending)); restoredCount++
             }
           }
         }
@@ -2352,7 +2352,7 @@ class SarimSyncAndBackupRepository(
                 collectedKg = o.optDouble("collectedKg", 0.0),
                 avgCostPerKg = o.optDouble("avgCostPerKg", 0.0),
                 pendingSupplierAmount = o.optDouble("pendingSupplierAmount", 0.0),
-                syncPending = true,
+                syncPending = markPending,
               )
             )
             restoredCount++
@@ -2382,7 +2382,7 @@ class SarimSyncAndBackupRepository(
               ingredientsJson = ingJson,
               unitsAvailable = o.optDouble("unitsAvailable", 0.0),
               unitsUsed = o.optDouble("unitsUsed", 0.0),
-              syncPending = true,
+              syncPending = markPending,
             )
           )
           (SarimWebSchema.jsonObjectToMap(o)["savedCalcs"] as? List<*>).orEmpty().forEach { raw ->
@@ -2420,7 +2420,7 @@ class SarimSyncAndBackupRepository(
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_FACTORY)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_FPROD) }
         SarimWebPullMappers.mapToFactoryBatch(id, m)?.let {
-          dao.upsertFactoryBatch(it.copy(syncPending = true)); restoredCount++
+          dao.upsertFactoryBatch(it.copy(syncPending = markPending)); restoredCount++
         }
       }
 
@@ -2429,25 +2429,25 @@ class SarimSyncAndBackupRepository(
         .map { m -> (SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_PROD) }) to m }
       prodDocs.forEach { (id, m) ->
         SarimWebSchema.mapToProduction(id, m)?.let {
-          dao.upsertProductionEntry(it.copy(syncPending = true)); restoredCount++
+          dao.upsertProductionEntry(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       @Suppress("UNCHECKED_CAST")
       SarimWebPullMappers.reconstructStockTransfers(prodDocs as List<Pair<String, Map<String, Any>>>).forEach {
-        dao.upsertStockTransfer(it.copy(syncPending = true)); restoredCount++
+        dao.upsertStockTransfer(it.copy(syncPending = markPending)); restoredCount++
       }
 
       // Customers & Clients
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_CUSTOMERS)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_CUST) }
         SarimWebSchema.mapToCustomer(id, m, isRepCustomer = SarimWebSchema.bool(m["isRepCustomer"]))?.let {
-          dao.upsertCustomer(it.copy(syncPending = true)); restoredCount++
+          dao.upsertCustomer(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_CLIENTS)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_REP_CUST) }
         SarimWebSchema.mapToCustomer(id, m, isRepCustomer = true)?.let {
-          dao.upsertCustomer(it.copy(syncPending = true)); restoredCount++
+          dao.upsertCustomer(it.copy(syncPending = markPending)); restoredCount++
         }
       }
 
@@ -2455,13 +2455,13 @@ class SarimSyncAndBackupRepository(
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_SALES)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_SALE) }
         SarimWebSchema.mapToSale(id, m, isRep = false)?.let {
-          dao.upsertSale(it.copy(syncPending = true)); restoredCount++
+          dao.upsertSale(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_REP)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_SALE) }
         SarimWebSchema.mapToSale(id, m, isRep = true)?.let {
-          dao.upsertSale(it.copy(syncPending = true)); restoredCount++
+          dao.upsertSale(it.copy(syncPending = markPending)); restoredCount++
         }
       }
 
@@ -2469,36 +2469,36 @@ class SarimSyncAndBackupRepository(
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_ENTITIES)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_ENT) }
         SarimWebSchema.mapToEntity(id, m)?.let {
-          dao.upsertPaymentEntity(it.copy(syncPending = true)); restoredCount++
+          dao.upsertPaymentEntity(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       val txDocs = SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_TRANSACTIONS))
         .map { m -> (SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_PAY) }) to m }
       txDocs.forEach { (id, m) ->
         SarimWebSchema.mapToTransaction(id, m)?.let {
-          dao.upsertPaymentTransaction(it.copy(syncPending = true)); restoredCount++
+          dao.upsertPaymentTransaction(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       @Suppress("UNCHECKED_CAST")
       SarimWebPullMappers.reconstructPaymentTransfers(txDocs as List<Pair<String, Map<String, Any>>>).forEach {
-        dao.upsertPaymentTransfer(it.copy(syncPending = true)); restoredCount++
+        dao.upsertPaymentTransfer(it.copy(syncPending = markPending)); restoredCount++
       }
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_EXPENSES)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_EXP) }
         SarimWebSchema.mapToExpense(id, m)?.let {
-          dao.upsertExpense(it.copy(syncPending = true)); restoredCount++
+          dao.upsertExpense(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_RETURNS)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_RETLOG) }
         SarimWebPullMappers.mapToReturnLog(id, m)?.let {
-          dao.upsertReturnLog(it.copy(syncPending = true)); restoredCount++
+          dao.upsertReturnLog(it.copy(syncPending = markPending)); restoredCount++
         }
       }
       SarimWebPullMappers.jsonObjectToMapList(root.optJSONArray(SarimWebSchema.COL_CALCULATOR)).forEach { m ->
         val id = SarimWebSchema.str(m["id"]).ifBlank { SarimUuid.generateUUID(SarimUuid.PREFIX_CALC) }
         SarimWebPullMappers.mapToSettlement(id, m)?.let {
-          dao.upsertSettlement(it.copy(syncPending = true)); restoredCount++
+          dao.upsertSettlement(it.copy(syncPending = markPending)); restoredCount++
         }
       }
 
@@ -2506,7 +2506,7 @@ class SarimSyncAndBackupRepository(
       val ledgerArr = root.optJSONArray(SarimWebSchema.COL_DAILY_LEDGER) ?: root.optJSONArray("ledger")
       SarimWebPullMappers.jsonObjectToMapList(ledgerArr).forEach { m ->
         SarimWebPullMappers.mapToDailyLedger(m)?.let {
-          dao.upsertLedgerEntry(it.copy(syncPending = true)); restoredCount++
+          dao.upsertLedgerEntry(it.copy(syncPending = markPending)); restoredCount++
         }
       }
 

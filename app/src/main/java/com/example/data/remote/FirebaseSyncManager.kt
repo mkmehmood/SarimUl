@@ -31,6 +31,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -936,6 +937,75 @@ class FirebaseSyncManager(
       runCatching {
         SarimPush.notifyAdmins({ _auth?.currentUser?.getIdToken(false)?.await()?.token }, pendingId)
       }
+    }
+  }
+
+  private fun sanitizeForFirestore(v: Any?): Any? = when (v) {
+    is Double -> if (v.isNaN() || v.isInfinite()) 0.0 else v
+    is Float -> if (v.isNaN() || v.isInfinite()) 0.0 else v.toDouble()
+    is Map<*, *> -> v.entries.associate { it.key.toString() to sanitizeForFirestore(it.value) }
+    is Collection<*> -> v.map { sanitizeForFirestore(it) }
+    else -> v
+  }
+
+  /**
+   * Year close / restore (web `_commitMergedBatch`): delete [deleteIds] and write [writes] in
+   * batches of 400. Documents are written exactly as given, so flags such as `isMerged` survive.
+   */
+  suspend fun commitCollectionChanges(
+    collection: String,
+    deleteIds: List<String>,
+    writes: List<Map<String, Any?>>,
+  ): Result<Int> {
+    var path = "users/${auth.currentUser?.uid ?: "unauthenticated"}/$collection"
+    return try {
+      val rootUid = resolveWorkspaceRootUid()
+      path = "users/$rootUid/$collection"
+      val col = db.collection("users").document(rootUid).collection(collection)
+      val ops = ArrayList<Pair<DocumentReference, Map<String, Any?>?>>(deleteIds.size + writes.size)
+      deleteIds.filter { it.isNotBlank() }.forEach { ops += col.document(it) to null }
+      writes.forEach { w ->
+        val id = w["id"]?.toString().orEmpty()
+        if (id.isNotBlank()) {
+          @Suppress("UNCHECKED_CAST")
+          ops += col.document(id) to (sanitizeForFirestore(w) as Map<String, Any?>)
+        }
+      }
+      ops.chunked(400).forEach { chunk ->
+        val batch = db.batch()
+        chunk.forEach { (ref, data) -> if (data == null) batch.delete(ref) else batch.set(ref, data) }
+        batch.commit().await()
+      }
+      recordQuota(writes = ops.size)
+      Result.success(ops.size)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, path)
+      Result.failure(e)
+    }
+  }
+
+  /** Year close hard-deletes tombstones (web "Purging deleted records"). */
+  suspend fun purgeDeletionTombstones(): Result<Int> {
+    var path = "users/${auth.currentUser?.uid ?: "unauthenticated"}/${SarimWebSchema.COL_DELETIONS}"
+    return try {
+      val rootUid = resolveWorkspaceRootUid()
+      path = "users/$rootUid/${SarimWebSchema.COL_DELETIONS}"
+      val col = db.collection("users").document(rootUid).collection(SarimWebSchema.COL_DELETIONS)
+      val docs = col.get().await().documents
+      docs.chunked(400).forEach { chunk ->
+        val batch = db.batch()
+        chunk.forEach { batch.delete(it.reference) }
+        batch.commit().await()
+      }
+      recordQuota(reads = docs.size.coerceAtLeast(1), writes = docs.size)
+      Result.success(docs.size)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, path)
+      Result.failure(e)
     }
   }
 

@@ -41,6 +41,13 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import com.example.util.DialogChoice
+import com.example.data.backup.SarimBackupCrypto
+import com.example.data.backup.RestoreSummary
+import com.example.data.backup.BackupPreview
+import com.example.data.backup.BackupCryptoException
 import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
@@ -163,20 +170,108 @@ fun BackupRestoreScreen(
   val context = LocalContext.current
   val palette = LocalSarimPalette.current
   val scope = rememberCoroutineScope()
+  var pendingBackup by remember { mutableStateOf<ByteArray?>(null) }
+
+  fun fail(title: String, message: String) =
+    viewModel.showDialog(AppDialogRequest(title, message, tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+
+  fun summaryText(s: RestoreSummary): String =
+    if (s.isYearClose) "The financial year close was reversed. ${s.added} record(s) were restored from the pre-close backup."
+    else "Added ${s.added} new record(s), updated ${s.updated}, and kept ${s.skipped} that were already up to date."
+
+  fun runMergeRestore(preview: BackupPreview) {
+    viewModel.launchSafely(errorTitle = "Restore Failed") {
+      val summary = viewModel.restoreMergeSecure(preview)
+      viewModel.showDialog(AppDialogRequest("Restore Complete", summaryText(summary), tone = DialogTone.SUCCESS, confirmLabel = "OK", cancelLabel = null))
+    }
+  }
+
+  fun runYearCloseRestore(preview: BackupPreview, honourDeletions: Boolean) {
+    viewModel.launchSafely(errorTitle = "Restore Failed") {
+      val summary = viewModel.restoreYearCloseSecure(preview, honourDeletions)
+      viewModel.showDialog(AppDialogRequest("Year Close Reversed", summaryText(summary), tone = DialogTone.SUCCESS, confirmLabel = "OK", cancelLabel = null))
+    }
+  }
+
+  fun confirmRestore(preview: BackupPreview) {
+    if (!preview.isYearClose) {
+      viewModel.showDialog(
+        AppDialogRequest(
+          title = "Restore From Encrypted Backup",
+          body = "Restore data from this backup file?\n\n• Records are merged, not overwritten — your current data stays\n• Duplicates are automatically removed\n• Only new or newer records are applied\n• Records you deleted stay deleted",
+          tone = DialogTone.WARNING,
+          confirmLabel = "Restore & Merge",
+          onConfirm = { runMergeRestore(preview) },
+        )
+      )
+      return
+    }
+    val madeOn = if (preview.createdAt > 0L) SarimFormat.formatDate(preview.createdAt) else "an earlier date"
+    viewModel.showDialog(
+      AppDialogRequest(
+        title = "Reverse Financial Year Close",
+        body = "This backup was created by Close Financial Year on $madeOn.\n\nRestoring it will:\n• REPLACE all current data with the pre-close snapshot\n• Remove all merged opening-balance records\n• Reverse the financial year close counter\n• Keep records created after the backup was taken",
+        tone = DialogTone.PERMANENT,
+        confirmLabel = "Reverse Year Close",
+        onConfirm = {
+          if (preview.postCloseDeletions > 0) {
+            val n = preview.postCloseDeletions
+            viewModel.showDialog(
+              AppDialogRequest(
+                title = "Post-Close Deletions Detected",
+                body = "$n record${if (n != 1) "s" else ""} in this backup ${if (n != 1) "were" else "was"} deleted after the year-close backup was taken. Which behaviour do you want?",
+                tone = DialogTone.WARNING,
+                choices = listOf(
+                  DialogChoice("keep", "Keep deletions", "Those records stay deleted (recommended if the deletions were intentional)"),
+                  DialogChoice("restore", "Restore everything", "All $n deleted record${if (n != 1) "s" else ""} are brought back"),
+                ),
+                onChoiceSelected = { choice -> runYearCloseRestore(preview, honourDeletions = choice == "keep") },
+              )
+            )
+          } else {
+            runYearCloseRestore(preview, honourDeletions = true)
+          }
+        },
+      )
+    )
+  }
+
+  fun askPasswordAndOpen(bytes: ByteArray) {
+    viewModel.showDialog(
+      AppDialogRequest(
+        title = "Enter Password to Decrypt",
+        body = "This backup is encrypted with your account credentials.",
+        tone = DialogTone.CONFIRM,
+        requirePassword = true,
+        confirmLabel = "Decrypt & Restore",
+        onConfirm = { password ->
+          scope.launch {
+            try {
+              val (email, uid) = viewModel.backupIdentity()
+              confirmRestore(viewModel.backupService.openBackup(bytes, email, password, uid))
+            } catch (e: BackupCryptoException) {
+              fail("Restore Failed", SarimBackupCrypto.userMessage(e))
+            } catch (e: Exception) {
+              fail("Restore Failed", e.message ?: "Unable to read this backup.")
+            }
+          }
+        },
+      )
+    )
+  }
 
   val createDocLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.CreateDocument("application/json"),
+    contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
   ) { uri ->
-    if (uri != null) {
+    val bytes = pendingBackup
+    pendingBackup = null
+    if (uri != null && bytes != null) {
       scope.launch {
         try {
-          val json = viewModel.syncRepo.exportBackupJson()
-          context.contentResolver.openOutputStream(uri)?.use { out ->
-            out.write(json.toByteArray(Charsets.UTF_8))
-          }
-          viewModel.showDialog(AppDialogRequest("Backup Saved", "Encrypted backup exported successfully.", tone = DialogTone.SUCCESS, cancelLabel = null))
+          withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } }
+          viewModel.showDialog(AppDialogRequest("Backup Created", "Encrypted backup saved. The file needs your account password to restore.", tone = DialogTone.SUCCESS, confirmLabel = "OK", cancelLabel = null))
         } catch (e: Exception) {
-          viewModel.showDialog(AppDialogRequest("Backup Failed", e.message ?: "Unable to write backup file.", tone = DialogTone.ERROR, cancelLabel = null))
+          fail("Backup Failed", e.message ?: "Unable to write backup file.")
         }
       }
     }
@@ -188,34 +283,60 @@ fun BackupRestoreScreen(
     if (uri != null) {
       scope.launch {
         try {
-          val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
-          viewModel.showDialog(
-            AppDialogRequest(
-              title = "Restore From Encrypted Backup",
-              body = "Restore the records from this backup file into this device?\n\n• Records in the file are merged with your current data\n• Check that this is the backup you intended to use",
-              tone = DialogTone.WARNING,
-              confirmLabel = "Restore & Merge",
-              onConfirm = {
-                scope.launch {
-                  val res = viewModel.syncRepo.restoreBackupJson(raw)
-                  res.fold(
-                    onSuccess = { count ->
-                      viewModel.refreshDiagnostics()
-                      viewModel.showDialog(AppDialogRequest("Restore Complete", "Restored $count record(s) from backup.", tone = DialogTone.SUCCESS, cancelLabel = null))
-                    },
-                    onFailure = { err ->
-                      viewModel.showDialog(AppDialogRequest("Restore Failed", err.message ?: "Invalid backup file.", tone = DialogTone.ERROR, cancelLabel = null))
-                    }
-                  )
-                }
-              },
-            )
-          )
+          val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } } ?: ByteArray(0)
+          when {
+            SarimBackupCrypto.looksEncrypted(bytes) -> askPasswordAndOpen(bytes)
+            bytes.firstOrNull { !it.toInt().toChar().isWhitespace() }?.toInt()?.toChar() == '{' ->
+              confirmRestore(viewModel.backupService.openPlainBackup(bytes))
+            else -> fail("Unsupported file", "Only encrypted .gznd backup files can be restored.")
+          }
         } catch (e: Exception) {
-          viewModel.showDialog(AppDialogRequest("Restore Failed", e.message ?: "Unable to read file.", tone = DialogTone.ERROR, cancelLabel = null))
+          fail("Restore Failed", e.message ?: "Unable to read file.")
         }
       }
     }
+  }
+
+  fun askPasswordAndBackup(share: Boolean) {
+    viewModel.showDialog(
+      AppDialogRequest(
+        title = "Confirm Password",
+        body = "Enter your account password to encrypt this backup file.",
+        tone = DialogTone.CONFIRM,
+        requirePassword = true,
+        confirmLabel = if (share) "Encrypt & Share" else "Encrypt & Save",
+        onConfirm = { password ->
+          scope.launch {
+            val check = viewModel.verifyPasswordForSensitiveAction(password)
+            if (check.isFailure) {
+              fail("Incorrect Password", check.exceptionOrNull()?.message ?: "Incorrect password. Please try again.")
+              return@launch
+            }
+            try {
+              val (email, uid) = viewModel.backupIdentity()
+              val bytes = viewModel.backupService.createEncryptedBackup(email, password, uid)
+              val name = "NaswarDealers_SecureBackup_${SarimFormat.dateInput(System.currentTimeMillis())}.gznd"
+              if (share) {
+                val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                val file = File(dir, name).apply { writeBytes(bytes) }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                  type = "application/octet-stream"
+                  putExtra(Intent.EXTRA_STREAM, uri)
+                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              } else {
+                pendingBackup = bytes
+                createDocLauncher.launch(name)
+              }
+            } catch (e: Exception) {
+              fail("Backup Failed", e.message ?: "Encryption failed.")
+            }
+          }
+        },
+      )
+    )
   }
 
   Column(
@@ -227,52 +348,34 @@ fun BackupRestoreScreen(
   ) {
     SarimCard {
       SarimFieldLabel("Backup")
-      Text("Save a local copy of all data to your device", color = palette.textMuted, fontSize = 13.sp)
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(SarimButtonDefaults.RowSpacing)) {
-        SarimPrimaryButton(
-          text = "Backup to Phone",
-          modifier = Modifier.weight(1f),
-          onClick = {
-            runCatching {
-              createDocLauncher.launch("gull_zubair_backup_${System.currentTimeMillis()}.gznd")
-            }.onFailure { err ->
-              viewModel.showDialog(AppDialogRequest("Backup Unavailable", err.localizedMessage ?: "No file picker available.", tone = DialogTone.ERROR, cancelLabel = null))
-            }
-          },
-        )
-        SarimSecondaryButton(
-          text = "Quick Share",
-          modifier = Modifier.weight(1f),
-          onClick = {
-            viewModel.launchSafely(errorTitle = "Quick Share Failed") {
-              val json = viewModel.syncRepo.exportBackupJson()
-              val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-              val file = File(dir, "gull_zubair_backup.gznd").apply { writeText(json) }
-              val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-              val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/json"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-              }
-              context.startActivity(Intent.createChooser(intent, "Share Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-          },
-        )
-      }
+      Text("Save an AES-256 encrypted copy of all data. The file needs your account password to restore, and the web app can open it too.", color = palette.textMuted, fontSize = 13.sp)
+      SarimPrimaryButton(
+        text = "Backup to Phone",
+        onClick = {
+          runCatching { askPasswordAndBackup(share = false) }.onFailure { err ->
+            fail("Backup Unavailable", err.localizedMessage ?: "No file picker available.")
+          }
+        },
+      )
+      SarimSecondaryButton(
+        text = "Quick Share Backup File",
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { askPasswordAndBackup(share = true) },
+      )
     }
 
     SarimCard {
       SarimFieldLabel("Restore")
-      Text("Load a previously saved backup file (.gznd or .json)", color = palette.textMuted, fontSize = 13.sp)
+      Text("Load a backup file (.gznd). Records are merged with your current data. A backup made by Close Financial Year can reverse that close.", color = palette.textMuted, fontSize = 13.sp)
       SarimSecondaryButton(
         text = "Restore from Phone",
         icon = Icons.Rounded.FolderOpen,
         modifier = Modifier.fillMaxWidth(),
         onClick = {
           runCatching {
-            openDocLauncher.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
+            openDocLauncher.launch(arrayOf("application/octet-stream", "application/json", "*/*"))
           }.onFailure { err ->
-            viewModel.showDialog(AppDialogRequest("Restore Unavailable", err.localizedMessage ?: "No file picker available.", tone = DialogTone.ERROR, cancelLabel = null))
+            fail("Restore Unavailable", err.localizedMessage ?: "No file picker available.")
           }
         },
       )

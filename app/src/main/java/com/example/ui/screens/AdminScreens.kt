@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -36,7 +40,12 @@ import com.example.util.DialogTone
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import androidx.core.content.FileProvider
+import com.example.data.backup.CloseYearResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -449,6 +458,25 @@ fun CloseFinancialYearScreen(
   var stageText by remember { mutableStateOf("") }
   var compactedCount by remember { mutableIntStateOf(0) }
   var isComplete by remember { mutableStateOf(false) }
+  var closeResult by remember { mutableStateOf<CloseYearResult?>(null) }
+  var backupFile by remember { mutableStateOf<File?>(null) }
+  val context = LocalContext.current
+
+  val saveCopyLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+  ) { uri ->
+    val src = backupFile
+    if (uri != null && src != null) {
+      scope.launch {
+        try {
+          withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } } }
+          viewModel.showDialog(AppDialogRequest("Backup Saved", "A copy of the year-end backup was saved.", tone = DialogTone.SUCCESS, confirmLabel = "OK", cancelLabel = null))
+        } catch (e: Exception) {
+          viewModel.showDialog(AppDialogRequest("Save Failed", e.message ?: "Unable to save the backup.", tone = DialogTone.ERROR, confirmLabel = "OK", cancelLabel = null))
+        }
+      }
+    }
+  }
 
   Column(
     modifier = Modifier
@@ -466,7 +494,7 @@ fun CloseFinancialYearScreen(
             Text("CLOSE FINANCIAL YEAR", color = palette.red, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             SarimChip(if (isComplete) "DONE" else "PREVIEW", if (isComplete) palette.green else palette.red)
           }
-          Text("Compact all records into opening balances", color = palette.textMuted, fontSize = 12.5.sp)
+          Text("Merge all records into opening balances", color = palette.textMuted, fontSize = 12.5.sp)
         }
       }
     }
@@ -482,7 +510,7 @@ fun CloseFinancialYearScreen(
     }
 
     SarimCallout(
-      text = "Irreversible — original records will be compacted into opening balances. Enter your account password to encrypt the year-end backup and confirm this action.",
+      text = "Original records are merged into opening balances. An encrypted year-end backup is created first — restoring it from Backup & Restore reverses the close. Enter your account password to encrypt it and confirm.",
       toneColor = palette.red,
     )
 
@@ -516,7 +544,7 @@ fun CloseFinancialYearScreen(
               viewModel.showDialog(
                 AppDialogRequest(
                   title = "Close Financial Year?",
-                  body = "This will verify your password, compact historical transactions into opening balances, and broadcast the year close to all devices.\nThis action cannot be undone.",
+                  body = "This will verify your password, save an encrypted backup, merge historical transactions into opening balances, and broadcast the year close to all devices.\nDeleted-records history is cleared. Only the backup can reverse this.",
                   tone = DialogTone.PERMANENT,
                   confirmLabel = "Close Year",
                   onConfirm = {
@@ -538,10 +566,18 @@ fun CloseFinancialYearScreen(
                           )
                           return@launch
                         }
-                        stageText = "Initializing…"; progress = 0.25f; delay(250)
-                        stageText = "Exporting year-end snapshot…"; progress = 0.5f; delay(250)
-                        stageText = "Compacting opening balances…"; progress = 0.8f
-                        compactedCount = viewModel.closeFinancialYearAndBroadcast()
+                        val res = viewModel.closeFinancialYearSecure(
+                          password = password,
+                          onStage = { text, p -> stageText = text; progress = p },
+                          onBackupReady = { bytes ->
+                            // Written to app storage before any record is changed.
+                            val dir = File(context.filesDir, "year_close_backups").apply { mkdirs() }
+                            val name = "NaswarDealers_YearClose_${SarimFormat.dateInput(System.currentTimeMillis())}_${System.currentTimeMillis() % 100000}.gznd"
+                            backupFile = withContext(Dispatchers.IO) { File(dir, name).apply { writeBytes(bytes) } }
+                          },
+                        )
+                        closeResult = res
+                        compactedCount = res.removedTotal
                         progress = 1f
                         isProcessing = false
                         isComplete = true
@@ -582,8 +618,37 @@ fun CloseFinancialYearScreen(
           Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = palette.green, modifier = Modifier.size(28.dp))
           Column {
             Text("Financial Year Closed", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text("Compacted $compactedCount historical records cleanly into opening balances.", color = palette.textMuted, fontSize = 12.5.sp)
+            val created = closeResult?.mergedByCollection?.values?.sum() ?: 0
+            Text("Merged $compactedCount historical records into $created opening-balance records.", color = palette.textMuted, fontSize = 12.5.sp)
           }
+        }
+        if (backupFile != null) {
+          Text("An encrypted year-end backup was saved on this device. Keep a copy somewhere safe — restoring it reverses this close.", color = palette.textMuted, fontSize = 12.5.sp)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SarimSecondaryButton(
+              text = "Save Copy",
+              modifier = Modifier.weight(1f),
+              onClick = { backupFile?.let { saveCopyLauncher.launch(it.name) } },
+            )
+            SarimSecondaryButton(
+              text = "Share",
+              modifier = Modifier.weight(1f),
+              onClick = {
+                backupFile?.let { f ->
+                  val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f)
+                  val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                  }
+                  context.startActivity(Intent.createChooser(intent, "Share Year-End Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+              },
+            )
+          }
+        }
+        closeResult?.warnings?.takeIf { it.isNotEmpty() }?.let { w ->
+          Text("Notes: ${w.joinToString("; ")}", color = palette.amber, fontSize = 12.sp)
         }
         SarimPrimaryButton(text = "Done", onClick = { viewModel.closeStandalone() })
       }

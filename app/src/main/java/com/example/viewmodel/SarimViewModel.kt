@@ -7,6 +7,10 @@ import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.*
+import com.example.data.backup.BackupPreview
+import com.example.data.backup.CloseYearResult
+import com.example.data.backup.RestoreSummary
+import com.example.data.backup.SarimBackupService
 import com.example.data.model.*
 import com.example.data.remote.*
 import com.example.data.repository.*
@@ -1235,28 +1239,53 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     refreshDiagnostics()
   }
 
-  suspend fun closeFinancialYearAndBroadcast(): Int {
-    val compacted = repository.closeFinancialYear()
+  val backupService = SarimBackupService(syncRepo, repository, dao, syncManager)
+
+  /** (email, uid) the encrypted backups are tied to, same as the web app's `currentUser`. */
+  fun backupIdentity(): Pair<String, String> = _uiState.value.signedInEmail to _uiState.value.currentUid
+
+  private fun cloudAvailable(): Boolean = !_uiState.value.isOfflineSession && isNetworkConnected()
+
+  private suspend fun broadcastYearSignal(type: String) {
     val now = System.currentTimeMillis()
     val st = _uiState.value
     val activeDevId = deviceId.ifBlank { uuidRegistry.loadOrInitDeviceId() }.also { deviceId = it }
-    if (!st.isOfflineSession && isNetworkConnected()) {
-      val (fyCount, _, _) = repository.readYearCloseMeta()
-      runCatching { prefsManager.setLastHandledYearCloseSignal(now) }
-      syncManager.pushSingletonDoc(
-        SarimWebSchema.COL_SETTINGS,
-        "yearCloseSignal",
-        SarimWebSchema.yearCloseSignalPayload(
-          type = "close",
-          triggeredAt = now,
-          triggeredBy = activeDevId,
-          fyCloseCount = fyCount,
-        ),
-      )
-      syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
-    }
+    val (fyCount, _, _) = repository.readYearCloseMeta()
+    runCatching { prefsManager.setLastHandledYearCloseSignal(now) }
+    syncManager.pushSingletonDoc(
+      SarimWebSchema.COL_SETTINGS,
+      "yearCloseSignal",
+      SarimWebSchema.yearCloseSignalPayload(type = type, triggeredAt = now, triggeredBy = activeDevId, fyCloseCount = fyCount),
+    )
+    syncRepo.syncWithFirestore(isGated = st.isGatedSession, session = currentSessionInfo())
+  }
+
+  /** Web "Close Financial Year": encrypted backup, merge into opening balances, cloud update, broadcast. */
+  suspend fun closeFinancialYearSecure(
+    password: String,
+    onStage: (String, Float) -> Unit,
+    onBackupReady: suspend (ByteArray) -> Unit,
+  ): CloseYearResult {
+    val (email, uid) = backupIdentity()
+    val online = cloudAvailable()
+    val result = backupService.closeFinancialYear(email, password, uid, online, onStage, onBackupReady)
+    if (online) broadcastYearSignal("close")
     refreshDiagnostics()
-    return compacted
+    return result
+  }
+
+  suspend fun restoreMergeSecure(preview: BackupPreview): RestoreSummary {
+    val summary = backupService.applyMergeRestore(preview)
+    refreshDiagnostics()
+    return summary
+  }
+
+  suspend fun restoreYearCloseSecure(preview: BackupPreview, honourDeletions: Boolean): RestoreSummary {
+    val online = cloudAvailable()
+    val summary = backupService.applyYearCloseRestore(preview, honourDeletions, online)
+    if (online) broadcastYearSignal("restore")
+    refreshDiagnostics()
+    return summary
   }
 
   // =====================================================================

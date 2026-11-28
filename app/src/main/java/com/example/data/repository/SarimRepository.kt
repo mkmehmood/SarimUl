@@ -3287,7 +3287,12 @@ class SarimRepository(
     return Triple(count, lastAt, lastDate)
   }
 
-  suspend fun closeFinancialYear(): Int {
+  /**
+   * Year-close bookkeeping that is not about transactions (the transactions themselves are merged by
+   * `SarimBackupService.closeFinancialYear`): carry customer debt and entity balances forward and
+   * record the close in settings.
+   */
+  suspend fun rollBalancesForwardAndMarkYearClosed() {
     val now = System.currentTimeMillis()
     val customersList = dao.getAllCustomers().filter { !it.isDeleted }
     customersList.forEach { c ->
@@ -3303,30 +3308,36 @@ class SarimRepository(
       dao.upsertPaymentEntity(updated)
       enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updated.id, SarimWebSchema.entityToMap(updated))
     }
-    val compacted = dao.getAllSales().size + dao.getAllProductionEntries().size +
-      dao.getAllPaymentTransactions().size + dao.getAllDailyLedger().size +
-      dao.getAllSettlements().size + dao.getAllExpenses().size + dao.getAllReturns().size
-    dao.clearSales()
-    dao.clearProductionEntries()
-    dao.clearPaymentTransactions()
-    dao.clearExpenses()
-    dao.clearReturns()
-    dao.clearDailyLedger()
-    dao.clearSettlements()
-    dao.clearStockTransfers()
-    dao.clearPaymentTransfers()
-    dao.clearFactoryBatches()
-    dao.clearPurchases()
     touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
 
     val (prevCount, _, _) = readYearCloseMeta()
     val nextCount = prevCount + 1
     val closedDateStr = SarimFormat.dateInput(now)
-    val settingsObj = JSONObject().apply {
+    val settingsObj = readSettingsObject().apply {
       put("fyCloseCount", nextCount)
       put("lastYearClosedAt", now)
       put("lastYearClosedDate", closedDateStr)
     }
+    writeSettingsObject(settingsObj, now)
+  }
+
+  suspend fun readSettingsObject(): JSONObject {
+    val raw = safeReader.getKvByUserKeyOnce("settings")?.value ?: "{}"
+    return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+  }
+
+  /** Reverse of a year close (web `_doYearCloseRestore`): put the counters back to the backup's snapshot. */
+  suspend fun restoreYearCloseMeta(count: Int, lastAt: Long?, lastDate: String?) {
+    val now = System.currentTimeMillis()
+    val obj = readSettingsObject().apply {
+      put("fyCloseCount", count)
+      put("lastYearClosedAt", lastAt ?: JSONObject.NULL)
+      put("lastYearClosedDate", lastDate ?: JSONObject.NULL)
+    }
+    writeSettingsObject(obj, now)
+  }
+
+  private suspend fun writeSettingsObject(settingsObj: JSONObject, now: Long) {
     dao.upsertKv(
       KvStoreEntity(
         fullKey = "settings",
@@ -3350,7 +3361,6 @@ class SarimRepository(
         createdAt = now,
       )
     )
-    return compacted
   }
 
   suspend fun repairSaleLinks(): Int {
