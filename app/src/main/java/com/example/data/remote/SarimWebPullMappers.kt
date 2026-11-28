@@ -391,16 +391,19 @@ object SarimWebPullMappers {
         val scId = str(sc["id"]).trim()
         val scName = str(sc["name"]).trim()
         if (scId.isBlank() || scName.isBlank()) return@forEach
+        val webRec: Map<String, Any?> = sc.entries.associate { it.key.toString() to it.value }
+        val isFix = str(sc["kind"]) == "fix"
         calcsOut += SavedMixCalcEntity(
           id = scId,
-          kind = if (str(sc["kind"]) == "fix") "CORRECTION" else "BATCHING",
+          kind = if (isFix) "CORRECTION" else "BATCHING",
           name = scName,
           formulaId = id,
           formulaName = name.uppercase(),
-          unit = str(sc["unit"], "kg"),
-          mode = str(sc["mode"], "WEIGHT"),
-          inputValue = num(sc["totalWeight"], num(sc["inputValue"])),
+          unit = str(sc["unit"], if (isFix) "g" else "kg"),
+          mode = if (isFix) "CORRECTION" else com.example.data.repository.SarimFormulaEngine.normalizeMode(str(sc["mode"])),
+          inputValue = com.example.data.repository.SarimMixCalcRecords.inputValueOf(webRec),
           summaryText = str(sc["summaryText"]),
+          detailsJson = com.example.data.repository.SarimMixCalcRecords.detailsJsonOf(webRec),
           syncPending = false,
           createdAt = parseEpoch(sc["createdAt"] ?: ts),
           updatedAt = parseEpoch(sc["updatedAt"] ?: ts),

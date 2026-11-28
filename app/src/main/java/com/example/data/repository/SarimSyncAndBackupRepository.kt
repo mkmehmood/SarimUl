@@ -2234,11 +2234,7 @@ class SarimSyncAndBackupRepository(
           put("unitsAvailable", f.unitsAvailable); put("unitsUsed", f.unitsUsed)
           put("savedCalcs", JSONArray().apply {
             calcsByFormula[f.id].orEmpty().forEach { sc ->
-              put(JSONObject().apply {
-                put("id", sc.id); put("kind", sc.kind); put("name", sc.name)
-                put("unit", sc.unit); put("mode", sc.mode); put("inputValue", sc.inputValue)
-                put("summaryText", sc.summaryText)
-              })
+              put(JSONObject(SarimMixCalcRecords.toWebRecord(sc)))
             }
           })
         })
@@ -2389,6 +2385,33 @@ class SarimSyncAndBackupRepository(
               syncPending = true,
             )
           )
+          (SarimWebSchema.jsonObjectToMap(o)["savedCalcs"] as? List<*>).orEmpty().forEach { raw ->
+            val sc = raw as? Map<*, *> ?: return@forEach
+            val web = LinkedHashMap<String, Any?>(sc.entries.associate { it.key.toString() to it.value })
+            val scId = SarimWebSchema.str(web["id"]).trim()
+            val scName = SarimWebSchema.str(web["name"]).trim()
+            if (scId.isBlank() || scName.isBlank()) return@forEach
+            val kindRaw = SarimWebSchema.str(web["kind"])
+            val isFix = kindRaw == "fix" || kindRaw == SarimMixCalcRecords.KIND_FIX
+            web["kind"] = if (isFix) "fix" else "batch"
+            if (isFix && web["remaining"] == null) web["remaining"] = web["inputValue"]
+            if (!isFix && web["totalWeight"] == null) web["totalWeight"] = web["inputValue"]
+            dao.upsertMixCalc(
+              SavedMixCalcEntity(
+                id = scId,
+                kind = if (isFix) SarimMixCalcRecords.KIND_FIX else SarimMixCalcRecords.KIND_BATCH,
+                name = scName,
+                formulaId = id,
+                formulaName = name,
+                unit = SarimWebSchema.str(web["unit"]).ifBlank { if (isFix) "g" else "kg" },
+                mode = if (isFix) "CORRECTION" else SarimFormulaEngine.normalizeMode(SarimWebSchema.str(web["mode"])),
+                inputValue = SarimMixCalcRecords.inputValueOf(web),
+                summaryText = SarimWebSchema.str(web["summaryText"]),
+                detailsJson = SarimMixCalcRecords.detailsJsonOf(web),
+                syncPending = true,
+              )
+            )
+          }
           restoredCount++
         }
       }

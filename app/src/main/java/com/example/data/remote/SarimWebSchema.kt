@@ -956,26 +956,29 @@ object SarimWebSchema {
     val calcsByFormula = savedCalcs.filter { !it.isDeleted }.groupBy { it.formulaId }
     val formulasList = formulas.filter { !it.isDeleted }.map { f ->
       val ings = JsonCodecs.decodeIngredients(f.ingredientsJson).map { ing ->
-        linkedMapOf<String, Any?>(
-          "id" to ing.refId,
-          "name" to ing.refName,
-          "quantity" to ing.qtyKg,
-          "cost" to (materials[ing.refId]?.avgCostPerKg ?: 0.0),
-          "formulaId" to if (ing.refType == "FORMULA") ing.refId else null,
-        )
+        val isLink = ing.refType.equals("FORMULA", ignoreCase = true)
+        if (isLink) {
+          // Same shape as web `linkIngredient`: id "formula:<id>", kind "formula", cost 0.
+          linkedMapOf<String, Any?>(
+            "id" to "formula:${ing.refId}",
+            "kind" to "formula",
+            "formulaId" to ing.refId,
+            "name" to ing.refName,
+            "cost" to 0.0,
+            "quantity" to ing.qtyKg,
+          )
+        } else {
+          linkedMapOf<String, Any?>(
+            "id" to ing.refId,
+            "name" to ing.refName,
+            "quantity" to ing.qtyKg,
+            "cost" to (materials[ing.refId]?.avgCostPerKg ?: 0.0),
+          )
+        }
       }
-      val calcs = calcsByFormula[f.id].orEmpty().map { c ->
-        linkedMapOf(
-          "id" to c.id,
-          "kind" to if (c.kind == "CORRECTION") "fix" else "batch",
-          "name" to c.name,
-          "unit" to c.unit,
-          "totalWeight" to c.inputValue,
-          "summaryText" to c.summaryText,
-          "createdAt" to c.createdAt,
-          "updatedAt" to c.updatedAt,
-        )
-      }
+      val calcs = calcsByFormula[f.id].orEmpty()
+        .sortedByDescending { it.createdAt }
+        .map { c -> SarimMixCalcRecords.toWebRecord(c) }
       linkedMapOf(
         "id" to f.id,
         "name" to f.name,
