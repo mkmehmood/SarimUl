@@ -59,9 +59,9 @@ fun ProductionTab(
   var editingEntryId by remember { mutableStateOf<String?>(null) }
   var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
 
-  var combinedPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
+  var combinedPeriod by remember { mutableStateOf(TimePeriod.DAILY) }
   var compareMetric by remember { mutableStateOf(CompareMetric.WEIGHT) }
-  var analyticsPeriod by remember { mutableStateOf(TimePeriod.MONTHLY) }
+  var analyticsPeriod by remember { mutableStateOf(TimePeriod.WEEKLY) }
 
   val selectedStore = state.stores.firstOrNull { it.storeKey == selectedStoreKey } ?: state.stores.firstOrNull()
   val linkedFormula = state.formulas.firstOrNull { it.id == selectedStore?.formulaId } ?: state.formulas.firstOrNull()
@@ -71,13 +71,18 @@ fun ProductionTab(
   val contNum = SarimFormat.parseSafeDouble(containerWeight) ?: 0.0
   val netKg = (grossNum - contNum).coerceAtLeast(0.0)
   val unitsNum = SarimFormat.parseSafeDouble(formulaUnits) ?: 0.0
-  val unitCost = formulaSummary?.totalCostPerUnit ?: 0.0
+  // Web parity: editing an entry of the same formula keeps its original (frozen) unit cost and gets its own units back as credit.
+  val editingOriginal = editingEntryId?.let { id -> state.productionEntries.firstOrNull { it.id == id } }
+  val sameFormulaEdit = editingOriginal != null && editingOriginal.formulaId == linkedFormula?.id
+  val liveUnitCost = formulaSummary?.totalCostPerUnit ?: 0.0
+  val unitCost = if (sameFormulaEdit && editingOriginal!!.formulaUnitCost > 0.0 && netKg > 0.0) editingOriginal.formulaUnitCost else liveUnitCost
+  val unitCredit = if (sameFormulaEdit) editingOriginal!!.formulaUnitsUsed else 0.0
   val totalFormulaCost = unitsNum * unitCost
   val costPerKg = if (netKg > 0.0001) totalFormulaCost / netKg else 0.0
   val salePricePerKg = selectedStore?.salePricePerKg ?: 0.0
   val profitPerKg = salePricePerKg - costPerKg
   val unitsAvailable = linkedFormula?.unitsAvailable ?: 0.0
-  val insufficientUnits = unitsNum > unitsAvailable && editingEntryId == null
+  val insufficientUnits = unitsNum > unitsAvailable + unitCredit + 1e-9
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -116,9 +121,14 @@ fun ProductionTab(
           }
 
           // 1. Formula Units Available
-          val availTone = if (unitsAvailable > 0.001) palette.amber else palette.red
+          // Web badge colours: good >= 10, warning < 10, danger <= 0
+          val availTone = when {
+            unitsAvailable <= 0.0 -> palette.red
+            unitsAvailable < 10.0 -> palette.amber
+            else -> palette.green
+          }
           SarimCallout(
-            text = "${SarimFormat.formatQty(unitsAvailable, 2)} units available · ${linkedFormula?.name ?: "No Formula"}",
+            text = "Formula Units Available: ${SarimFormat.formatQty(unitsAvailable, 2)} units available" + (linkedFormula?.name?.let { " · $it" } ?: ""),
             toneColor = availTone,
           )
 
@@ -210,29 +220,38 @@ fun ProductionTab(
             onError = { msg -> viewModel.showDialog(AppDialogRequest("Photo Error", msg, tone = com.example.util.DialogTone.ERROR, cancelLabel = null)) },
           )
 
-          // Formula cost panel
+          // Formula cost panel (web: prod-formula-cost-block)
           Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceElevated, border = BorderStroke(1.dp, palette.red.copy(alpha = 0.35f))) {
             Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Formula Unit Cost (per unit)", color = palette.textMuted, fontSize = 12.sp)
-                Text(SarimFormat.formatRs(unitCost, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
+                Text("Formula Unit Cost:", color = palette.textMuted, fontSize = 12.sp)
+                Text(SarimFormat.formatRs(unitCost, true, hideMoney) + "/unit", color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
               }
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total Formula Cost", color = palette.textMuted, fontSize = 12.sp)
+                Text("Total Formula Cost:", color = palette.textMuted, fontSize = 12.sp)
                 Text(SarimFormat.formatRs(totalFormulaCost, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
               }
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Cost per kg", color = palette.textMuted, fontSize = 12.sp)
-                Text(SarimFormat.formatRs(costPerKg, true, hideMoney), color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
+                Text("Cost per kg:", color = palette.textMuted, fontSize = 12.sp)
+                Text(SarimFormat.formatRs(costPerKg, true, hideMoney) + "/kg", color = palette.red, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold))
               }
             }
           }
 
-          // Result box
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Cost / kg", SarimFormat.formatRs(costPerKg, false, hideMoney), Modifier.weight(1f), palette.red)
-            SarimStatTile("Sale / kg", SarimFormat.formatRs(salePricePerKg, false, hideMoney), Modifier.weight(1f), palette.green)
-            SarimStatTile("Profit / kg", SarimFormat.formatRs(profitPerKg, false, hideMoney), Modifier.weight(1f), palette.emerald)
+          // Result box (web: prod-profit-block)
+          SarimCard {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text("Dynamic Cost Price:", color = palette.textMuted, fontSize = 12.5.sp)
+              Text(SarimFormat.formatRs(costPerKg, true, hideMoney) + "/kg", color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text("Sale Price:", color = palette.textMuted, fontSize = 12.5.sp)
+              Text(SarimFormat.formatRs(salePricePerKg, true, hideMoney) + "/kg", color = palette.green, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text("Profit (per kg):", color = palette.textMuted, fontSize = 12.5.sp)
+              Text(SarimFormat.formatRs(if (netKg > 0.0) profitPerKg else 0.0, true, hideMoney), color = palette.emerald, style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold))
+            }
           }
 
           if (insufficientUnits) {
@@ -275,6 +294,19 @@ fun ProductionTab(
               }
               if (unitCost <= 0.0) {
                 viewModel.showDialog(AppDialogRequest("Formula Cost Missing", "This formula has no cost (no ingredients or ingredient costs are zero). Set the formula and ingredient costs first.", tone = com.example.util.DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))
+                return@SarimPrimaryButton
+              }
+              if (insufficientUnits) {
+                val shortage = unitsNum - (unitsAvailable + unitCredit)
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    "Not Enough Formula Units",
+                    "Not enough formula units at ${store.name}\nAvailable: ${SarimFormat.formatQty(unitsAvailable + unitCredit, 2)} units\nRequested: ${SarimFormat.formatQty(unitsNum, 2)} units\nShortage: ${SarimFormat.formatQty(shortage, 2)} units",
+                    tone = com.example.util.DialogTone.WARNING,
+                    confirmLabel = "OK",
+                    cancelLabel = null,
+                  )
+                )
                 return@SarimPrimaryButton
               }
               viewModel.confirmSave(
