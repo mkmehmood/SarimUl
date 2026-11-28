@@ -1,5 +1,7 @@
 package com.example.ui.tabs
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Search
@@ -33,7 +36,6 @@ import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
-import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
 import com.example.viewmodel.ShareAfterSave
 import com.example.util.StatementKind
@@ -577,13 +579,26 @@ fun PaymentsTab(
         val totalPayables = snap.supplierPayables + snap.entityPayables
         val periodExpenses = state.paymentTransactions.filter { !it.isDeleted && it.type == "EXPENSE" && it.dateEpoch >= periodStart }
         val totalExpenses = periodExpenses.sumOf { it.amount }
+        val entityRows = liveEntities
+          .filter { q.isBlank() || it.name.lowercase().contains(q) || it.phone.contains(q) || it.wallet.lowercase().contains(q) }
+          .sortedByDescending { kotlin.math.abs(it.currentBalance) }
+        val expenseGroups = periodExpenses
+          .filter { q.isBlank() || it.entityOrExpenseName.lowercase().contains(q) }
+          .groupBy { it.entityOrExpenseName }
+          .map { (name, list) -> Triple(name, list, list.maxOf { it.dateEpoch }) }
+          .sortedByDescending { it.third }
 
         SarimCard {
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Unified Records", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Box(modifier = Modifier.weight(1f)) {
-              SarimTextField(value = unifiedSearch, onValueChange = { unifiedSearch = it }, label = "", placeholder = "Search...", leadingIcon = Icons.Rounded.Search, testTag = "unified_search")
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+              Text("UNIFIED RECORDS", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.8.sp)
+              Text(
+                if (unifiedMode == UnifiedViewMode.ENTITIES) "${entityRows.size} entities" else "${expenseGroups.size} expenses",
+                color = palette.textMuted,
+                fontSize = 11.5.sp,
+              )
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             IconButton(
               onClick = {
                 val nowLabel = SarimFormat.formatDate(System.currentTimeMillis())
@@ -622,7 +637,19 @@ fun PaymentsTab(
               },
               modifier = Modifier.size(48.dp).testTag("unified_records_pdf_btn"),
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Download PDF", tint = palette.cyan) }
+            IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(null)) }, modifier = Modifier.testTag("unified_add_entity_btn")) {
+              Icon(Icons.Rounded.Add, contentDescription = "Add entity", tint = palette.green)
+            }
+            }
           }
+          SarimTextField(
+            value = unifiedSearch,
+            onValueChange = { unifiedSearch = it },
+            label = "",
+            placeholder = if (unifiedMode == UnifiedViewMode.ENTITIES) "Search entities..." else "Search expenses...",
+            leadingIcon = Icons.Rounded.Search,
+            testTag = "unified_search",
+          )
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimPopoverSelector(
               label = "View Mode",
@@ -640,86 +667,81 @@ fun PaymentsTab(
             )
           }
 
+          fun phoneDetail(phone: String) = RecordDetail(
+            text = phone,
+            color = palette.green,
+            underline = true,
+            onClick = {
+              runCatching {
+                com.example.util.AppLockGuard.suppressFor()
+                context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              }.onFailure { viewModel.postStatus("No dialer app available") }
+            },
+            onLongClick = {
+              if (!com.example.util.DirectShare.openWhatsAppChat(context, phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+            },
+          )
+          // Same table as Sales > CUSTOMERS: one bordered list, avatar + ledger-page badge, phone dial / WhatsApp, pinned totals.
           if (unifiedMode == UnifiedViewMode.ENTITIES) {
-            val rows = liveEntities
-              .filter { q.isBlank() || it.name.lowercase().contains(q) || it.phone.contains(q) || it.wallet.lowercase().contains(q) }
-              .sortedByDescending { kotlin.math.abs(it.currentBalance) }
-            if (rows.isEmpty()) {
-              SarimEmptyState("No records match your filters", "Change the period or search to see more.")
-            } else {
-              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                rows.forEach { ent ->
-                  val bal = ent.currentBalance
-                  val tone = when {
-                    bal > 0.01 -> palette.red
-                    bal < -0.01 -> palette.green
-                    else -> palette.textMuted
-                  }
-                  val statusLabel = when {
+            val net = totalReceivables - totalPayables
+            SarimRecordTable(
+              rows = entityRows.map { ent ->
+                val bal = ent.currentBalance
+                RecordRow(
+                  key = ent.id,
+                  name = ent.name.uppercase(),
+                  avatarBadge = ent.ledgerPage,
+                  details = when {
+                    ent.phone.isNotBlank() -> listOf(phoneDetail(ent.phone))
+                    ent.wallet.isNotBlank() -> listOf(RecordDetail(ent.wallet))
+                    else -> listOf(RecordDetail("No contact"))
+                  },
+                  amount = SarimFormat.formatRs(kotlin.math.abs(bal), true, hideMoney),
+                  amountColor = if (bal > 0.01) palette.red else palette.emerald,
+                  tag = when {
                     bal > 0.01 -> "PAYABLE"
                     bal < -0.01 -> "RECEIVABLE"
                     else -> "SETTLED"
-                  }
-                  val contact = ent.phone.ifBlank { ent.wallet.ifBlank { "No contact" } }
-                  UnifiedRow(
-                    onClick = { viewModel.openStandalone(StandaloneScreen.EntityDetails(ent.id)) },
-                    leading = { InitialsAvatar(ent.name, avatarColorForName(ent.name), badgeText = ent.ledgerPage) },
-                    title = ent.name,
-                    titleColor = if (kotlin.math.abs(bal) > 0.01) tone else palette.textPrimary,
-                    subtitle = contact,
-                    amountText = SarimFormat.formatRs(kotlin.math.abs(bal), false, hideMoney),
-                    amountColor = tone,
-                    statusText = statusLabel,
-                  )
-                }
-              }
-            }
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-              val net = totalReceivables - totalPayables
-              Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                HealthLine("Net Balance:", SarimFormat.formatRs(kotlin.math.abs(net), false, hideMoney), if (net >= 0) palette.green else palette.red, bold = true)
-              }
-            }
+                  },
+                  onClick = { viewModel.openStandalone(StandaloneScreen.EntityDetails(ent.id)) },
+                )
+              },
+              stats = listOf(
+                RecordStat("Net Balance", SarimFormat.formatRs(kotlin.math.abs(net), true, hideMoney), if (net >= 0) palette.emerald else palette.red),
+              ),
+              emptyTitle = if (q.isBlank()) "No entities yet" else "No entities match your search",
+              emptyHint = if (q.isBlank()) "Add an entity or record a payment to create one." else "Try a different name.",
+            )
           } else {
-            val grouped = periodExpenses
-              .filter { q.isBlank() || it.entityOrExpenseName.lowercase().contains(q) }
-              .groupBy { it.entityOrExpenseName }
-              .map { (name, list) -> Triple(name, list, list.maxOf { it.dateEpoch }) }
-              .sortedByDescending { it.third }
-            if (grouped.isEmpty()) {
-              SarimEmptyState("No records match your filters", "Change the period or search to see more.")
-            } else {
-              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                grouped.forEach { (expName, list, _) ->
-                  UnifiedRow(
-                    onClick = { viewModel.openStandalone(StandaloneScreen.ExpenseDetails(expName)) },
-                    leading = null,
-                    title = expName,
-                    titleColor = palette.textPrimary,
-                    subtitle = if (list.size > 1) "Operating · ${list.size} transactions" else "Operating",
-                    amountText = SarimFormat.formatRs(list.sumOf { it.amount }, false, hideMoney),
-                    amountColor = palette.amber,
-                    statusText = null,
-                  )
-                }
-              }
-            }
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-              val netTotal = -grouped.sumOf { g -> g.second.sumOf { it.amount } }
-              Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                HealthLine("Net Total:", SarimFormat.formatRs(netTotal, false, hideMoney), if (netTotal >= 0) palette.green else palette.red, bold = true)
-              }
-            }
+            val netTotal = -expenseGroups.sumOf { g -> g.second.sumOf { it.amount } }
+            SarimRecordTable(
+              rows = expenseGroups.map { (expName, list, _) ->
+                RecordRow(
+                  key = expName,
+                  name = expName.uppercase(),
+                  showAvatar = false,
+                  details = listOf(RecordDetail(if (list.size > 1) "Operating · ${list.size} transactions" else "Operating")),
+                  amount = SarimFormat.formatRs(list.sumOf { it.amount }, true, hideMoney),
+                  amountColor = palette.amber,
+                  onClick = { viewModel.openStandalone(StandaloneScreen.ExpenseDetails(expName)) },
+                )
+              },
+              stats = listOf(
+                RecordStat("Net Total", SarimFormat.formatRs(netTotal, true, hideMoney), if (netTotal >= 0) palette.emerald else palette.red),
+              ),
+              emptyTitle = if (q.isBlank()) "No expenses in this period" else "No expenses match your search",
+              emptyHint = if (q.isBlank()) "Change the period to see more." else "Try a different name.",
+            )
           }
 
           // Web `#unified-summary` grid
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Total Receivable", SarimFormat.formatRs(totalReceivables, false, hideMoney), Modifier.weight(1f), palette.green)
-            SarimStatTile("Expenses", SarimFormat.formatRs(totalExpenses, false, hideMoney), Modifier.weight(1f), palette.amber)
+            SarimStatTile("Total Receivable", SarimFormat.formatRs(totalReceivables, true, hideMoney), Modifier.weight(1f), palette.green)
+            SarimStatTile("Expenses", SarimFormat.formatRs(totalExpenses, true, hideMoney), Modifier.weight(1f), palette.amber)
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile("Supplies Payable", SarimFormat.formatRs(snap.supplierPayables, false, hideMoney), Modifier.weight(1f), palette.purple)
-            SarimStatTile("Entity Payable", SarimFormat.formatRs(snap.entityPayables, false, hideMoney), Modifier.weight(1f), palette.red)
+            SarimStatTile("Supplies Payable", SarimFormat.formatRs(snap.supplierPayables, true, hideMoney), Modifier.weight(1f), palette.purple)
+            SarimStatTile("Entity Payable", SarimFormat.formatRs(snap.entityPayables, true, hideMoney), Modifier.weight(1f), palette.red)
           }
         }
       }
@@ -900,46 +922,4 @@ private fun HealthSection(title: String, color: androidx.compose.ui.graphics.Col
   Spacer(Modifier.height(4.dp))
   Text(title, color = color, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
   HorizontalDivider(color = color.copy(alpha = 0.25f))
-}
-
-/** One row of the web `rl-list` (Unified Records): avatar, name, contact line and the balance. */
-@Composable
-private fun UnifiedRow(
-  onClick: () -> Unit,
-  leading: (@Composable () -> Unit)?,
-  title: String,
-  titleColor: androidx.compose.ui.graphics.Color,
-  subtitle: String,
-  amountText: String,
-  amountColor: androidx.compose.ui.graphics.Color,
-  statusText: String?,
-) {
-  val palette = LocalSarimPalette.current
-  val rowSource = remember { MutableInteractionSource() }
-  val (rowScale, rowCorner) = rememberExpressivePress(rowSource, restCorner = 20.dp, pressedCorner = 13.dp, pressedScale = 0.98f)
-  val rowShape = RoundedCornerShape(rowCorner)
-  Surface(
-    shape = rowShape,
-    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    modifier = Modifier
-      .fillMaxWidth()
-      .defaultMinSize(minHeight = 56.dp)
-      .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
-      .clip(rowShape)
-      .clickable(interactionSource = rowSource, indication = LocalIndication.current, onClick = onClick),
-  ) {
-    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-      leading?.invoke()
-      Column(modifier = Modifier.weight(1f)) {
-        Text(title, color = titleColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-        Text(subtitle, color = palette.textMuted, fontSize = 11.sp)
-      }
-      Column(horizontalAlignment = Alignment.End) {
-        Text(amountText, color = amountColor, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
-        if (statusText != null) {
-          Text(statusText, color = amountColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-        }
-      }
-    }
-  }
 }
