@@ -268,6 +268,7 @@ class SarimRepository(
       sales = dao.getAllSales(),
       returns = dao.getAllReturns(),
       stockTransfers = dao.getAllStockTransfers(),
+      settlements = dao.getAllSettlements(),
     )
     usage.blockMessage(s?.name ?: key)?.let { msg ->
       throw IllegalStateException(msg)

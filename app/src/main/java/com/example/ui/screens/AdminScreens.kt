@@ -446,6 +446,7 @@ fun StoreManagerScreen(
                   sales = state.sales,
                   returns = state.returnLogs,
                   stockTransfers = state.stockTransfers,
+                  settlements = state.settlements,
                 ).blockMessage(st.name)
                 if (blockMsg != null) {
                   viewModel.showDialog(AppDialogRequest("Cannot Delete Store", blockMsg, tone = DialogTone.WARNING, confirmLabel = "OK", cancelLabel = null))

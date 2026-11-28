@@ -596,8 +596,9 @@ object SarimLinkEngine {
     val saleCount: Int = 0,
     val returnCount: Int = 0,
     val transferCount: Int = 0,
+    val settlementCount: Int = 0,
   ) {
-    val totalCount: Int get() = prodCount + batchCount + saleCount + returnCount + transferCount
+    val totalCount: Int get() = prodCount + batchCount + saleCount + returnCount + transferCount + settlementCount
     fun blockMessage(storeName: String): String? {
       if (totalCount == 0) return null
       val parts = buildList {
@@ -606,6 +607,7 @@ object SarimLinkEngine {
         if (saleCount > 0) add("$saleCount sale(s)")
         if (returnCount > 0) add("$returnCount return log(s)")
         if (transferCount > 0) add("$transferCount stock transfer(s)")
+        if (settlementCount > 0) add("$settlementCount calculator settlement(s)")
       }
       return "Cannot delete store $storeName: referenced by ${parts.joinToString(", ")}."
     }
@@ -618,6 +620,7 @@ object SarimLinkEngine {
     sales: List<SaleTransactionEntity>,
     returns: List<ReturnLogEntity>,
     stockTransfers: List<StockTransferEntity>,
+    settlements: List<CalculatorSettlementEntity> = emptyList(),
   ): StoreUsage {
     val clean = storeKey.trim()
     if (clean.isBlank()) return StoreUsage()
@@ -629,6 +632,7 @@ object SarimLinkEngine {
       transferCount = stockTransfers.count {
         !it.isDeleted && (it.fromStoreKey.equals(clean, ignoreCase = true) || it.toStoreKey.equals(clean, ignoreCase = true))
       },
+      settlementCount = settlements.count { !it.isDeleted && it.returnStoreKey.equals(clean, ignoreCase = true) },
     )
   }
 
