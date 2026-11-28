@@ -779,20 +779,22 @@ fun SalesTab(
           Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             IconButton(
               onClick = {
-                com.example.util.CustomerListPdf.create(
-                  context,
-                  fileName = "All_Customers_List.pdf",
-                  title = "All Customers — Complete List",
-                  rows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales),
-                  privacyHidden = hideMoney,
-                ).fold(
-                  onSuccess = { f ->
-                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "All Customers — Complete List") == com.example.util.ShareOutcome.FAILED) {
-                      viewModel.postStatus("Unable to share the customer list")
-                    }
-                  },
-                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
-                )
+                val listRows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales)
+                if (listRows.isEmpty()) {
+                  viewModel.postStatus("No customers found to export.")
+                } else {
+                  com.example.ui.components.shareReportChoices(
+                    viewModel,
+                    context,
+                    com.example.util.CustomerListPdf.spec(
+                      fileBase = "All_Customers_List",
+                      title = "All Customers — Complete List",
+                      name = "Customers (${listRows.size})",
+                      rows = listRows,
+                      privacyHidden = hideMoney,
+                    ),
+                  )
+                }
               },
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
             IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.CustomerEdit(null)) }) {

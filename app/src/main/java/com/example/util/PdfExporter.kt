@@ -171,6 +171,10 @@ object PdfExporter {
     }
   }
 
+  /** Statement-style PDF for any [ReportSpec]. */
+  fun createReportPdf(context: Context, spec: ReportSpec, generatedLabel: String): Result<File> =
+    ReportSender.createPdf(context, spec, generatedLabel)
+
   /** Build the report PDF in the app cache and return it. */
   fun createPdfFile(
     context: Context,
@@ -316,7 +320,16 @@ object PdfExporter {
     materials: List<com.example.data.local.RawMaterialEntity>,
     transactions: List<com.example.data.local.PaymentTransactionEntity>,
     privacyHidden: Boolean = false,
-  ): Result<File> {
+  ): Result<File> =
+    createReportPdf(context, unifiedEntitiesSpec(periodLabel, entities, materials, transactions, privacyHidden), generatedLabel)
+
+  fun unifiedEntitiesSpec(
+    periodLabel: String,
+    entities: List<com.example.data.local.PaymentEntityRecord>,
+    materials: List<com.example.data.local.RawMaterialEntity>,
+    transactions: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): ReportSpec {
     val supplierIds = materials.filter { !it.isDeleted && !it.supplierId.isNullOrBlank() }
       .mapNotNull { it.supplierId }.toSet()
     val mergedEntityIds = transactions
@@ -367,14 +380,11 @@ object PdfExporter {
     )
     val netPos = kotlin.math.abs(totReceivable - totPayable)
     val netTag = if (totReceivable > totPayable) "IN OUR FAVOR" else "NET PAYABLE"
-    return createStatementPdf(
-      context = context,
-      fileBaseName = "Unified_Statement_entities_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
-      kindTitle = "Payment Entities — Balances & Ledger",
+    return ReportSpec(
+      fileBase = "Unified_Statement_entities_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      title = "Payment Entities — Balances & Ledger",
       name = "All Active Entities (${rows.size})",
-      phone = "",
       rangeLabel = periodLabel,
-      generatedLabel = generatedLabel,
       columns = columns,
       rows = rows,
       summary = listOf(
@@ -393,7 +403,14 @@ object PdfExporter {
     generatedLabel: String,
     expenses: List<com.example.data.local.PaymentTransactionEntity>,
     privacyHidden: Boolean = false,
-  ): Result<File> {
+  ): Result<File> =
+    createReportPdf(context, unifiedExpensesSpec(periodLabel, expenses, privacyHidden), generatedLabel)
+
+  fun unifiedExpensesSpec(
+    periodLabel: String,
+    expenses: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): ReportSpec {
     val operating = expenses.filter { !it.isDeleted && it.type == "EXPENSE" }
       .sortedWith(compareBy<com.example.data.local.PaymentTransactionEntity> { if (com.example.data.backup.YearCloseMerge.isMergedId(it.id)) 0 else 1 }.thenBy { it.dateEpoch })
     val byName = linkedMapOf<String, Double>()
@@ -424,14 +441,11 @@ object PdfExporter {
     } else {
       emptyList()
     }
-    return createStatementPdf(
-      context = context,
-      fileBaseName = "Unified_Statement_expenses_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
-      kindTitle = "Expenses — Transaction Records",
+    return ReportSpec(
+      fileBase = "Unified_Statement_expenses_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      title = "Expenses — Transaction Records",
       name = "Operating Expenses (${rows.size})",
-      phone = "",
       rangeLabel = periodLabel,
-      generatedLabel = generatedLabel,
       columns = columns,
       rows = rows,
       summary = summary,
@@ -453,7 +467,16 @@ object PdfExporter {
     generatedLabel: String,
     expenses: List<com.example.data.local.PaymentTransactionEntity>,
     privacyHidden: Boolean = false,
-  ): Result<File> {
+  ): Result<File> =
+    createReportPdf(context, expenseCategorySpec(expenseName, rangeLabel, generatedLabel, expenses, privacyHidden), generatedLabel)
+
+  fun expenseCategorySpec(
+    expenseName: String,
+    rangeLabel: String,
+    generatedLabel: String,
+    expenses: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): ReportSpec {
     val chronological = expenses
       .filter { !it.isDeleted && it.type == "EXPENSE" }
       .sortedWith(compareBy<com.example.data.local.PaymentTransactionEntity> { it.dateEpoch }.thenBy { it.createdAt })
@@ -492,20 +515,18 @@ object PdfExporter {
       }
     }
     val safeName = expenseName.replace(Regex("[^A-Za-z0-9]"), "_").ifBlank { "Expense" }
-    return createStatementPdf(
-      context = context,
-      fileBaseName = "Expense_${safeName}_${rangeLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
-      kindTitle = "Expense History: $expenseName",
+    return ReportSpec(
+      fileBase = "Expense_${safeName}_${rangeLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      title = "Expense History: $expenseName",
       name = expenseName,
-      phone = "",
       rangeLabel = rangeLabel,
-      generatedLabel = generatedLabel,
       columns = columns,
       rows = rows,
       summary = summary,
       closingLabel = "Total ($expenseName)",
       closingValue = SarimFormat.formatRs(totalAmt, false, privacyHidden),
       accent = Color.rgb(255, 149, 0),
+      generatedLabel = generatedLabel,
     )
   }
 }

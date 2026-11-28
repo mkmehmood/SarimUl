@@ -601,15 +601,12 @@ fun PaymentsTab(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             IconButton(
               onClick = {
-                val nowLabel = SarimFormat.formatDate(System.currentTimeMillis())
-                val pdfRes = if (unifiedMode == UnifiedViewMode.ENTITIES) {
+                val spec = if (unifiedMode == UnifiedViewMode.ENTITIES) {
                   val exportEntities = state.paymentEntities.filter {
                     q.isBlank() || it.name.lowercase().contains(q) || it.phone.contains(q) || it.wallet.lowercase().contains(q)
                   }
-                  PdfExporter.createUnifiedEntitiesPdf(
-                    context = context,
+                  PdfExporter.unifiedEntitiesSpec(
                     periodLabel = unifiedPeriod.label,
-                    generatedLabel = nowLabel,
                     entities = exportEntities,
                     materials = state.rawMaterials,
                     transactions = state.paymentTransactions,
@@ -617,23 +614,13 @@ fun PaymentsTab(
                   )
                 } else {
                   val exportExpenses = periodExpenses.filter { q.isBlank() || it.entityOrExpenseName.lowercase().contains(q) }
-                  PdfExporter.createUnifiedExpensesPdf(
-                    context = context,
+                  PdfExporter.unifiedExpensesSpec(
                     periodLabel = unifiedPeriod.label,
-                    generatedLabel = nowLabel,
                     expenses = exportExpenses,
                     privacyHidden = hideMoney,
                   )
                 }
-                pdfRes.fold(
-                  onSuccess = { f ->
-                    val subject = if (unifiedMode == UnifiedViewMode.ENTITIES) "Payment Entities Statement" else "Operating Expenses Statement"
-                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", subject) == com.example.util.ShareOutcome.FAILED) {
-                      viewModel.postStatus("Unable to share PDF report")
-                    }
-                  },
-                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
-                )
+                com.example.ui.components.shareReportChoices(viewModel, context, spec)
               },
               modifier = Modifier.size(48.dp).testTag("unified_records_pdf_btn"),
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Download PDF", tint = palette.cyan) }

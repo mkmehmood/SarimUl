@@ -171,17 +171,37 @@ fun DailyLedgerScreen(
                   .background(Brush.linearGradient(listOf(palette.gradientStart, palette.gradientEnd)))
                   .testTag("dl_pdf_btn")
                   .clickable {
-                    val lines = activeEntries.take(80).map {
-                      "${SarimFormat.formatDate(it.dateEpoch)} | ${it.type} | ${it.mode} | ${SarimFormat.formatRs(it.amount, privacyHidden = state.hideMoneyFigures)} | ${it.party.ifBlank { it.note }}"
-                    }
-                    val res = PdfExporter.sharePdfReport(
-                      context = context,
-                      fileNamePrefix = "daily_ledger",
-                      title = "Daily Ledger Cashbook",
-                      subtitle = "Net Cash In Hand: ${SarimFormat.formatRs(totalCashInHand, privacyHidden = state.hideMoneyFigures)}",
-                      lines = lines.ifEmpty { listOf("No cashbook entries recorded.") },
+                    val hide = state.hideMoneyFigures
+                    val shown = activeEntries.take(80)
+                    com.example.ui.components.shareReportChoices(
+                      viewModel,
+                      context,
+                      ReportSpec(
+                        fileBase = "daily_ledger_${SarimFormat.dateInput(System.currentTimeMillis())}",
+                        title = "Daily Ledger Cashbook",
+                        name = "Cashbook Entries (${shown.size})",
+                        rangeLabel = "All Time",
+                        columns = listOf(
+                          PdfColumn("Date", 62f),
+                          PdfColumn("Type", 70f),
+                          PdfColumn("Mode", 70f),
+                          PdfColumn("Amount", 90f, right = true),
+                          PdfColumn("Party / Note", 231f),
+                        ),
+                        rows = shown.map {
+                          listOf(
+                            SarimFormat.formatDate(it.dateEpoch),
+                            it.type,
+                            it.mode,
+                            SarimFormat.formatRs(it.amount, privacyHidden = hide),
+                            it.party.ifBlank { it.note },
+                          )
+                        },
+                        summary = emptyList(),
+                        closingLabel = "Net Cash In Hand",
+                        closingValue = SarimFormat.formatRs(totalCashInHand, privacyHidden = hide),
+                      ),
                     )
-                    if (res.isFailure) viewModel.postStatus("Unable to export PDF")
                   },
                 contentAlignment = Alignment.Center,
               ) {
