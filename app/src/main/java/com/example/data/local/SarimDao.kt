@@ -682,6 +682,9 @@ interface SarimDao {
   @Query("SELECT SUBSTR(data, :startPos, :len) FROM photos WHERE `key` = :photoKey LIMIT 1")
   suspend fun readPhotoDataChunk(photoKey: String, startPos: Int, len: Int): String?
 
+  @Query("SELECT data FROM photos WHERE `key` = :photoKey AND deleted = 0 LIMIT 1")
+  suspend fun getPhotoData(photoKey: String): String?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertPhoto(item: PhotoRecordEntity)
 

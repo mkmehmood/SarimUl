@@ -168,6 +168,9 @@ class SarimRepository(
     }
   }
 
+  /** Photo data (data URL / URI) stored under [photoKey], or null when missing or too large to read. */
+  suspend fun photoData(photoKey: String): String? = runCatching { dao.getPhotoData(photoKey) }.getOrNull()?.takeIf { it.isNotBlank() }
+
   private suspend fun upsertPhotoKey(photoKey: String, data: String, now: Long = System.currentTimeMillis()) {
     dao.upsertPhoto(
       PhotoRecordEntity(
@@ -858,6 +861,97 @@ class SarimRepository(
     )
   }
 
+  /**
+   * Mirrors `unlinkSupplierFromMaterial` in `modules/factory-core.js`:
+   * explicitly unlinks a supplier from a raw material, clears supplier metadata on the material and
+   * matching purchase lots, and reverses linked payable balances/transactions.
+   */
+  suspend fun unlinkSupplierFromMaterial(
+    materialId: String,
+    reverseTransactions: Boolean = true,
+  ): Int {
+    val now = System.currentTimeMillis()
+    val mat = dao.getAllRawMaterials().firstOrNull { !it.isDeleted && it.id == materialId }
+      ?: throw IllegalStateException("Material not found.")
+    val oldSupplierId = mat.supplierId?.takeIf { it.isNotBlank() } ?: return 0
+    val groupId = SarimUuid.generateUUID("${SarimUuid.PREFIX_GRP}_unlink", tsMs = now)
+    var reversedCount = 0
+
+    // 1. Reverse & soft-delete explicit payable PaymentTransaction records linked to this material + supplier
+    val linkedPayables = dao.getAllPaymentTransactions().filter { tx ->
+      !tx.isDeleted && tx.isPayable && tx.entityId == oldSupplierId &&
+        (tx.materialId == materialId || materialId in JsonCodecs.decodeStrings(tx.materialIdsJson))
+    }
+    var txRevertedAmount = 0.0
+    if (reverseTransactions) {
+      linkedPayables.forEach { tx ->
+        txRevertedAmount += if (tx.type == "PAYMENT_IN") tx.amount else -tx.amount
+        revertPaymentTransactionEffects(tx, now)
+        tx.ledgerId?.takeIf { it.isNotBlank() }?.let { lid ->
+          dao.softDeleteLedgerEntry(lid, now)
+          touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+        }
+        dao.softDeletePaymentTransaction(tx.id, now)
+        enqueueOutboxDelete(
+          collection = SarimWebSchema.COL_TRANSACTIONS,
+          docId = tx.id,
+          title = "${tx.type}: ${tx.entityOrExpenseName}",
+          subtitle = tx.description,
+          amountText = "Rs ${tx.amount}",
+          snapshotMap = SarimWebSchema.transactionToMap(tx),
+          groupId = groupId,
+        )
+        reversedCount++
+      }
+    }
+
+    // 2. Unlink matching purchase lots and compute any direct supplier payable not already covered by linkedPayables
+    val linkedLots = dao.getAllPurchases().filter { !it.isDeleted && it.materialId == materialId && it.supplierId == oldSupplierId }
+    var lotPayableSum = 0.0
+    linkedLots.forEach { lot ->
+      lotPayableSum += lot.totalPayable.coerceAtLeast(0.0)
+      val clearedLot = lot.copy(
+        supplierMode = "NONE",
+        supplierId = null,
+        supplierName = null,
+        totalPayable = 0.0,
+        paymentStatus = "pending",
+        syncPending = true,
+        updatedAt = now,
+      )
+      dao.upsertPurchase(clearedLot)
+      enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, clearedLot.id, SarimWebSchema.purchaseLotToMap(clearedLot))
+      reversedCount++
+    }
+
+    // 3. Reconcile supplier entity balance if lots carried direct payable beyond any linked IN payables
+    val remainingLotBalanceToReverse = (lotPayableSum - txRevertedAmount.coerceAtLeast(0.0)).coerceAtLeast(0.0)
+    if (reverseTransactions && remainingLotBalanceToReverse > 0.001) {
+      dao.getAllPaymentEntities().firstOrNull { !it.isDeleted && it.id == oldSupplierId }?.let { sup ->
+        val updatedSup = sup.copy(
+          currentBalance = sup.currentBalance - remainingLotBalanceToReverse,
+          syncPending = true,
+          updatedAt = now,
+        )
+        dao.upsertPaymentEntity(updatedSup)
+        enqueueOutboxSet(SarimWebSchema.COL_ENTITIES, updatedSup.id, SarimWebSchema.entityToMap(updatedSup))
+      }
+    }
+
+    // 4. Clear supplier link on the raw material and reset payable status
+    val updatedMat = mat.copy(
+      supplierId = null,
+      supplierName = null,
+      pendingSupplierAmount = 0.0,
+      paymentStatus = "pending",
+      syncPending = true,
+      updatedAt = now,
+    )
+    dao.upsertRawMaterial(updatedMat)
+    enqueueOutboxSet(SarimWebSchema.COL_INVENTORY, updatedMat.id, SarimWebSchema.materialToMap(updatedMat))
+    return reversedCount + 1
+  }
+
   suspend fun saveFormula(
     editingId: String?,
     name: String,
@@ -1321,17 +1415,18 @@ class SarimRepository(
     return entity
   }
 
-  private suspend fun forgetLedgerParty(partyName: String, now: Long) {
+  suspend fun forgetLedgerParty(partyName: String, now: Long = System.currentTimeMillis()): Int {
     val clean = partyName.trim()
-    if (clean.isBlank()) return
-    var touched = false
+    if (clean.isBlank()) return 0
+    var clearedCount = 0
     dao.getAllDailyLedger().filter {
-      !it.isDeleted && it.sourceType == "MANUAL" && it.party.equals(clean, ignoreCase = true)
+      !it.isDeleted && it.sourceType == "MANUAL" && it.type != "TRANSFER" && it.party.equals(clean, ignoreCase = true)
     }.forEach { led ->
       dao.upsertLedgerEntry(led.copy(party = "", updatedAt = now))
-      touched = true
+      clearedCount++
     }
-    if (touched) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+    if (clearedCount > 0) touchTimestampKey("daily_ledger_timestamp", SarimWebSchema.COL_DAILY_LEDGER, now)
+    return clearedCount
   }
 
   suspend fun deleteCustomer(id: String) {

@@ -238,6 +238,24 @@ open class BaseLedgerViewModel(
     }
   }
 
+  fun forgetParty(partyName: String, onDone: (Int) -> Unit = {}) {
+    val clean = partyName.trim()
+    if (clean.isEmpty()) return
+    launchRepoMutation(onError = { msg -> updateState { it.copy(errorMessage = msg) } }) {
+      val count = repository.forgetLedgerParty(clean)
+      updateState {
+        it.copy(
+          statusMessage = if (count > 0) {
+            "Cleared \"$clean\" from $count cashbook entr${if (count == 1) "y" else "ies"}"
+          } else {
+            "No manual cashbook entries used \"$clean\""
+          }
+        )
+      }
+      onDone(count)
+    }
+  }
+
   fun clearMessages() {
     updateState { it.copy(statusMessage = null, errorMessage = null) }
   }

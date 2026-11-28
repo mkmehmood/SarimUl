@@ -747,8 +747,8 @@ fun BatchCorrectionScreen(
           keyboardType = KeyboardType.Decimal,
           testTag = "bfTotalAdd",
         )
-        BatchLine("Remaining", "${fmtAmt(plan.remaining, unit)} $unit", palette.textPrimary)
-        BatchLine("New total batch", "${fmtAmt(plan.requiredTotal, unit)} $unit", palette.green, bold = true)
+        BatchLine("Total in Remaining", "${fmtAmt(plan.remaining, unit)} $unit", palette.textPrimary)
+        BatchLine("Total Required", "${fmtAmt(plan.requiredTotal, unit)} $unit", palette.green, bold = true)
       }
     }
 

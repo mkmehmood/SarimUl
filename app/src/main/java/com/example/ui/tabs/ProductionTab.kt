@@ -12,6 +12,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -29,10 +32,13 @@ import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.storeColorForKey
 import com.example.util.AppDialogRequest
 import com.example.util.DialogTone
+import com.example.util.ProductionPhotoSharer
 import com.example.util.SarimFormat
+import com.example.util.ShareOutcome
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import kotlinx.coroutines.launch
 
 private enum class ProdTopView(val label: String) {
   COMBINED("Combined"),
@@ -52,6 +58,8 @@ fun ProductionTab(
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
   val snap = state.snapshot
   val hideMoney = state.hideMoneyFigures
 
@@ -64,6 +72,9 @@ fun ProductionTab(
   var attachedPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
   var editingEntryId by remember { mutableStateOf<String?>(null) }
   var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
+  var photoSelectMode by remember { mutableStateOf(false) }
+  var pickGroup by remember { mutableStateOf<ProdDayGroup?>(null) }
+  var selectedPhotoIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
 
   LaunchedEffect(state.currentLocalDayEpoch) {
@@ -525,19 +536,169 @@ viewModel.launchSafely(
       }
     }
 
-    // Combined view: every record, grouped year > month > day (web "combined" history).
-    // Store view lists that store's records for the selected day above instead.
+    // Production History Accordion (admin only; entry-only for other roles)
     if (state.isAdmin && topView == ProdTopView.COMBINED) item {
-      Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+      val entriesWithPhotos = remember(state.productionEntries) {
+        state.productionEntries.filter { JsonCodecs.decodeStrings(it.photoUrisJson).isNotEmpty() }
+      }
+      val triggerMultiPhotoShare: (List<ProductionEntryEntity>) -> Unit = { chosen ->
+        scope.launch {
+          viewModel.postStatus("Preparing captioned photos…")
+          ProductionPhotoSharer.shareCaptionedPhotos(context, chosen, hideMoney) { viewModel.repository.photoData(it) }.fold(
+            onSuccess = { (count, outcome) ->
+              if (outcome == ShareOutcome.FAILED) {
+                viewModel.postStatus("Unable to open the share sheet")
+              } else {
+                selectedPhotoIds = emptySet()
+                photoSelectMode = false
+                viewModel.postStatus("Shared $count captioned photo(s) — summary copied to clipboard")
+              }
+            },
+            onFailure = { err ->
+              viewModel.postStatus(err.localizedMessage ?: "Failed to prepare captioned photos")
+            },
+          )
+        }
+      }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        if (entriesWithPhotos.isNotEmpty()) {
+          SarimSecondaryButton(
+            text = if (photoSelectMode) "Done Selecting" else "Select Photos (${entriesWithPhotos.size})",
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            testTag = "prod_photo_select_mode_btn",
+            onClick = {
+              photoSelectMode = !photoSelectMode
+              if (!photoSelectMode) selectedPhotoIds = emptySet()
+            },
+          )
+        }
+      }
+      if (photoSelectMode) {
+        Spacer(Modifier.height(6.dp))
+        SarimCallout(
+          text = "Tap photo entries below to select them, then share captioned images.",
+          toneColor = palette.cyan,
+        )
+        if (selectedPhotoIds.isNotEmpty()) {
+          Spacer(Modifier.height(6.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            SarimPrimaryButton(
+              text = "Share ${selectedPhotoIds.size} Captioned",
+              modifier = Modifier.weight(1f),
+              testTag = "prod_share_selected_photos_btn",
+              onClick = {
+                val chosen = entriesWithPhotos.filter { it.id in selectedPhotoIds }
+                triggerMultiPhotoShare(chosen)
+              },
+            )
+            SarimSecondaryButton(
+              text = "Clear",
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+              testTag = "prod_clear_selected_photos_btn",
+              onClick = { selectedPhotoIds = emptySet() },
+            )
+          }
+        }
+      }
       Spacer(Modifier.height(6.dp))
+      val sourceEntries = if (photoSelectMode) entriesWithPhotos else state.productionEntries
+      // One row per store per day: entries of the same store on the same date are combined.
+      val groups = remember(sourceEntries) {
+        sourceEntries
+          .groupBy { Triple(it.dateStr.ifBlank { SarimFormat.dateInput(it.dateEpoch) }, it.storeKey, it.isReturn) }
+          .map { (k, list) -> ProdDayGroup(id = "${k.first}|${k.second}|${k.third}", entries = list.sortedBy { it.createdAt }) }
+          .sortedByDescending { it.dateEpoch }
+      }
+      val records = groups.map { g ->
+        val pCostPerKg = if (g.netWeightKg > 0.0001) g.totalFormulaCost / g.netWeightKg else 0.0
+        val pSalePerKg = if (g.netWeightKg > 0.0001) g.totalValue / g.netWeightKg else 0.0
+        val photoCount = g.entries.sumOf { JsonCodecs.decodeStrings(it.photoUrisJson).size }
+        val allSelected = g.entries.all { it.id in selectedPhotoIds }
+        val chipLabel = when {
+          photoSelectMode && allSelected -> "SELECTED · $photoCount PHOTO(S)"
+          photoSelectMode -> "TAP TO SELECT · $photoCount PHOTO(S)"
+          else -> SarimFormat.formatRs(g.totalProfit, false, hideMoney)
+        }
+        val chipClr = when {
+          photoSelectMode && allSelected -> palette.green
+          photoSelectMode -> palette.cyan
+          g.totalProfit >= 0 -> palette.green
+          else -> palette.red
+        }
+        val first = g.entries.first()
+        HistoryRecordDisplay(
+          item = g,
+          dateEpoch = g.dateEpoch,
+          title = first.storeName,
+          subtitle = if (g.entries.size == 1) "${first.formulaName} · ${SarimFormat.formatQty(g.formulaUnitsUsed, 2)} units"
+          else "${g.entries.size} entries · ${SarimFormat.formatQty(g.formulaUnitsUsed, 2)} units",
+          amountText = SarimFormat.formatKg(g.netWeightKg),
+          amountColor = storeColorForKey(first.storeKey, palette.isDark),
+          chipText = chipLabel,
+          chipColor = chipClr,
+          detailMetrics = listOf(
+            "Entries" to "${g.entries.size}",
+            "Gross Weight" to SarimFormat.formatKg(g.grossWeightKg),
+            "Container Weight" to SarimFormat.formatKg(g.containerWeightKg),
+            "Net Weight" to SarimFormat.formatKg(g.netWeightKg),
+            "Formula Units" to SarimFormat.formatQty(g.formulaUnitsUsed, 2),
+            "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
+            "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
+            "Total Cost" to SarimFormat.formatRs(g.totalFormulaCost, false, hideMoney),
+            "Total Value" to SarimFormat.formatRs(g.totalValue, false, hideMoney),
+            "Total Profit" to SarimFormat.formatRs(g.totalProfit, false, hideMoney),
+          ),
+        )
+      }
       AccordionHistoryList(
-        records = displayRecords(state.productionEntries.filter { !it.isDeleted }),
+        records = records,
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-        onItemClick = { rec -> sheetEntry = rec.item },
+        itemKey = { it.id },
+        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "production" }?.recordId?.let { rid ->
+          groups.firstOrNull { g -> g.entries.any { it.id == rid } }?.id ?: rid
+        },
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
+        onItemClick = { rec ->
+          val g = rec.item
+          if (photoSelectMode) {
+            val ids = g.entries.map { it.id }
+            selectedPhotoIds = if (ids.all { it in selectedPhotoIds }) selectedPhotoIds - ids.toSet() else selectedPhotoIds + ids
+          } else if (g.entries.size == 1) {
+            sheetEntry = g.entries.first()
+          } else {
+            pickGroup = g
+          }
+        },
       )
     }
+  }
+
+  pickGroup?.let { g ->
+    androidx.compose.material3.AlertDialog(
+      onDismissRequest = { pickGroup = null },
+      title = { Text("${g.entries.first().storeName} · ${SarimFormat.formatDate(g.dateEpoch)}") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          g.entries.forEachIndexed { i, e ->
+            androidx.compose.material3.TextButton(onClick = { pickGroup = null; sheetEntry = e }, modifier = Modifier.fillMaxWidth()) {
+              Text("#${i + 1}  ${e.timeStr.ifBlank { "—" }}  ·  ${SarimFormat.formatKg(e.netWeightKg)}  ·  ${e.formulaName}")
+            }
+          }
+        }
+      },
+      confirmButton = { androidx.compose.material3.TextButton(onClick = { pickGroup = null }) { Text("Close") } },
+    )
   }
 
   sheetEntry?.let { p ->
@@ -562,6 +723,34 @@ viewModel.launchSafely(
         "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
         "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
       ),
+      extraContent = if (photos.isNotEmpty()) {
+        {
+          SarimSecondaryButton(
+            text = "Share ${photos.size} Captioned Photo(s)",
+            icon = Icons.Rounded.Share,
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+            testTag = "prod_share_captioned_btn",
+            onClick = {
+              sheetEntry = null
+              scope.launch {
+                viewModel.postStatus("Preparing captioned photos…")
+                ProductionPhotoSharer.shareCaptionedPhotos(context, listOf(p), hideMoney) { viewModel.repository.photoData(it) }.fold(
+                  onSuccess = { (count, outcome) ->
+                    if (outcome == ShareOutcome.FAILED) {
+                      viewModel.postStatus("Unable to open the share sheet")
+                    } else {
+                      viewModel.postStatus("Shared $count captioned photo(s) — summary copied to clipboard")
+                    }
+                  },
+                  onFailure = { err ->
+                    viewModel.postStatus(err.localizedMessage ?: "Failed to prepare captioned photos")
+                  },
+                )
+              }
+            },
+          )
+        }
+      } else null,
       onDismiss = { sheetEntry = null },
       extraActionLabel = if (photos.isNotEmpty()) "View ${photos.size} Photo(s)" else null,
       onExtraAction = if (photos.isNotEmpty()) { { viewModel.openPhotoViewer(photos, 0) } } else null,
@@ -751,4 +940,16 @@ private fun StoreSummaryCard(
       }
     }
   }
+}
+
+/** All production entries of one store on one day, shown as a single history row. */
+private data class ProdDayGroup(val id: String, val entries: List<ProductionEntryEntity>) {
+  val dateEpoch: Long get() = entries.first().dateEpoch
+  val grossWeightKg: Double get() = entries.sumOf { it.grossWeightKg }
+  val containerWeightKg: Double get() = entries.sumOf { it.containerWeightKg }
+  val netWeightKg: Double get() = entries.sumOf { it.netWeightKg }
+  val formulaUnitsUsed: Double get() = entries.sumOf { it.formulaUnitsUsed }
+  val totalFormulaCost: Double get() = entries.sumOf { it.totalFormulaCost }
+  val totalValue: Double get() = entries.sumOf { it.totalValue }
+  val totalProfit: Double get() = entries.sumOf { it.totalProfit }
 }

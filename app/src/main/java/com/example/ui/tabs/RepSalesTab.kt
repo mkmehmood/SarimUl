@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.MyLocation
-import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Search
@@ -44,6 +44,7 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
+import com.example.util.AppLockGuard
 import com.example.viewmodel.ShareAfterSave
 import com.example.util.StatementKind
 import com.example.util.StatementData
@@ -385,95 +386,15 @@ fun RepSalesTab(
             SarimDatePickerField("Select Date", adminMapDate, onDateSelected = { adminMapDate = it }, modifier = Modifier.weight(1f), testTag = "rep_admin_map_date")
           }
 
-          Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = lerp(MaterialTheme.colorScheme.surfaceContainerLowest, Color(0xFF0A2218), 0.90f),
-          ) {
-            Box(modifier = Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
-              var canvasWidthPx by remember { mutableFloatStateOf(1f) }
-              var canvasHeightPx by remember { mutableFloatStateOf(1f) }
-
-              fun projectOffset(s: SaleTransactionEntity, width: Float, height: Float): Offset {
-                val lats = mappedPins.mapNotNull { it.latitude }
-                val lngs = mappedPins.mapNotNull { it.longitude }
-                val minLat = lats.minOrNull() ?: 0.0
-                val maxLat = lats.maxOrNull() ?: 0.0
-                val minLng = lngs.minOrNull() ?: 0.0
-                val maxLng = lngs.maxOrNull() ?: 0.0
-                val padX = width * 0.14f
-                val padY = height * 0.16f
-                val usableW = (width - padX * 2).coerceAtLeast(1f)
-                val usableH = (height - padY * 2).coerceAtLeast(1f)
-                val latSpan = (maxLat - minLat).takeIf { it > 1e-6 }
-                val lngSpan = (maxLng - minLng).takeIf { it > 1e-6 }
-                val nx = if (lngSpan != null) (((s.longitude ?: minLng) - minLng) / lngSpan).toFloat() else 0.5f
-                val ny = if (latSpan != null) (1.0 - (((s.latitude ?: minLat) - minLat) / latSpan)).toFloat() else 0.5f
-                return Offset(padX + nx * usableW, padY + ny * usableH)
-              }
-
-              Canvas(
-                modifier = Modifier
-                  .fillMaxSize()
-                  .testTag("rep_route_map_canvas")
-                  .pointerInput(mappedPins) {
-                    detectTapGestures { tap ->
-                      if (mappedPins.isEmpty()) return@detectTapGestures
-                      val hit = mappedPins.minByOrNull { pin ->
-                        val p = projectOffset(pin, size.width.toFloat(), size.height.toFloat())
-                        hypot((tap.x - p.x).toDouble(), (tap.y - p.y).toDouble())
-                      }
-                      if (hit != null) {
-                        val p = projectOffset(hit, size.width.toFloat(), size.height.toFloat())
-                        val dist = hypot((tap.x - p.x).toDouble(), (tap.y - p.y).toDouble())
-                        if (dist <= 44.dp.toPx()) selectedMapPinId = hit.id
-                      }
-                    }
-                  },
-              ) {
-                canvasWidthPx = size.width
-                canvasHeightPx = size.height
-                for (i in 1..4) {
-                  val y = size.height * (i / 5f)
-                  drawLine(palette.green.copy(alpha = 0.12f), Offset(0f, y), Offset(size.width, y))
-                  val x = size.width * (i / 5f)
-                  drawLine(palette.green.copy(alpha = 0.12f), Offset(x, 0f), Offset(x, size.height))
-                }
-                if (mappedPins.size >= 2) {
-                  val pts = mappedPins.map { projectOffset(it, canvasWidthPx, canvasHeightPx) }
-                  for (i in 0 until pts.lastIndex) {
-                    drawLine(
-                      color = palette.cyan.copy(alpha = 0.55f),
-                      start = pts[i],
-                      end = pts[i + 1],
-                      strokeWidth = 2.dp.toPx(),
-                      pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
-                    )
-                  }
-                }
-                mappedPins.forEach { s ->
-                  val pos = projectOffset(s, canvasWidthPx, canvasHeightPx)
-                  val pinColor = when {
-                    s.mode == "COLLECTION" -> palette.cyan
-                    s.paymentType == "CASH" -> palette.green
-                    else -> palette.amber
-                  }
-                  if (selectedPin?.id == s.id) {
-                    drawCircle(Color.White.copy(alpha = 0.85f), radius = 12.dp.toPx(), center = pos)
-                  }
-                  drawCircle(pinColor, radius = 8.dp.toPx(), center = pos)
-                }
-              }
-              if (mappedPins.isEmpty()) {
-                Text(
-                  if (dayPins.isEmpty()) "No field visits recorded on ${SarimFormat.formatDate(adminMapDate)}"
-                  else "${dayPins.size} visit(s) on ${SarimFormat.formatDate(adminMapDate)}, none with GPS coordinates",
-                  color = palette.green.copy(alpha = 0.75f),
-                  fontSize = 12.sp,
-                )
-              }
-            }
-          }
-          Text("Cash Sale (Green) · Collection (Cyan) · Credit Sale (Amber) · Tap pin for details", color = palette.textMuted, fontSize = 11.sp)
+          RepOsmMapCard(
+            mappedPins = mappedPins,
+            dayPinsCount = dayPins.size,
+            selectedDateEpoch = adminMapDate,
+            selectedPinId = selectedMapPinId,
+            hideMoney = hideMoney,
+            onSelectPin = { selectedMapPinId = it },
+          )
+          Text("Cash Sale (Green) · Collection (Cyan) · Credit Sale (Amber) · Drag & pinch to pan/zoom, tap pin for details", color = palette.textMuted, fontSize = 11.sp)
 
           if (selectedPin != null) {
             val lat = selectedPin.latitude ?: 0.0
@@ -502,12 +423,13 @@ fun RepSalesTab(
                   onClick = {
                     val uri = Uri.parse("geo:$lat,$lng?q=$lat,$lng(${Uri.encode(selectedPin.customerName)})")
                     runCatching {
+                      AppLockGuard.suppressFor()
                       context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }.onFailure { viewModel.postStatus("No maps app installed") }
                   },
                   modifier = Modifier.size(48.dp).testTag("rep_map_open_external_btn"),
                 ) {
-                  Icon(Icons.Rounded.OpenInNew, contentDescription = "Open in Maps", tint = palette.green)
+                  Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = "Open in Maps", tint = palette.green)
                 }
               }
             }
@@ -556,20 +478,22 @@ fun RepSalesTab(
             IconButton(
               onClick = {
                 val repLabel = (activeAdminFilterRep ?: state.signedInDisplayName).ifBlank { "Rep" }
-                com.example.util.CustomerListPdf.create(
-                  context,
-                  fileName = "My_Customers_${repLabel.replace(Regex("[^A-Za-z0-9]"), "_")}.pdf",
-                  title = "My Customers — $repLabel",
-                  rows = com.example.util.CustomerListPdf.rowsFor(repCustomers, state.sales),
-                  privacyHidden = hideMoney,
-                ).fold(
-                  onSuccess = { f ->
-                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "My Customers — $repLabel") == com.example.util.ShareOutcome.FAILED) {
-                      viewModel.postStatus("Unable to share the customer list")
-                    }
-                  },
-                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
-                )
+                val listRows = com.example.util.CustomerListPdf.rowsFor(repCustomers, state.sales)
+                if (listRows.isEmpty()) {
+                  viewModel.postStatus("No customers found to export.")
+                } else {
+                  com.example.ui.components.shareReportChoices(
+                    viewModel,
+                    context,
+                    com.example.util.CustomerListPdf.spec(
+                      fileBase = "My_Customers_${repLabel.replace(Regex("[^A-Za-z0-9]"), "_")}",
+                      title = "My Customers — $repLabel",
+                      name = "$repLabel (${listRows.size} customers)",
+                      rows = listRows,
+                      privacyHidden = hideMoney,
+                    ),
+                  )
+                }
               },
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export rep customers PDF", tint = palette.cyan) }
             IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.RepCustomerEdit(null)) }) {
@@ -592,6 +516,7 @@ fun RepSalesTab(
                     underline = true,
                     onClick = {
                       runCatching {
+                        AppLockGuard.suppressFor()
                         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${c.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                       }.onFailure { viewModel.postStatus("No dialer app available") }
                     },

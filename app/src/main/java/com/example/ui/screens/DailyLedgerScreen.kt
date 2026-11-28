@@ -67,6 +67,14 @@ fun DailyLedgerScreen(
   val categorySummary = ledgerState.categorySummary
   val knownChannels = ledgerState.knownChannels
 
+  val focusLedgerId = state.pendingRecordFocus?.takeIf { it.targetKey == "daily_ledger" }?.recordId
+  LaunchedEffect(focusLedgerId) {
+    if (focusLedgerId != null) {
+      ledgerViewModel.setTypeFilter("ALL")
+      ledgerViewModel.setSearchQuery("")
+    }
+  }
+
   LaunchedEffect(ledgerState.statusMessage, ledgerState.errorMessage) {
     val msg = ledgerState.errorMessage ?: ledgerState.statusMessage
     if (!msg.isNullOrBlank()) {
@@ -163,17 +171,37 @@ fun DailyLedgerScreen(
                   .background(Brush.linearGradient(listOf(palette.gradientStart, palette.gradientEnd)))
                   .testTag("dl_pdf_btn")
                   .clickable {
-                    val lines = activeEntries.take(80).map {
-                      "${SarimFormat.formatDate(it.dateEpoch)} | ${it.type} | ${it.mode} | ${SarimFormat.formatRs(it.amount, privacyHidden = state.hideMoneyFigures)} | ${it.party.ifBlank { it.note }}"
-                    }
-                    val res = PdfExporter.sharePdfReport(
-                      context = context,
-                      fileNamePrefix = "daily_ledger",
-                      title = "Daily Ledger Cashbook",
-                      subtitle = "Net Cash In Hand: ${SarimFormat.formatRs(totalCashInHand, privacyHidden = state.hideMoneyFigures)}",
-                      lines = lines.ifEmpty { listOf("No cashbook entries recorded.") },
+                    val hide = state.hideMoneyFigures
+                    val shown = activeEntries.take(80)
+                    com.example.ui.components.shareReportChoices(
+                      viewModel,
+                      context,
+                      ReportSpec(
+                        fileBase = "daily_ledger_${SarimFormat.dateInput(System.currentTimeMillis())}",
+                        title = "Daily Ledger Cashbook",
+                        name = "Cashbook Entries (${shown.size})",
+                        rangeLabel = "All Time",
+                        columns = listOf(
+                          PdfColumn("Date", 62f),
+                          PdfColumn("Type", 70f),
+                          PdfColumn("Mode", 70f),
+                          PdfColumn("Amount", 90f, right = true),
+                          PdfColumn("Party / Note", 231f),
+                        ),
+                        rows = shown.map {
+                          listOf(
+                            SarimFormat.formatDate(it.dateEpoch),
+                            it.type,
+                            it.mode,
+                            SarimFormat.formatRs(it.amount, privacyHidden = hide),
+                            it.party.ifBlank { it.note },
+                          )
+                        },
+                        summary = emptyList(),
+                        closingLabel = "Net Cash In Hand",
+                        closingValue = SarimFormat.formatRs(totalCashInHand, privacyHidden = hide),
+                      ),
                     )
-                    if (res.isFailure) viewModel.postStatus("Unable to export PDF")
                   },
                 contentAlignment = Alignment.Center,
               ) {
@@ -308,7 +336,7 @@ fun DailyLedgerScreen(
           value = toModeText,
           onValueChange = { toModeText = it },
           label = "To Channel (Destination)",
-          placeholder = "e.g. Bank Transfer, Cash...",
+          placeholder = "e.g. Bank Transfer, Easypaisa...",
           suggestions = knownChannels,
           onSuggestionSelected = { toModeText = it },
           testTag = "dl_to_mode",
@@ -322,6 +350,47 @@ fun DailyLedgerScreen(
           maxLength = 80,
           testTag = "dl_party",
         )
+        val cleanTypedParty = partyText.trim()
+        val typedPartyMatches = remember(cleanTypedParty, activeEntries) {
+          if (cleanTypedParty.isEmpty()) 0
+          else activeEntries.count {
+            it.sourceType == "MANUAL" && it.type != "TRANSFER" && it.party.equals(cleanTypedParty, ignoreCase = true)
+          }
+        }
+        if (typedPartyMatches > 0) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              "$typedPartyMatches manual cashbook entr${if (typedPartyMatches == 1) "y" else "ies"} use \"$cleanTypedParty\"",
+              color = palette.textMuted,
+              fontSize = 11.5.sp,
+              modifier = Modifier.weight(1f),
+            )
+            TextButton(
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Forget Party?",
+                    body = "Clear \"$cleanTypedParty\" from $typedPartyMatches manual cashbook entr${if (typedPartyMatches == 1) "y" else "ies"}? Amounts and notes stay untouched.",
+                    tone = DialogTone.WARNING,
+                    confirmLabel = "Forget Party",
+                    onConfirm = {
+                      ledgerViewModel.forgetParty(cleanTypedParty) {
+                        partyText = ""
+                      }
+                    },
+                  )
+                )
+              },
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("dl_forget_typed_party_btn"),
+            ) {
+              Text("Forget Party", color = palette.red, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            }
+          }
+        }
       }
 
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -553,6 +622,9 @@ fun DailyLedgerScreen(
           "In ${SarimFormat.formatRs(dIn, privacyHidden = state.hideMoneyFigures)} · Out ${SarimFormat.formatRs(dOut, privacyHidden = state.hideMoneyFigures)}"
         },
         emptySubtitle = "No cashbook entries match your search.",
+        itemKey = { it.id },
+        focusRecordKey = focusLedgerId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         onItemClick = { rec -> sheetEntry = rec.item },
       )
     }
@@ -750,9 +822,38 @@ fun DailyLedgerScreen(
         if (entry.note.isNotBlank()) add("Note" to entry.note)
       },
       onDismiss = { sheetEntry = null },
-      extraContent = if (isSheetTabOwned) {
-        { SarimCallout(SarimLinkEngine.tabEntryNotice(entry), palette.cyan) }
-      } else null,
+      extraContent = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (isSheetTabOwned) {
+            SarimCallout(SarimLinkEngine.tabEntryNotice(entry), palette.cyan)
+          }
+          val sheetParty = entry.party.trim()
+          if (!isSheetTabOwned && sheetParty.isNotEmpty() && entry.type != "TRANSFER") {
+            val matchingCount = activeEntries.count {
+              it.sourceType == "MANUAL" && it.type != "TRANSFER" && it.party.equals(sheetParty, ignoreCase = true)
+            }
+            SarimDangerButton(
+              text = "Forget Party \"$sheetParty\" ($matchingCount)",
+              modifier = Modifier.fillMaxWidth(),
+              testTag = "dl_forget_party_btn",
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Forget Party?",
+                    body = "Remove \"$sheetParty\" from ${matchingCount.coerceAtLeast(1)} manual cashbook entr${if (matchingCount == 1) "y" else "ies"}?\n\nYour amounts, dates, and categories remain unchanged.",
+                    tone = DialogTone.WARNING,
+                    confirmLabel = "Forget",
+                    onConfirm = {
+                      sheetEntry = null
+                      ledgerViewModel.forgetParty(sheetParty)
+                    },
+                  )
+                )
+              },
+            )
+          }
+        }
+      },
       extraActionLabel = "Copy Voucher",
       extraActionIcon = Icons.Rounded.ContentCopy,
       onExtraAction = {

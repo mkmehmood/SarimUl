@@ -1,11 +1,18 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.example.util.AppLockGuard
+import com.example.util.PhotoStore
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -65,7 +72,7 @@ fun FullScreenPhotoViewer(
     ) {
       val currentUri = uris.getOrNull(currentIndex).orEmpty()
       AsyncImage(
-        model = currentUri,
+        model = com.example.util.rememberPhotoModel(currentUri).value,
         contentDescription = "Full screen photo",
         contentScale = ContentScale.Fit,
         modifier = Modifier
@@ -179,7 +186,15 @@ fun PhotoAttachmentBar(
 ) {
   val context = LocalContext.current
   val palette = LocalSarimPalette.current
-  var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+  val photoScope = rememberCoroutineScope()
+  var showInAppCamera by remember { mutableStateOf(false) }
+  // Copy every attached photo into a permanent data URL so it stays readable after restart / cache clean.
+  val addPhotos: (List<String>) -> Unit = { raw ->
+    photoScope.launch {
+      val saved = withContext(kotlinx.coroutines.Dispatchers.IO) { raw.map { PhotoStore.toDataUrl(context, it) } }
+      onAddUris(saved)
+    }
+  }
   fun reportError(msg: String) {
     if (onError != null) {
       onError(msg)
@@ -192,18 +207,32 @@ fun PhotoAttachmentBar(
     contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 6),
   ) { uris ->
     if (uris.isNotEmpty()) {
-      onAddUris(uris.map { it.toString() })
+      addPhotos(uris.map { it.toString() })
     }
   }
 
-  val cameraLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.TakePicture(),
-  ) { success ->
-    if (success) {
-      pendingCameraUri?.let { onAddUris(listOf(it.toString())) }
+  val launchGalleryRef = remember { mutableStateOf<() -> Unit>({}) }
+  val cameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    if (granted) {
+      showInAppCamera = true
+    } else {
+      reportError("Camera permission denied. Opening your photo library instead.")
+      launchGalleryRef.value()
     }
   }
 
+  val launchGallery: () -> Unit = {
+    runCatching {
+      AppLockGuard.suppressFor()
+      galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }.onFailure { err ->
+      reportError(err.localizedMessage ?: "Photo picker unavailable on this device")
+    }
+  }
+
+  launchGalleryRef.value = launchGallery
   val scheme = MaterialTheme.colorScheme
   Row(
     modifier = modifier.fillMaxWidth(),
@@ -216,13 +245,13 @@ fun PhotoAttachmentBar(
       modifier = Modifier
         .defaultMinSize(minHeight = 48.dp)
         .clip(RoundedCornerShape(20.dp))
+        .testTag("photo_camera_btn")
         .clickable {
-          runCatching {
-            val uri = createTempCameraUri(context)
-            pendingCameraUri = uri
-            cameraLauncher.launch(uri)
-          }.onFailure { err ->
-            reportError(err.localizedMessage ?: "Camera unavailable on this device")
+          val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+          if (granted) {
+            showInAppCamera = true
+          } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
           }
         },
     ) {
@@ -252,40 +281,31 @@ fun PhotoAttachmentBar(
       }
     }
 
-    Surface(
-      shape = RoundedCornerShape(20.dp),
-      color = scheme.surfaceContainerHigh,
-      modifier = Modifier
-        .defaultMinSize(minHeight = 48.dp)
-        .clip(RoundedCornerShape(20.dp))
-        .clickable {
-          runCatching {
-            galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-          }.onFailure { err ->
-            reportError(err.localizedMessage ?: "Photo picker unavailable on this device")
-          }
-        },
-    ) {
-      Row(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Pick from gallery", tint = palette.cyan, modifier = Modifier.size(18.dp))
-        Text("Gallery", color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
-      }
-    }
-
     if (photoUris.isNotEmpty()) {
       TextButton(
         onClick = { onViewPhotos(0) },
-        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("photo_view_btn"),
       ) {
         Text("View", color = palette.green, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
       }
-      IconButton(onClick = onClearAll, modifier = Modifier.size(48.dp)) {
+      IconButton(onClick = onClearAll, modifier = Modifier.size(48.dp).testTag("photo_clear_btn")) {
         Icon(Icons.Rounded.Close, contentDescription = "Remove attached photos", tint = palette.red, modifier = Modifier.size(18.dp))
       }
     }
+  }
+
+  if (showInAppCamera) {
+    InAppCameraOverlay(
+      onDismiss = { showInAppCamera = false },
+      onCaptured = { uriStr ->
+        showInAppCamera = false
+        addPhotos(listOf(uriStr))
+      },
+      onOpenGallery = launchGallery,
+      onError = { msg ->
+        showInAppCamera = false
+        reportError(msg)
+      },
+    )
   }
 }

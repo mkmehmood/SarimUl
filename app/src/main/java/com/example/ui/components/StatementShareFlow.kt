@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,8 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.util.AppDialogRequest
 import com.example.util.DialogChoice
 import com.example.util.DialogTone
+import com.example.util.ReportSender
+import com.example.util.ReportSpec
 import com.example.util.SarimFormat
 import com.example.util.StatementFormat
 import com.example.util.StatementSender
@@ -84,6 +87,41 @@ fun StatementRangeDialog(
   }
 }
 
+private fun statementChoices() = listOf(
+  DialogChoice(StatementFormat.PDF, "PDF", "Share as a PDF file"),
+  DialogChoice(StatementFormat.PDF_WHATSAPP, "PDF to WhatsApp", "Send the PDF straight to their chat"),
+  DialogChoice(StatementFormat.IMAGE_WHATSAPP, "Image to WhatsApp", "Send it as pictures"),
+  DialogChoice(StatementFormat.WHATSAPP_TEXT, "WhatsApp message", "Send it as text"),
+  DialogChoice(StatementFormat.SMS, "SMS", "Open Messages with the text"),
+)
+
+/** The PDF / PDF to WhatsApp / image / WhatsApp text / SMS picker shared by statements and reports. */
+fun showShareChoices(viewModel: SarimViewModel, title: String, body: String, send: (String) -> String?) {
+  viewModel.showDialog(
+    AppDialogRequest(
+      title = title,
+      body = body,
+      tone = DialogTone.CONFIRM,
+      choices = statementChoices(),
+      onChoiceSelected = { fmt ->
+        send(fmt)?.let { err ->
+          // the choice dialog dismisses itself right after this callback, so show the error on the next frame
+          android.os.Handler(android.os.Looper.getMainLooper()).post {
+            viewModel.showDialog(AppDialogRequest("Share Failed", err, tone = DialogTone.ERROR, cancelLabel = null))
+          }
+        }
+      },
+    )
+  )
+}
+
+/** Share any [ReportSpec] (customer list, unified records, expense history, daily ledger) like a statement. */
+fun shareReportChoices(viewModel: SarimViewModel, context: Context, spec: ReportSpec) {
+  showShareChoices(viewModel, "Share Report", "Choose how you want to share \"${spec.title}\".") { fmt ->
+    ReportSender.send(context, spec, fmt)
+  }
+}
+
 /**
  * The web "Share Statement" flow for a customer, rep customer or payment entity:
  * date range, then PDF / PDF to WhatsApp / image to WhatsApp / WhatsApp text / SMS.
@@ -106,28 +144,9 @@ fun StatementShareFlow(
     onConfirm = { from, to ->
       onDismiss()
       val spec = buildSpec(from, to)
-      viewModel.showDialog(
-        AppDialogRequest(
-          title = "Share Statement",
-          body = "Choose how you want to share $personName's statement.",
-          tone = DialogTone.CONFIRM,
-          choices = listOf(
-            DialogChoice(StatementFormat.PDF, "PDF", "Share as a PDF file"),
-            DialogChoice(StatementFormat.PDF_WHATSAPP, "PDF to WhatsApp", "Send the PDF straight to their chat"),
-            DialogChoice(StatementFormat.IMAGE_WHATSAPP, "Image to WhatsApp", "Send the statement as pictures"),
-            DialogChoice(StatementFormat.WHATSAPP_TEXT, "WhatsApp message", "Send the statement as text"),
-            DialogChoice(StatementFormat.SMS, "SMS", "Open Messages with the statement text"),
-          ),
-          onChoiceSelected = { fmt ->
-            StatementSender.send(context, spec, fmt)?.let { err ->
-              // the choice dialog dismisses itself right after this callback, so show the error on the next frame
-              android.os.Handler(android.os.Looper.getMainLooper()).post {
-                viewModel.showDialog(AppDialogRequest("Share Failed", err, tone = DialogTone.ERROR, cancelLabel = null))
-              }
-            }
-          },
-        )
-      )
+      showShareChoices(viewModel, "Share Statement", "Choose how you want to share $personName's statement.") { fmt ->
+        StatementSender.send(context, spec, fmt)
+      }
     },
   )
 }

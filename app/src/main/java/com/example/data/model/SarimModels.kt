@@ -143,6 +143,48 @@ data class AuditFinding(
   val fixKind: AuditFixKind = AuditFixKind.NUMBER,
   val fieldKey: String = "",
   val deletable: Boolean = false,
+  val code: String = "",
+)
+
+data class IssueGroupCount(
+  val code: String,
+  val label: String,
+  val count: Int,
+  val severity: String, // ERROR or WARNING
+)
+
+data class ProfitWorstSale(
+  val saleId: String,
+  val customerName: String,
+  val storeName: String,
+  val dateEpoch: Long,
+  val quantityKg: Double,
+  val pricePerKg: Double,
+  val costPerKg: Double,
+  val lossAmount: Double,
+  val isRepSale: Boolean = false,
+)
+
+data class ProfitAuditSummary(
+  val totalSalesCount: Int,
+  val netProfit: Double,
+  val salesProfit: Double,
+  val prodValue: Double,
+  val prodCost: Double,
+  val prodProfit: Double,
+  val prodMarginPct: Double,
+  val losingCount: Int,
+  val losingSum: Double,
+  val gainingCount: Int,
+  val gainingSum: Double,
+  val totalQtyKg: Double,
+  val avgPricePerKg: Double,
+  val avgCostPerKg: Double,
+  val monthlyLabels: List<String>,
+  val monthlyProfits: List<Double>,
+  val lossByCustomer: List<RankedBarItem>,
+  val lossByStore: List<RankedBarItem>,
+  val worstSales: List<ProfitWorstSale>,
 )
 
 data class ChartSeries(

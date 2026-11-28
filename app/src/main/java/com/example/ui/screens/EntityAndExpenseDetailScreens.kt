@@ -4,6 +4,13 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
+import com.example.data.model.MainTab
+import com.example.ui.theme.avatarColorForName
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -39,6 +46,16 @@ import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
 
+/** One row of the web entity ledger (`renderEntityOverlayContent` entries). */
+private data class EntityLedgerRow(
+  val tx: PaymentTransactionEntity,
+  val label: String,
+  val sub: String,
+  val isIn: Boolean,
+  val isTransfer: Boolean,
+  val balanceAfter: Double,
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EntityDetailsScreen(
@@ -49,6 +66,7 @@ fun EntityDetailsScreen(
   val palette = LocalSarimPalette.current
   val context = LocalContext.current
   var showStatementFlow by remember { mutableStateOf(false) }
+  var menuExpanded by remember { mutableStateOf(false) }
   val entity = remember(entityId, state.paymentEntities) { state.paymentEntities.firstOrNull { it.id == entityId } }
 
   if (entity == null) {
@@ -56,6 +74,7 @@ fun EntityDetailsScreen(
     return
   }
 
+  val hide = state.hideMoneyFigures
   val txs = remember(state.paymentTransactions, entity) {
     state.paymentTransactions.filter {
       !it.isDeleted && (it.entityId == entity.id || it.entityOrExpenseName.equals(entity.name, ignoreCase = true))
@@ -64,21 +83,78 @@ fun EntityDetailsScreen(
 
   var searchQuery by remember { mutableStateOf("") }
   var filter by remember { mutableStateOf("All") }
+  val focusEntityTxId = state.pendingRecordFocus?.takeIf { it.targetKey == "transactions" }?.recordId
+  LaunchedEffect(focusEntityTxId) {
+    if (focusEntityTxId != null) {
+      searchQuery = ""
+      filter = "All"
+    }
+  }
 
-  val filtered = remember(txs, searchQuery, filter) {
+  // Transfers between entities are stored as a pair of payment documents (web "Transfers" filter).
+  val transferByDocId = remember(state.paymentTransfers) {
+    buildMap {
+      state.paymentTransfers.filter { !it.isDeleted }.forEach { t ->
+        put(t.outDocId, t)
+        put(t.inDocId, t)
+      }
+    }
+  }
+
+  // Web: running "balance after" per entry, walked oldest → newest and anchored on the live balance.
+  val ledgerRows = remember(txs, transferByDocId, entity.currentBalance) {
+    fun delta(t: PaymentTransactionEntity) = when (t.type) {
+      "PAYMENT_IN" -> t.amount
+      "PAYMENT_OUT" -> -t.amount
+      else -> 0.0
+    }
+    val asc = txs.sortedWith(compareBy<PaymentTransactionEntity>({ SarimFormat.startOfDay(it.dateEpoch) }, { it.createdAt }))
+    var run = entity.currentBalance - asc.sumOf { delta(it) }
+    val balAfter = HashMap<String, Double>()
+    asc.forEach { t ->
+      run += delta(t)
+      balAfter[t.id] = run
+    }
+    txs.map { t ->
+      val isIn = t.type == "PAYMENT_IN"
+      val transfer = transferByDocId[t.id]
+      val label = when {
+        transfer != null -> if (isIn) "Transfer in" else "Transfer out"
+        t.type == "EXPENSE" -> "Expense"
+        isIn -> "Payment in"
+        else -> "Payment out"
+      }
+      val peer = transfer?.let { if (isIn) "From: ${it.fromEntityName}" else "To: ${it.toEntityName}" } ?: ""
+      val sub = listOf(peer, t.description).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "No description" }
+      EntityLedgerRow(t, label, sub, isIn, transfer != null, balAfter[t.id] ?: 0.0)
+    }
+  }
+
+  val filtered = remember(ledgerRows, searchQuery, filter) {
     val q = searchQuery.trim().lowercase()
-    txs.filter { tx ->
+    ledgerRows.filter { r ->
       val fOk = when (filter) {
-        "Payment In" -> tx.type == "PAYMENT_IN"
-        "Payment Out" -> tx.type == "PAYMENT_OUT"
+        "Payment In" -> r.isIn && !r.isTransfer
+        "Payment Out" -> !r.isIn && !r.isTransfer
+        "Transfers" -> r.isTransfer
         else -> true
       }
-      val qOk = q.isEmpty() || tx.description.lowercase().contains(q) || tx.amount.toString().contains(q)
+      val qOk = q.isEmpty() ||
+        r.label.lowercase().contains(q) ||
+        r.sub.lowercase().contains(q) ||
+        r.tx.amount.toString().contains(q) ||
+        SarimFormat.dateInput(r.tx.dateEpoch).contains(q) ||
+        SarimFormat.formatDate(r.tx.dateEpoch).lowercase().contains(q)
       fOk && qOk
     }
   }
 
-  val months = remember(filtered) { filtered.map { SarimFormat.formatMonthYear(it.dateEpoch) }.distinct() }
+  val realTxs = txs.filter { it.type != "EXPENSE" }
+  val totalIn = realTxs.filter { it.type == "PAYMENT_IN" }.sumOf { it.amount }
+  val totalOut = realTxs.filter { it.type == "PAYMENT_OUT" }.sumOf { it.amount }
+
+  fun balanceText(b: Double): String =
+    if (b < -0.005) "${SarimFormat.formatRs(-b, false, hide)} REC" else SarimFormat.formatRs(b.coerceAtLeast(0.0), false, hide)
 
   Column(
     modifier = Modifier
@@ -87,98 +163,106 @@ fun EntityDetailsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
+    // Header: avatar + ledger page badge, name, ⋮ menu, phone · wallet (web `#manageEntityTitle`)
     SarimCard {
       Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        InitialsAvatar(entity.name, palette.cyan, sizeDp = 48.dp, badgeText = entity.ledgerPage)
+        InitialsAvatar(entity.name, avatarColorForName(entity.name), sizeDp = 50.dp, badgeText = entity.ledgerPage)
         Column(modifier = Modifier.weight(1f)) {
           Text(entity.name, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-          Text(
-            "${txs.size} transactions · ${entity.phone.ifBlank { entity.wallet.ifBlank { "Payee / Partner" } }}",
-            color = palette.textMuted,
-            fontSize = 12.sp,
-            modifier = Modifier.testTag("manageEntityStats").then(
-              if (entity.phone.isBlank()) Modifier else Modifier.combinedClickable(
-                onClick = {
-                  runCatching {
-                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                  }.onFailure { viewModel.postStatus("No dialer app available") }
-                },
-                onLongClick = {
-                  if (!DirectShare.openWhatsAppChat(context, entity.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
-                },
-              )
-            ),
-          )
-        }
-        IconButton(onClick = { showStatementFlow = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
-          Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Share statement", tint = palette.green)
-        }
-        IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }, modifier = Modifier.minimumInteractiveComponentSize()) {
-          Icon(Icons.Rounded.Edit, contentDescription = "Edit entity", tint = palette.cyan)
-        }
-        IconButton(
-          modifier = Modifier.minimumInteractiveComponentSize(),
-          onClick = {
-            val blockMsg = SarimLinkEngine.getEntityDeleteBlockReason(
-              entity = entity,
-              allTxs = state.paymentTransactions,
-              sales = state.sales,
-              settlements = state.settlements,
-              factoryBatches = state.factoryBatches,
-            )
-            if (blockMsg != null) {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Cannot Delete Entity",
-                  body = blockMsg,
-                  tone = DialogTone.ERROR,
-                  confirmLabel = "OK",
-                  cancelLabel = null,
+          if (entity.phone.isNotBlank() || entity.wallet.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              if (entity.phone.isNotBlank()) {
+                Text(
+                  entity.phone,
+                  color = palette.cyan,
+                  fontSize = 13.sp,
+                  modifier = Modifier.testTag("manageEntityStats").combinedClickable(
+                    onClick = {
+                      runCatching {
+                        com.example.util.AppLockGuard.suppressFor()
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                      }.onFailure { viewModel.postStatus("No dialer app available") }
+                    },
+                    onLongClick = {
+                      if (!DirectShare.openWhatsAppChat(context, entity.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+                    },
+                  ),
                 )
-              )
-            } else {
-              val bal = entity.currentBalance
-              val balNote = if (kotlin.math.abs(bal) > 0.01) {
-                "\nCurrent ${if (bal >= 0) "Payable" else "Receivable"}: ${viewModel.redactMoney(SarimFormat.formatRs(kotlin.math.abs(bal)))}"
-              } else ""
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Entity",
-                  body = "Move ${entity.name} and ${txs.size} linked transaction(s) to Recycle Bin?$balNote",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(
-                      errorTitle = "Delete Failed",
-                      successMessage = "Deleted ${entity.name}",
-                      onSuccess = { viewModel.closeStandalone() },
-                    ) {
-                      viewModel.repository.deletePaymentEntity(entity.id)
-                    }
-                  },
-                )
-              )
+              }
+              if (entity.phone.isNotBlank() && entity.wallet.isNotBlank()) {
+                Text(" · ", color = palette.textMuted, fontSize = 13.sp)
+              }
+              if (entity.wallet.isNotBlank()) {
+                Text(entity.wallet, color = palette.textMuted, fontSize = 13.sp)
+              }
             }
           }
-        ) {
-          Icon(Icons.Rounded.Delete, contentDescription = "Delete entity", tint = palette.red)
+          if (entity.address.isNotBlank()) {
+            Text(entity.address, color = palette.textMuted, fontSize = 11.5.sp)
+          }
+        }
+        Box {
+          IconButton(
+            onClick = { menuExpanded = !menuExpanded },
+            modifier = Modifier.size(48.dp).testTag("entity_options_btn"),
+          ) {
+            Icon(Icons.Rounded.MoreVert, contentDescription = "More actions", tint = palette.textPrimary)
+          }
+          DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            modifier = Modifier
+              .clip(RoundedCornerShape(20.dp))
+              .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+          ) {
+            DropdownMenuItem(
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("entity_menu_edit"),
+              leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(18.dp)) },
+              text = { Text("Edit entity", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
+              onClick = {
+                menuExpanded = false
+                viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id))
+              },
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            DropdownMenuItem(
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("entity_menu_pdf"),
+              leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
+              text = { Text("Share statement", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
+              onClick = {
+                menuExpanded = false
+                showStatementFlow = true
+              },
+            )
+          }
         }
       }
     }
 
-    SarimCard(tonalAccent = palette.purple) {
+    // Summary (web `entitySummaryHtml`): Payable / Receivable / Balance, then Total In · Total Out.
+    run {
       val bal = entity.currentBalance
-      Text("ENTITY BALANCE", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-      Text(
-        SarimFormat.formatRs(kotlin.math.abs(bal), privacyHidden = state.hideMoneyFigures),
-        color = if (bal >= 0) palette.amber else palette.green,
-        style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
-      )
-      Text(
-        if (bal >= 0) "Payable (we owe them)" else "Receivable (they owe us)",
-        color = palette.textMuted,
-        fontSize = 12.sp,
-      )
+      val settled = kotlin.math.abs(bal) < 0.005
+      val label = when {
+        bal > 0.005 -> "PAYABLE"
+        bal < -0.005 -> "RECEIVABLE"
+        else -> "BALANCE"
+      }
+      val tone = if (bal > 0.005) palette.red else palette.green
+      SarimCard(tonalAccent = tone) {
+        Text(label, color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(
+          if (settled) "Settled" else SarimFormat.formatRs(kotlin.math.abs(bal), privacyHidden = hide),
+          color = tone,
+          style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
+        )
+        if (txs.isNotEmpty()) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SarimStatTile("TOTAL IN", SarimFormat.formatRs(totalIn, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.green)
+            SarimStatTile("TOTAL OUT", SarimFormat.formatRs(totalOut, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.red)
+          }
+        }
+      }
     }
 
     SarimTextField(
@@ -187,88 +271,129 @@ fun EntityDetailsScreen(
       label = "",
       placeholder = "Search history...",
       leadingIcon = Icons.Rounded.Search,
+      testTag = "entity-trans-search",
     )
 
     SarimToggleGroup(
-      options = listOf("All", "Payment In", "Payment Out"),
+      options = listOf("All", "Payment In", "Payment Out", "Transfers"),
       selected = filter,
       labelOf = { it },
       onSelect = { filter = it },
       testTagPrefix = "entity_filter",
     )
 
-    SarimCard {
-      Text("History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      AccordionHistoryList(
-        records = filtered.map { tx ->
-          HistoryRecordDisplay(
-            item = tx,
-            dateEpoch = tx.dateEpoch,
-            title = tx.type.replace("_", " "),
-            subtitle = tx.description.ifBlank { entity.name },
-            amountText = SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
-            amountColor = if (tx.type == "PAYMENT_IN") palette.green else palette.red,
-            detailMetrics = listOf(
-              "Type" to tx.type.replace("_", " "),
-              "Date" to SarimFormat.dateInput(tx.dateEpoch),
-              "Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
-              "Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked",
-            ),
-            detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
+    if (txs.isEmpty()) {
+      // Web empty ledger: "No payments yet" + "Record first payment".
+      SarimCard {
+        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("No payments yet", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          Text(
+            "Payments in, payments out and transfers for ${entity.name} will appear here.",
+            color = palette.textMuted,
+            fontSize = 12.5.sp,
+            textAlign = TextAlign.Center,
           )
-        },
-        yearSummary = { "" },
-        monthSummary = { "" },
-        daySummary = { "" },
-        emptySubtitle = "No payment history found for ${entity.name}.",
-        actions = HistoryRecordActions<PaymentTransactionEntity>(
-          deleteLabel = "Delete",
-          onDelete = { tx ->
-            val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
-              tx = tx,
-              allTxs = state.paymentTransactions,
-              sales = state.sales,
-              settlements = state.settlements,
-              factoryBatches = state.factoryBatches,
+          SarimPrimaryButton(
+            text = "Record first payment",
+            onClick = { viewModel.selectTab(MainTab.PAYMENTS) },
+            testTag = "entity_record_first_payment",
+          )
+        }
+      }
+    } else {
+      run {
+        val outLabel = "Out"
+        val inLabel = "In"
+        AccordionHistoryList(
+          records = filtered.map { r ->
+            val tx = r.tx
+            HistoryRecordDisplay(
+              item = tx,
+              dateEpoch = tx.dateEpoch,
+              title = r.label,
+              subtitle = r.sub,
+              amountText = (if (r.isIn) "+ " else "") + SarimFormat.formatRs(tx.amount, false, hide),
+              amountColor = if (r.isIn) palette.green else palette.red,
+              chipText = if (r.isTransfer) "TRANSFER" else balanceText(r.balanceAfter),
+              chipColor = if (r.isTransfer) palette.amber else if (r.balanceAfter > 0.005) palette.red else palette.textMuted,
+              detailMetrics = buildList {
+                add("Type" to r.label)
+                add("Date" to SarimFormat.dateInput(tx.dateEpoch) + if (tx.timeStr.isNotBlank()) " ${tx.timeStr}" else "")
+                add("Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = hide))
+                add("Balance After" to balanceText(r.balanceAfter))
+                add("Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked")
+              },
+              detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
             )
-            if (blockMsg != null) {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Cannot Delete Payment",
-                  body = blockMsg,
-                  tone = DialogTone.ERROR,
-                  confirmLabel = "OK",
-                  cancelLabel = null,
-                )
-              )
-            } else {
-              val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Payment?",
-                  body = "${tx.type.replace("_", " ")} · ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}\nThis will reverse its effect on ${entity.name}'s balance.$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                      viewModel.repository.deletePaymentTransaction(tx.id)
-                    }
-                  },
-                )
-              )
-            }
           },
-          extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
-          onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
-          dayActionLabel = "Invoice",
-          onDayAction = { dayItems ->
-            val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
-            val data = StatementData.entityDayInvoice(entity, txs, dayKey, state.hideMoneyFigures)
-            if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
-            else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
+          yearSummary = { "" },
+          monthSummary = { items ->
+            val out = items.filter { it.item.type == "PAYMENT_OUT" }.sumOf { it.item.amount }
+            val got = items.filter { it.item.type == "PAYMENT_IN" }.sumOf { it.item.amount }
+            "$outLabel ${SarimFormat.formatRs(out, false, hide)} · $inLabel ${SarimFormat.formatRs(got, false, hide)}"
           },
-        ),
-      )
+          daySummary = { "" },
+          emptyTitle = "No matching history",
+          emptySubtitle = "No matching history. Clear the search or pick All.",
+          itemKey = { it.id },
+          focusRecordKey = focusEntityTxId,
+          onFocusConsumed = { viewModel.consumePendingRecordFocus() },
+          actions = HistoryRecordActions<PaymentTransactionEntity>(
+            deleteLabel = "Delete",
+            onDelete = { tx ->
+              val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
+                tx = tx,
+                allTxs = state.paymentTransactions,
+                sales = state.sales,
+                settlements = state.settlements,
+                factoryBatches = state.factoryBatches,
+              )
+              if (blockMsg != null) {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = "Cannot Delete Payment",
+                    body = blockMsg,
+                    tone = DialogTone.ERROR,
+                    confirmLabel = "OK",
+                    cancelLabel = null,
+                  )
+                )
+              } else {
+                val typeLabel = if (tx.type == "PAYMENT_IN") "Payment Received (IN)" else "Payment Made (OUT)"
+                val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\n↩ Linked Daily Ledger entry will also be removed." else ""
+                val payableNote = when {
+                  tx.isPayable && tx.type == "PAYMENT_OUT" -> "\n\n↩ Supplier payable status will be restored — material will revert to pending payment."
+                  tx.isPayable && tx.type == "PAYMENT_IN" -> "\n\n↩ Credit purchase record removed — supplier will be unlinked from the material."
+                  else -> ""
+                }
+                val noteLine = if (tx.description.isNotBlank()) "\nNote: ${tx.description}" else ""
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = if (tx.type == "PAYMENT_IN") "Delete Payment IN" else "Delete Payment OUT",
+                    body = "Delete this $typeLabel?\n\nEntity: ${entity.name}\nAmount: ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}\nDate: ${SarimFormat.dateInput(tx.dateEpoch)}$noteLine$payableNote$ledgerNote\n\nThis cannot be undone.",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                        viewModel.repository.deletePaymentTransaction(tx.id)
+                      }
+                    },
+                  )
+                )
+              }
+            },
+            extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View photo" else null },
+            onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
+            dayActionLabel = "Invoice",
+            onDayAction = { dayItems ->
+              val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
+              val data = StatementData.entityDayInvoice(entity, txs, dayKey, hide)
+              if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+              else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
+            },
+          ),
+        )
+      }
     }
     Spacer(Modifier.height(24.dp))
   }
@@ -279,7 +404,7 @@ fun EntityDetailsScreen(
       personName = entity.name,
       minEpoch = txs.minOfOrNull { it.dateEpoch } ?: 0L,
       maxEpoch = txs.maxOfOrNull { it.dateEpoch } ?: 0L,
-      buildSpec = { from, to -> StatementData.entityStatement(entity, txs, from, to, state.hideMoneyFigures) },
+      buildSpec = { from, to -> StatementData.entityStatement(entity, txs, from, to, hide) },
       onDismiss = { showStatementFlow = false },
     )
   }
@@ -295,6 +420,13 @@ fun ExpenseDetailsScreen(
   val rangeOptions = listOf("Today", "This Week", "This Month", "This Year", "All Time")
   var rangeIndex by remember { mutableIntStateOf(4) }
   var searchQuery by remember { mutableStateOf("") }
+  val focusExpenseTxId = state.pendingRecordFocus?.takeIf { it.targetKey == "expenses" }?.recordId
+  LaunchedEffect(focusExpenseTxId) {
+    if (focusExpenseTxId != null) {
+      searchQuery = ""
+      rangeIndex = 4
+    }
+  }
   var quickAmount by remember { mutableStateOf("") }
   var quickDesc by remember { mutableStateOf("") }
 
@@ -318,6 +450,85 @@ fun ExpenseDetailsScreen(
     }.sortedByDescending { it.dateEpoch }
   }
   val total = remember(txs) { txs.sumOf { it.amount } }
+  // Web `#expenseOverlayStats`: filtered total, record count badge and all-time total badge.
+  val allTimeTotal = remember(state.paymentTransactions, expenseName) {
+    state.paymentTransactions.filter {
+      !it.isDeleted && it.type == "EXPENSE" && it.entityOrExpenseName.equals(expenseName, ignoreCase = true)
+    }.sumOf { it.amount }
+  }
+
+  val context = androidx.compose.ui.platform.LocalContext.current
+
+  var menuExpanded by remember { mutableStateOf(false) }
+  val hide = state.hideMoneyFigures
+
+  fun exportPdf() {
+    if (txs.isEmpty()) {
+      viewModel.postStatus("No records to export in ${rangeOptions[rangeIndex]}")
+      return
+    }
+    val nowMs = System.currentTimeMillis()
+    com.example.ui.components.shareReportChoices(
+      viewModel,
+      context,
+      com.example.util.PdfExporter.expenseCategorySpec(
+        expenseName = expenseName,
+        rangeLabel = rangeOptions[rangeIndex],
+        generatedLabel = "${SarimFormat.formatDate(nowMs)} ${SarimFormat.formatClock(nowMs)}",
+        expenses = txs,
+        privacyHidden = hide,
+      ),
+    )
+  }
+
+  fun confirmDeleteAll() {
+    val allNameTxs = state.paymentTransactions.filter {
+      !it.isDeleted && it.type == "EXPENSE" && it.entityOrExpenseName.equals(expenseName, ignoreCase = true)
+    }
+    val blockMsg = allNameTxs.firstNotNullOfOrNull { tx ->
+      SarimLinkEngine.getPaymentTxDeleteBlockReason(
+        tx = tx,
+        allTxs = state.paymentTransactions,
+        sales = state.sales,
+        settlements = state.settlements,
+        factoryBatches = state.factoryBatches,
+      )
+    }
+    if (blockMsg != null) {
+      viewModel.showDialog(
+        AppDialogRequest(
+          title = "Cannot Delete All Expenses",
+          body = blockMsg,
+          tone = DialogTone.ERROR,
+          confirmLabel = "OK",
+          cancelLabel = null,
+        )
+      )
+    } else {
+      val totalAmt = allNameTxs.sumOf { it.amount }
+      val linkedCount = allNameTxs.count { it.addToLedger && !it.ledgerId.isNullOrBlank() }
+      val minDate = allNameTxs.minOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
+      val maxDate = allNameTxs.maxOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
+      val ledgerLine = if (linkedCount > 0) "\n$linkedCount linked Daily Ledger entry/entries will also be removed." else ""
+      viewModel.showDialog(
+        AppDialogRequest(
+          title = "Delete All Expenses",
+          body = "Delete ${allNameTxs.size} $expenseName expense record(s) totaling ${viewModel.redactMoney(SarimFormat.formatRs(totalAmt))} ($minDate to $maxDate)?$ledgerLine\n\nMoves to Recycle Bin for 90 days.",
+          tone = DialogTone.PERMANENT,
+          confirmLabel = "Delete All",
+          onConfirm = {
+            viewModel.launchSafely(
+              errorTitle = "Delete Failed",
+              successMessage = "Deleted all $expenseName expenses",
+              onSuccess = { viewModel.closeStandalone() },
+            ) {
+              viewModel.repository.deleteAllExpensesByName(expenseName)
+            }
+          },
+        )
+      )
+    }
+  }
 
   Column(
     modifier = Modifier
@@ -326,13 +537,66 @@ fun ExpenseDetailsScreen(
       .padding(horizontal = 16.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
+    // Profile header (same layout as CustomerDetailsScreen / EntityDetailsScreen)
+    SarimCard {
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        InitialsAvatar(expenseName, avatarColorForName(expenseName), sizeDp = 50.dp)
+        Column(modifier = Modifier.weight(1f)) {
+          Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+          Text("Operating expense", color = palette.textMuted, fontSize = 13.sp)
+        }
+        Box {
+          IconButton(
+            onClick = { menuExpanded = !menuExpanded },
+            modifier = Modifier.size(48.dp).testTag("expense_options_btn"),
+          ) {
+            Icon(Icons.Rounded.MoreVert, contentDescription = "More actions", tint = palette.textPrimary)
+          }
+          DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            modifier = Modifier
+              .clip(RoundedCornerShape(20.dp))
+              .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+          ) {
+            DropdownMenuItem(
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("expense_export_pdf_btn"),
+              leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = palette.green, modifier = Modifier.size(18.dp)) },
+              text = { Text("Export PDF", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
+              onClick = {
+                menuExpanded = false
+                exportPdf()
+              },
+            )
+            if (txs.isNotEmpty()) {
+              HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+              DropdownMenuItem(
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("expense_menu_delete_all"),
+                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = palette.red, modifier = Modifier.size(18.dp)) },
+                text = { Text("Delete all expenses", color = palette.red, fontWeight = FontWeight.Medium) },
+                onClick = {
+                  menuExpanded = false
+                  confirmDeleteAll()
+                },
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // Summary card (same typography as the customer balance card): total, record count, all-time total
     SarimCard(tonalAccent = palette.red) {
-      Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+      Text("TOTAL EXPENSES", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
       Text(
-        "Total: ${SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
+        SarimFormat.formatRs(total, privacyHidden = hide),
         color = palette.red,
-        style = TabularNumberStyle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+        style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
       )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SarimStatTile("RECORDS", "${txs.size}", modifier = Modifier.weight(1f), accentColor = palette.amber)
+        SarimStatTile("ALL-TIME", SarimFormat.formatRs(allTimeTotal, privacyHidden = hide), modifier = Modifier.weight(1f), accentColor = palette.red)
+      }
     }
 
     SarimTextField(
@@ -342,6 +606,14 @@ fun ExpenseDetailsScreen(
       placeholder = "Search history...",
       leadingIcon = Icons.Rounded.Search,
       testTag = "expense_history_search",
+    )
+
+    SarimToggleGroup(
+      options = rangeOptions.indices.toList(),
+      selected = rangeIndex,
+      labelOf = { idx -> rangeOptions[idx].replace("This ", "") },
+      onSelect = { rangeIndex = it },
+      testTagPrefix = "expense_range",
     )
 
     // Quick Add Expense
@@ -430,94 +702,48 @@ fun ExpenseDetailsScreen(
       Text("* Adds a new expense record under \"$expenseName\" for today's date.", color = palette.textMuted, fontSize = 11.5.sp)
     }
 
-    SarimCard {
-      Text("History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      AccordionHistoryList(
-        records = txs.map { tx ->
-          HistoryRecordDisplay(
-            item = tx,
-            dateEpoch = tx.dateEpoch,
-            title = expenseName,
-            subtitle = tx.description.ifBlank { "Operating expense" },
-            amountText = SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
-            amountColor = palette.red,
-            detailMetrics = listOf(
-              "Category" to expenseName,
-              "Date" to SarimFormat.dateInput(tx.dateEpoch),
-              "Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
-              "Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked",
-            ),
-            detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
+    AccordionHistoryList(
+      records = txs.map { tx ->
+        HistoryRecordDisplay(
+          item = tx,
+          dateEpoch = tx.dateEpoch,
+          title = tx.description.ifBlank { "No description" },
+          subtitle = SarimFormat.formatDate(tx.dateEpoch) + if (tx.timeStr.isNotBlank()) " · ${tx.timeStr}" else "",
+          amountText = SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
+          amountColor = palette.amber,
+          chipText = "Expense",
+          chipColor = palette.amber,
+          detailMetrics = listOf(
+            "Category" to expenseName,
+            "Date" to SarimFormat.dateInput(tx.dateEpoch),
+            "Amount" to SarimFormat.formatRs(tx.amount, privacyHidden = state.hideMoneyFigures),
+            "Daily Ledger" to if (tx.addToLedger) "Linked" else "Not linked",
+          ),
+          detailNote = if (tx.description.isNotBlank()) "Note: ${tx.description}" else "",
+        )
+      },
+      yearSummary = { "" },
+      monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
+      daySummary = { "" },
+      emptyTitle = "No expense records",
+      emptySubtitle = "No expense records found for selected period",
+      itemKey = { it.id },
+      focusRecordKey = focusExpenseTxId,
+      onFocusConsumed = { viewModel.consumePendingRecordFocus() },
+      actions = HistoryRecordActions<PaymentTransactionEntity>(
+        deleteLabel = "Delete",
+        onDelete = { tx ->
+          val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
+            tx = tx,
+            allTxs = state.paymentTransactions,
+            sales = state.sales,
+            settlements = state.settlements,
+            factoryBatches = state.factoryBatches,
           )
-        },
-        yearSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
-        monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
-        daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
-        emptySubtitle = "No expense records for $expenseName in this range.",
-        actions = HistoryRecordActions<PaymentTransactionEntity>(
-          deleteLabel = "Delete",
-          onDelete = { tx ->
-            val blockMsg = SarimLinkEngine.getPaymentTxDeleteBlockReason(
-              tx = tx,
-              allTxs = state.paymentTransactions,
-              sales = state.sales,
-              settlements = state.settlements,
-              factoryBatches = state.factoryBatches,
-            )
-            if (blockMsg != null) {
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Cannot Delete Expense",
-                  body = blockMsg,
-                  tone = DialogTone.ERROR,
-                  confirmLabel = "OK",
-                  cancelLabel = null,
-                )
-              )
-            } else {
-              val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
-              viewModel.showDialog(
-                AppDialogRequest(
-                  title = "Delete Expense?",
-                  body = "$expenseName · ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
-                  tone = DialogTone.PERMANENT,
-                  confirmLabel = "Delete",
-                  onConfirm = {
-                    viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
-                      viewModel.repository.deletePaymentTransaction(tx.id)
-                    }
-                  },
-                )
-              )
-            }
-          },
-          extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
-          onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
-        ),
-      )
-    }
-
-    if (txs.isNotEmpty()) {
-      SarimDangerButton(
-        text = "Delete All Expenses",
-        modifier = Modifier.fillMaxWidth(),
-        onClick = {
-          val allNameTxs = state.paymentTransactions.filter {
-            !it.isDeleted && it.type == "EXPENSE" && it.entityOrExpenseName.equals(expenseName, ignoreCase = true)
-          }
-          val blockMsg = allNameTxs.firstNotNullOfOrNull { tx ->
-            SarimLinkEngine.getPaymentTxDeleteBlockReason(
-              tx = tx,
-              allTxs = state.paymentTransactions,
-              sales = state.sales,
-              settlements = state.settlements,
-              factoryBatches = state.factoryBatches,
-            )
-          }
           if (blockMsg != null) {
             viewModel.showDialog(
               AppDialogRequest(
-                title = "Cannot Delete All Expenses",
+                title = "Cannot Delete Expense",
                 body = blockMsg,
                 tone = DialogTone.ERROR,
                 confirmLabel = "OK",
@@ -525,32 +751,26 @@ fun ExpenseDetailsScreen(
               )
             )
           } else {
-            val totalAmt = allNameTxs.sumOf { it.amount }
-            val linkedCount = allNameTxs.count { it.addToLedger && !it.ledgerId.isNullOrBlank() }
-            val minDate = allNameTxs.minOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
-            val maxDate = allNameTxs.maxOfOrNull { it.dateEpoch }?.let { SarimFormat.dateInput(it) } ?: "—"
-            val ledgerLine = if (linkedCount > 0) "\n$linkedCount linked Daily Ledger entry/entries will also be removed." else ""
+            val ledgerNote = if (tx.addToLedger && !tx.ledgerId.isNullOrBlank()) "\nLinked Daily Ledger entry will also be removed." else ""
             viewModel.showDialog(
               AppDialogRequest(
-                title = "Delete All Expenses",
-                body = "Delete ${allNameTxs.size} $expenseName expense record(s) totaling ${viewModel.redactMoney(SarimFormat.formatRs(totalAmt))} ($minDate to $maxDate)?$ledgerLine\n\nMoves to Recycle Bin for 90 days.",
+                title = "Delete Expense?",
+                body = "$expenseName · ${viewModel.redactMoney(SarimFormat.formatRs(tx.amount))}$ledgerNote\n\nMoves to Recycle Bin for 90 days.",
                 tone = DialogTone.PERMANENT,
-                confirmLabel = "Delete All",
+                confirmLabel = "Delete",
                 onConfirm = {
-                  viewModel.launchSafely(
-                    errorTitle = "Delete Failed",
-                    successMessage = "Deleted all $expenseName expenses",
-                    onSuccess = { viewModel.closeStandalone() },
-                  ) {
-                    viewModel.repository.deleteAllExpensesByName(expenseName)
+                  viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = "Moved to Recycle Bin") {
+                    viewModel.repository.deletePaymentTransaction(tx.id)
                   }
                 },
               )
             )
           }
         },
-      )
-    }
+        extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "Photo" else null },
+        onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
+      ),
+    )
     Spacer(Modifier.height(24.dp))
   }
 }

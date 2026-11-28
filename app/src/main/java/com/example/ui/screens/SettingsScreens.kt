@@ -336,8 +336,10 @@ fun BackupRestoreScreen(
                   putExtra(Intent.EXTRA_STREAM, uri)
                   addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
+                com.example.util.AppLockGuard.suppressFor()
                 context.startActivity(Intent.createChooser(intent, "Share Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
               } else {
+                com.example.util.AppLockGuard.suppressFor()
                 pendingBackup = bytes
                 createDocLauncher.launch(name)
               }

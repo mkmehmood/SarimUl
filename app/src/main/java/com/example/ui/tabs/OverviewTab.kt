@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -47,6 +49,32 @@ fun OverviewTab(
   val snap = state.snapshot ?: return
   val hideMoney = state.hideMoneyFigures
   var fixingFinding by remember { mutableStateOf<AuditFinding?>(null) }
+  var fixQueue by remember { mutableStateOf<List<AuditFinding>>(emptyList()) }
+  var fixQueueIdx by remember { mutableIntStateOf(0) }
+
+  fun startSingleFix(f: AuditFinding) {
+    fixQueue = emptyList()
+    fixQueueIdx = 0
+    fixingFinding = f
+  }
+
+  fun startQueueFix(queue: List<AuditFinding>) {
+    if (queue.isEmpty()) return
+    fixQueue = queue
+    fixQueueIdx = 0
+    fixingFinding = queue.first()
+  }
+
+  fun advanceOrCloseFix() {
+    if (fixQueue.isNotEmpty() && fixQueueIdx + 1 < fixQueue.size) {
+      fixQueueIdx += 1
+      fixingFinding = fixQueue[fixQueueIdx]
+    } else {
+      fixQueue = emptyList()
+      fixQueueIdx = 0
+      fixingFinding = null
+    }
+  }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -542,6 +570,170 @@ fun OverviewTab(
       }
 
       OverviewPanel.CHECKS -> {
+        val pa = snap.profitAudit
+        if (pa != null) {
+          item {
+            SarimCard {
+              val isLoss = pa.netProfit < 0.0
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Profit check", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                SarimChip(
+                  if (pa.losingCount > 0) "${pa.losingCount} at a loss" else "All profitable",
+                  if (pa.losingCount > 0) palette.red else palette.green,
+                )
+              }
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SarimStatTile(
+                  "Net profit",
+                  SarimFormat.formatRs(pa.netProfit, false, hideMoney),
+                  Modifier.weight(1f),
+                  if (isLoss) palette.red else palette.green,
+                )
+                SarimStatTile(
+                  "Sales profit",
+                  SarimFormat.formatRs(pa.salesProfit, false, hideMoney),
+                  Modifier.weight(1f),
+                  if (pa.salesProfit < 0.0) palette.red else palette.cyan,
+                )
+              }
+              Text(
+                if (pa.totalSalesCount > 0) {
+                  "${pa.losingCount} of ${pa.totalSalesCount} sales at a loss (-${SarimFormat.formatRs(pa.losingSum, false, hideMoney)}) · ${pa.gainingCount} profitable (+${SarimFormat.formatRs(pa.gainingSum, false, hideMoney)})"
+                } else {
+                  "No sales recorded in this range."
+                },
+                color = palette.textMuted,
+                fontSize = 12.sp,
+              )
+              if (pa.totalQtyKg > 0.001) {
+                Text(
+                  "Avg sell ${SarimFormat.formatRs(pa.avgPricePerKg, true, hideMoney)}/kg vs avg cost ${SarimFormat.formatRs(pa.avgCostPerKg, true, hideMoney)}/kg",
+                  color = palette.textMuted,
+                  fontSize = 11.5.sp,
+                )
+              }
+              if (pa.prodValue > 0.01) {
+                Text(
+                  "Production margin ${String.format(java.util.Locale.US, "%.1f%%", pa.prodMarginPct)} · Value ${SarimFormat.formatRs(pa.prodValue, false, hideMoney)} · Cost ${SarimFormat.formatRs(pa.prodCost, false, hideMoney)}",
+                  color = palette.textMuted,
+                  fontSize = 11.5.sp,
+                )
+              }
+            }
+          }
+
+          item {
+            SarimCard {
+              Text("Profit by month", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+              ColumnBarChart(
+                labels = pa.monthlyLabels,
+                values = pa.monthlyProfits,
+                colors = pa.monthlyProfits.map { if (it >= 0.0) palette.green else palette.red },
+              )
+            }
+          }
+
+          if (pa.lossByCustomer.isNotEmpty() || pa.lossByStore.isNotEmpty()) {
+            item {
+              SarimCard {
+                Text("Loss by customer", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                RankedHorizontalBars(
+                  items = pa.lossByCustomer,
+                  barColor = palette.red,
+                  emptyMessage = "No customer losses in this period.",
+                  onItemClick = { item ->
+                    if (item.id.isNotBlank()) viewModel.openStandalone(StandaloneScreen.CustomerDetails(item.id))
+                  },
+                )
+              }
+            }
+            item {
+              SarimCard {
+                Text("Loss by store", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                RankedHorizontalBars(
+                  items = pa.lossByStore,
+                  barColor = palette.amber,
+                  emptyMessage = "No store losses in this period.",
+                )
+              }
+            }
+          }
+
+          if (pa.worstSales.isNotEmpty()) {
+            item {
+              SarimCard {
+                Text("Biggest losses", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Tap a losing sale to adjust its unit price.", color = palette.textMuted, fontSize = 11.5.sp)
+                val scheme = MaterialTheme.colorScheme
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  pa.worstSales.forEachIndexed { idx, w ->
+                    Surface(
+                      shape = RoundedCornerShape(18.dp),
+                      color = lerp(scheme.surfaceContainerHigh, palette.red, 0.10f),
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 52.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .testTag("overview_worst_loss_$idx")
+                        .clickable {
+                          val existing = snap.auditFindings.firstOrNull {
+                            it.recordType == "SALE" && it.recordId == w.saleId &&
+                              (it.code == "sale_loss" || it.code == "sale_negative_value")
+                          }
+                          val targetFinding = existing ?: AuditFinding(
+                            id = "loss_sale_${w.saleId}",
+                            severity = "WARNING",
+                            recordType = "SALE",
+                            recordId = w.saleId,
+                            dateEpoch = w.dateEpoch,
+                            title = "Sale at negative profit · ${w.customerName}",
+                            reasons = listOf("Avg cost ${SarimFormat.formatRs(w.costPerKg)}/kg vs sell ${SarimFormat.formatRs(w.pricePerKg)}/kg"),
+                            note = "Update unit price or review production batch cost.",
+                            suggestedFieldLabel = "Price per kg (Rs)",
+                            currentFieldValue = w.pricePerKg.toString(),
+                            fixKind = AuditFixKind.NUMBER,
+                            fieldKey = "pricePerKg",
+                            code = "sale_loss",
+                          )
+                          startSingleFix(targetFinding)
+                        },
+                    ) {
+                      Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                          Text(w.customerName, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                          Text(
+                            "${w.storeName} · ${SarimFormat.formatKg(w.quantityKg)} · ${SarimFormat.formatDate(w.dateEpoch)}",
+                            color = palette.textMuted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                          )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                          Text(
+                            "-${SarimFormat.formatRs(w.lossAmount, false, hideMoney)}",
+                            color = palette.red,
+                            style = TabularNumberStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                          )
+                          Text(
+                            "${SarimFormat.formatRs(w.pricePerKg, false, hideMoney)} vs ${SarimFormat.formatRs(w.costPerKg, false, hideMoney)}",
+                            color = palette.textMuted,
+                            fontSize = 10.5.sp,
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
         item {
           val errs = snap.auditFindings.count { it.severity == "ERROR" }
           val warns = snap.auditFindings.count { it.severity == "WARNING" }
@@ -557,18 +749,84 @@ fun OverviewTab(
           }
           SarimCard {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-              Text("Profit and data check", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+              Column {
+                Text("Data check", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Scanned ${snap.auditScannedCount} records", color = palette.textMuted, fontSize = 11.5.sp)
+              }
               SarimChip(chipText, chipColor)
             }
-            if (snap.auditFindings.any { it.recordType == "LINK_REPAIR" }) {
-              val linkCount = snap.auditFindings.count { it.recordType == "LINK_REPAIR" }
+
+            if (snap.auditByCheck.isNotEmpty()) {
+              Text("What was found", color = palette.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+              @OptIn(ExperimentalLayoutApi::class)
+              FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                val scheme = MaterialTheme.colorScheme
+                snap.auditByCheck.forEach { group ->
+                  val gColor = if (group.severity == "ERROR") palette.red else palette.amber
+                  val isLinkGroup = group.code == "col_unapplied" || group.code == "link_orphan"
+                  Surface(
+                    shape = RoundedCornerShape(50),
+                    color = lerp(scheme.surfaceContainerHigh, gColor, 0.16f),
+                    modifier = Modifier
+                      .defaultMinSize(minHeight = 48.dp)
+                      .clip(RoundedCornerShape(50))
+                      .testTag("overview_check_chip_${group.code}")
+                      .clickable {
+                        if (isLinkGroup) {
+                          viewModel.showDialog(
+                            AppDialogRequest(
+                              title = "Repair Payment Links",
+                              body = "${group.count} link issue(s) found (${group.label}). Repair all broken collection references now?",
+                              tone = DialogTone.WARNING,
+                              confirmLabel = "Repair All",
+                              onConfirm = { viewModel.repairSaleLinks() },
+                            )
+                          )
+                        } else {
+                          val matching = snap.auditFindings.filter { it.code == group.code }
+                          if (matching.isNotEmpty()) startQueueFix(matching)
+                        }
+                      },
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                      Text(
+                        group.count.toString(),
+                        color = gColor,
+                        style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.ExtraBold),
+                      )
+                      Text(
+                        group.label,
+                        color = palette.textPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                    }
+                  }
+                }
+              }
+            }
+
+            val linkFindings = snap.auditFindings.filter { it.recordType == "LINK_REPAIR" }
+            val nonLinkFindings = snap.auditFindings.filter { it.recordType != "LINK_REPAIR" }
+
+            if (linkFindings.isNotEmpty()) {
               SarimSecondaryButton(
-                text = "Repair All Sale / Collection Links",
+                text = "Repair All Sale / Collection Links (${linkFindings.size})",
                 onClick = {
                   viewModel.showDialog(
                     AppDialogRequest(
                       title = "Repair Payment Links",
-                      body = "$linkCount record(s) will be repaired. Collection cash that no sale confirms is applied to that customer's unpaid sales, newest first, and payments from deleted collections are taken off the sales. Records that are already correct are not touched.",
+                      body = "${linkFindings.size} record(s) will be repaired. Collection cash that no sale confirms is applied to that customer's unpaid sales, newest first, and payments from deleted collections are taken off the sales. Records that are already correct are not touched.",
                       tone = DialogTone.WARNING,
                       confirmLabel = "Repair All",
                       onConfirm = { viewModel.repairSaleLinks() },
@@ -579,6 +837,16 @@ fun OverviewTab(
                 testTag = "ov_repair_links_btn",
               )
             }
+
+            if (nonLinkFindings.isNotEmpty()) {
+              SarimPrimaryButton(
+                text = "Fix one by one (${nonLinkFindings.size})",
+                onClick = { startQueueFix(nonLinkFindings) },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "overview_fix_all_btn",
+              )
+            }
+
             if (snap.auditFindings.isEmpty()) {
               SarimCallout("No negative-margin sales, zero-weight batches, or stock anomalies detected.", palette.green)
             } else {
@@ -593,7 +861,8 @@ fun OverviewTab(
                       .fillMaxWidth()
                       .defaultMinSize(minHeight = 56.dp)
                       .clip(RoundedCornerShape(22.dp))
-                      .clickable { fixingFinding = finding },
+                      .testTag("overview_finding_${finding.id}")
+                      .clickable { startSingleFix(finding) },
                   ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -668,7 +937,12 @@ fun OverviewTab(
                       SarimChip("Net ${SarimFormat.formatRs(row.netProfit, false, hideMoney)}", netTone)
                     }
                     Text(
-                      "Prod ${SarimFormat.formatKg(row.producedKg)} · Sales ${SarimFormat.formatRs(row.salesValue, false, hideMoney)} · In ${SarimFormat.formatRs(row.cashIn, false, hideMoney)} · Out ${SarimFormat.formatRs(row.cashOut, false, hideMoney)}",
+                      "Prod ${SarimFormat.formatKg(row.producedKg)} · Sales ${SarimFormat.formatRs(row.salesValue, false, hideMoney)} · Sales Profit ${SarimFormat.formatRs(row.salesProfit, false, hideMoney)}",
+                      color = palette.textMuted,
+                      fontSize = 11.5.sp,
+                    )
+                    Text(
+                      "Expenses ${SarimFormat.formatRs(row.expenses, false, hideMoney)} · Cash In ${SarimFormat.formatRs(row.cashIn, false, hideMoney)} · Cash Out ${SarimFormat.formatRs(row.cashOut, false, hideMoney)}",
                       color = palette.textMuted,
                       fontSize = 11.5.sp,
                     )
@@ -695,12 +969,23 @@ fun OverviewTab(
     val activeEntities = remember(state.paymentEntities) { state.paymentEntities.filter { !it.isDeleted } }
     val payTypes = remember { listOf("EXPENSE", "PAYMENT_IN", "PAYMENT_OUT") }
 
-    Dialog(onDismissRequest = { fixingFinding = null }) {
+    Dialog(onDismissRequest = { fixingFinding = null; fixQueue = emptyList(); fixQueueIdx = 0 }) {
       Surface(
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
       ) {
         Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          if (fixQueue.isNotEmpty()) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+              SarimChip("Queue ${fixQueueIdx + 1} / ${fixQueue.size}", palette.cyan)
+              TextButton(
+                onClick = { advanceOrCloseFix() },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("audit_skip_btn"),
+              ) {
+                Text("Skip", color = palette.textMuted, fontWeight = FontWeight.SemiBold)
+              }
+            }
+          }
           Text(finding.title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
           Text("${finding.recordType} · ${SarimFormat.formatDate(finding.dateEpoch)}", color = palette.textMuted, fontSize = 11.5.sp)
           finding.reasons.forEach { Text("• $it", color = palette.amber, fontSize = 12.5.sp) }
@@ -794,7 +1079,7 @@ fun OverviewTab(
               text = "Delete Record Instead",
               onClick = {
                 viewModel.deleteAuditFindingRecord(finding)
-                fixingFinding = null
+                advanceOrCloseFix()
               },
               modifier = Modifier.fillMaxWidth(),
               testTag = "audit_delete_record_btn",
@@ -802,7 +1087,12 @@ fun OverviewTab(
           }
 
           Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SarimSecondaryButton("Cancel", onClick = { fixingFinding = null }, modifier = Modifier.weight(1f), testTag = "audit_cancel_btn")
+            SarimSecondaryButton(
+              text = if (fixQueue.isNotEmpty()) "Stop" else "Cancel",
+              onClick = { fixingFinding = null; fixQueue = emptyList(); fixQueueIdx = 0 },
+              modifier = Modifier.weight(1f),
+              testTag = "audit_cancel_btn",
+            )
             val primaryText = when (finding.fixKind) {
               com.example.data.model.AuditFixKind.LINK_REPAIR -> "Repair Link"
               com.example.data.model.AuditFixKind.DELETE_ONLY -> "Delete Duplicate"
@@ -818,7 +1108,7 @@ fun OverviewTab(
                   else -> inputVal
                 }
                 viewModel.applyAuditFix(finding, submittedVal)
-                fixingFinding = null
+                advanceOrCloseFix()
               },
               modifier = Modifier.weight(1f),
               testTag = "audit_save_fix_btn",

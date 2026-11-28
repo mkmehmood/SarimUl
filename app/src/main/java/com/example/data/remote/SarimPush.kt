@@ -31,10 +31,72 @@ import java.util.UUID
 object SarimPush {
   const val PUSH_WORKER_URL = "https://sarim-push.3mahmoodkhan.workers.dev/notify"
   const val CHANNEL_ID = "approvals"
+  const val CHANNEL_ACTIVITY_ID = "activity"
   const val COL_FCM_TOKENS = "fcm_tokens"
   const val EXTRA_TYPE = "type"
   const val EXTRA_PENDING_ID = "pendingId"
+  const val EXTRA_TARGET = "target"
+  const val EXTRA_TARGET_KEY = "targetKey"
+  const val EXTRA_TARGET_ID = "targetId"
   const val TYPE_APPROVAL = "approval"
+  const val TYPE_ACTIVITY = "activity"
+
+  val TARGET_KEYS = setOf(
+    "sales",
+    "rep",
+    "transactions",
+    "expenses",
+    "production",
+    "factory",
+    "clients",
+    "calculator",
+    "daily_ledger",
+  )
+
+  val VIEW_IDS = setOf(
+    "approvals",
+    "recycle-bin",
+    "store-manager",
+    "formula-store",
+    "daily-ledger",
+    "tab:sales",
+    "tab:rep",
+    "tab:prod",
+    "tab:calc",
+    "tab:factory",
+    "tab:payments",
+  )
+
+  data class NotificationTarget(
+    val k: String,
+    val id: String,
+  )
+
+  fun parseTarget(
+    raw: String?,
+    explicitKey: String? = null,
+    explicitId: String? = null,
+  ): NotificationTarget? {
+    val kStr: String
+    val idStr: String
+    if (!explicitKey.isNullOrBlank() && !explicitId.isNullOrBlank()) {
+      kStr = explicitKey.trim()
+      idStr = explicitId.trim()
+    } else if (!raw.isNullOrBlank()) {
+      val trimmed = raw.trim()
+      val idx = trimmed.indexOf(':')
+      if (idx < 1) return null
+      kStr = trimmed.substring(0, idx).trim()
+      idStr = trimmed.substring(idx + 1).trim()
+    } else {
+      return null
+    }
+    if (idStr.isEmpty()) return null
+    if (kStr == "view") {
+      return if (idStr in VIEW_IDS) NotificationTarget(kStr, idStr) else null
+    }
+    return if (kStr in TARGET_KEYS) NotificationTarget(kStr, idStr) else null
+  }
 
   private const val PREFS = "sarim_push"
   private const val KEY_DEVICE_ID = "sarimPushDeviceId"
@@ -75,11 +137,16 @@ object SarimPush {
   fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-    val channel = NotificationChannel(CHANNEL_ID, "Approvals", NotificationManager.IMPORTANCE_HIGH).apply {
+    val approvalsChannel = NotificationChannel(CHANNEL_ID, "Approvals", NotificationManager.IMPORTANCE_HIGH).apply {
       description = "Items waiting for your approval"
       lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
     }
-    mgr.createNotificationChannel(channel)
+    val activityChannel = NotificationChannel(CHANNEL_ACTIVITY_ID, "Team Activity", NotificationManager.IMPORTANCE_DEFAULT).apply {
+      description = "New entries and updates from teammates"
+      lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
+    }
+    mgr.createNotificationChannel(approvalsChannel)
+    mgr.createNotificationChannel(activityChannel)
   }
 
   fun canPostNotifications(context: Context): Boolean =
@@ -90,7 +157,19 @@ object SarimPush {
     Intent(context, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
       putExtra(EXTRA_TYPE, TYPE_APPROVAL)
+      putExtra(EXTRA_TARGET, "view:approvals")
       if (!pendingId.isNullOrBlank()) putExtra(EXTRA_PENDING_ID, pendingId)
+    }
+
+  fun activityTapIntent(context: Context, target: NotificationTarget?): Intent =
+    Intent(context, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      putExtra(EXTRA_TYPE, TYPE_ACTIVITY)
+      if (target != null) {
+        putExtra(EXTRA_TARGET, "${target.k}:${target.id}")
+        putExtra(EXTRA_TARGET_KEY, target.k)
+        putExtra(EXTRA_TARGET_ID, target.id)
+      }
     }
 
   /** Shown when a push arrives while the app is open (the system shows it itself otherwise). */
@@ -113,6 +192,37 @@ object SarimPush {
       .setContentIntent(pi)
       .build()
     runCatching { NotificationManagerCompat.from(context).notify("approval-${pendingId ?: "x"}", 1, n) }
+  }
+
+  fun showRemoteActivityNotification(
+    context: Context,
+    title: String,
+    body: String,
+    target: NotificationTarget?,
+    tag: String = "",
+  ) {
+    if (!canPostNotifications(context)) return
+    ensureChannel(context)
+    val notifTag = tag.ifBlank { "activity-${target?.k ?: "gen"}-${target?.id ?: System.currentTimeMillis()}" }
+    val reqCode = notifTag.hashCode()
+    val pi = PendingIntent.getActivity(
+      context,
+      reqCode,
+      activityTapIntent(context, target),
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    val n = NotificationCompat.Builder(context, CHANNEL_ACTIVITY_ID)
+      .setSmallIcon(R.drawable.ic_launcher_monochrome)
+      .setContentTitle(title)
+      .setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+      .setAutoCancel(true)
+      .setContentIntent(pi)
+      .build()
+    val notifyId = (reqCode and 0x7FFFFFFF).coerceAtLeast(100)
+    runCatching { NotificationManagerCompat.from(context).notify(notifTag, notifyId, n) }
   }
 
   private suspend fun postNotify(idToken: String, pendingId: String): Int = withContext(Dispatchers.IO) {

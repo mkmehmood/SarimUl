@@ -19,6 +19,8 @@ import com.example.ui.navigation.SarimRoute
 import com.example.util.AppDialogRequest
 import com.example.util.DialogCheckbox
 import com.example.util.DialogTone
+import com.example.util.DirectShare
+import com.example.util.ShareOutcome
 import com.example.util.FeedbackManager
 import com.example.util.LocationHelper
 import com.example.util.SarimFormat
@@ -50,6 +52,9 @@ data class SarimUiState(
   val prefs: UserPrefs = UserPrefs(),
   val isOnline: Boolean = true,
   val pendingSyncCount: Int = 0,
+  /** Uploads that exhausted their retries (web "Failed Uploads"). */
+  val failedOps: List<FailedOp> = emptyList(),
+  val showFailedOps: Boolean = false,
   val isSyncing: Boolean = false,
   val isAccountActionBusy: Boolean = false,
   val overviewRange: OverviewRange = OverviewRange.M6,
@@ -83,6 +88,7 @@ data class SarimUiState(
   val activeDialog: AppDialogRequest? = null,
   val photoViewerUris: List<String> = emptyList(),
   val photoViewerIndex: Int = 0,
+  val pendingRecordFocus: PendingRecordFocus? = null,
   val statusMessage: String? = null,
   val lastUpdatedMillis: Long = System.currentTimeMillis(),
 ) {
@@ -117,6 +123,13 @@ data class ShareAfterSave(val kind: com.example.util.StatementKind, val name: St
 
 /** A day invoice waiting for its save to land before it is rendered and shared (web `shareInvoiceAfterSave`). */
 data class PendingInvoiceShare(val kind: com.example.util.StatementKind, val name: String, val dayKey: String, val requestedAt: Long)
+
+/** Target record to expand, scroll to, and open after tapping a notification (web `notify-open.js`). */
+data class PendingRecordFocus(
+  val targetKey: String,
+  val recordId: String,
+  val nonce: Long = System.currentTimeMillis(),
+)
 
 class SarimViewModel(application: Application) : AndroidViewModel(application) {
   private val db = SarimDatabase.getInstance(application)
@@ -272,7 +285,12 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     override fun onDailyLedgerDoc(doc: Map<String, Any>) {
       viewModelScope.launch {
         runCatching {
+          val beforeIds = syncRepo.captureActivityBaseline()
           syncRepo.applyRemoteDailyLedgerDoc(doc)
+          syncRepo.dispatchRemoteAlerts(
+            beforeKnownIds = beforeIds,
+            afterRecords = mapOf("daily_ledger" to RemoteActivityPlanner.mapLedgerDocEntries(doc)),
+          )
           repository.syncLedgerFromTabs()
           refreshDiagnostics()
         }
@@ -312,7 +330,16 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     ) {
       viewModelScope.launch {
         runCatching {
+          val beforeIds = if (collection in RemoteActivityPlanner.REMOTE_KEYS) {
+            syncRepo.captureActivityBaseline()
+          } else emptyMap()
           syncRepo.applyRemoteRecordSnapshot(collection, docs, removedIds, isFullPull = false)
+          if (beforeIds.isNotEmpty()) {
+            syncRepo.dispatchRemoteAlerts(
+              beforeKnownIds = beforeIds,
+              afterRecords = mapOf(collection to docs.map { (id, m) -> RemoteActivityPlanner.mapRawDoc(collection, id, m) }),
+            )
+          }
           if (collection in setOf(
               SarimWebSchema.COL_SALES,
               SarimWebSchema.COL_REP,
@@ -333,6 +360,19 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         if (reads > 0) uuidRegistry.trackFirestoreRead(reads)
         if (writes > 0) uuidRegistry.trackFirestoreWrite(writes)
+      }
+    }
+    syncRepo.onRemoteActivityAlerts = { alerts ->
+      val ctx = getApplication<Application>()
+      alerts.forEach { alert ->
+        val target = SarimPush.parseTarget(null, alert.targetKey, alert.targetId)
+        SarimPush.showRemoteActivityNotification(
+          context = ctx,
+          title = alert.title,
+          body = alert.body,
+          target = target,
+          tag = alert.tag,
+        )
       }
     }
     viewModelScope.launch {
@@ -470,6 +510,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           storedReps = storedReps,
         )
         val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
+        val failedNow = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
         val bin = runCatching { syncRepo.getRecycleBinItems() }.getOrDefault(emptyList())
         val structSnap = runCatching { syncRepo.getDatabaseStructureSnapshot(lastLiveDiagnostics) }.getOrNull()
         val struct = structSnap?.collections ?: runCatching { syncRepo.getDatabaseStructure(lastLiveDiagnostics) }.getOrDefault(emptyList())
@@ -478,6 +519,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           prefs = prefs,
           isOnline = isNetworkConnected(),
           pendingSyncCount = pending,
+          failedOps = failedNow,
           salesReps = snap.repsList,
           operatingCategories = opCats,
           fieldExpenseCategories = fieldCats,
@@ -518,6 +560,8 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
               prefs = bundle.prefs,
               isOnline = bundle.isOnline,
               pendingSyncCount = bundle.pendingSyncCount,
+              failedOps = bundle.failedOps,
+              showFailedOps = current.showFailedOps && bundle.failedOps.isNotEmpty(),
               salesReps = bundle.salesReps,
               operatingCategories = bundle.operatingCategories,
               fieldExpenseCategories = bundle.fieldExpenseCategories,
@@ -864,13 +908,149 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { runCatching { syncManager.registerPushToken() } }
   }
 
+  private var wasBackgroundedForLock: Boolean = false
+
   /** Tap on an approval alert (web `openApprovalFromPush`). */
   fun openApprovalsFromPush() {
     if (_uiState.value.isAdmin) openStandalone(StandaloneScreen.Approvals)
   }
 
+  fun consumePendingRecordFocus() {
+    _uiState.update { it.copy(pendingRecordFocus = null) }
+  }
+
+  fun openNotificationTarget(target: SarimPush.NotificationTarget) {
+    val st = _uiState.value
+    when (target.k) {
+      "view" -> when (target.id) {
+        "approvals" -> openApprovalsFromPush()
+        "recycle-bin" -> openStandalone(StandaloneScreen.RecycleBin)
+        "store-manager" -> openStandalone(StandaloneScreen.StoreManager)
+        "formula-store" -> openStandalone(StandaloneScreen.FormulaStore)
+        "daily-ledger" -> openRoute(SarimRoute.Ledger)
+        "tab:sales" -> selectTab(MainTab.SALES)
+        "tab:rep" -> selectTab(MainTab.REP_SALES)
+        "tab:prod" -> selectTab(MainTab.PRODUCTION)
+        "tab:calc" -> selectTab(MainTab.CALCULATOR)
+        "tab:factory" -> selectTab(MainTab.FACTORY)
+        "tab:payments" -> selectTab(MainTab.PAYMENTS)
+      }
+      "sales", "rep" -> {
+        val isRep = target.k == "rep"
+        val sale = st.sales.firstOrNull { !it.isDeleted && it.id == target.id }
+        if (sale != null && sale.customerId.isNotBlank()) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus(target.k, target.id)) }
+          openStandalone(
+            if (isRep) StandaloneScreen.RepCustomerDetails(sale.customerId)
+            else StandaloneScreen.CustomerDetails(sale.customerId)
+          )
+        } else {
+          selectTab(if (isRep) MainTab.REP_SALES else MainTab.SALES)
+          if (sale == null) postStatus("That transaction is not available locally yet.")
+        }
+      }
+      "clients" -> {
+        val client = st.customers.firstOrNull { !it.isDeleted && it.isRepCustomer && it.id == target.id }
+        if (client != null) {
+          openStandalone(StandaloneScreen.RepCustomerDetails(client.id))
+        } else {
+          selectTab(MainTab.REP_SALES)
+        }
+      }
+      "transactions" -> {
+        val transfer = st.paymentTransfers.firstOrNull {
+          !it.isDeleted && (it.id == target.id || it.outDocId == target.id || it.inDocId == target.id)
+        }
+        if (transfer != null) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("payment_transfer", transfer.id)) }
+          openStandalone(StandaloneScreen.PaymentTransfer)
+        } else {
+          val tx = st.paymentTransactions.firstOrNull { !it.isDeleted && it.id == target.id }
+          if (tx != null && !tx.entityId.isNullOrBlank()) {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("transactions", tx.id)) }
+            openStandalone(StandaloneScreen.EntityDetails(tx.entityId))
+          } else {
+            selectTab(MainTab.PAYMENTS)
+          }
+        }
+      }
+      "expenses" -> {
+        val tx = st.paymentTransactions.firstOrNull {
+          !it.isDeleted && (it.expenseId == target.id || it.id == target.id)
+        }
+        if (tx != null) {
+          if (tx.type == "EXPENSE") {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("expenses", tx.id)) }
+            openStandalone(StandaloneScreen.ExpenseDetails(tx.entityOrExpenseName))
+          } else if (!tx.entityId.isNullOrBlank()) {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("transactions", tx.id)) }
+            openStandalone(StandaloneScreen.EntityDetails(tx.entityId))
+          } else {
+            selectTab(MainTab.PAYMENTS)
+          }
+        } else {
+          selectTab(MainTab.PAYMENTS)
+        }
+      }
+      "production" -> {
+        val transfer = st.stockTransfers.firstOrNull {
+          !it.isDeleted && (it.id == target.id || it.outDocId == target.id || it.inDocId == target.id)
+        }
+        if (transfer != null) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("stock_transfer", transfer.id)) }
+          openStandalone(StandaloneScreen.StockTransfer)
+        } else {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("production", target.id)) }
+          selectTab(MainTab.PRODUCTION)
+        }
+      }
+      "factory" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("factory", target.id)) }
+        selectTab(MainTab.FACTORY)
+      }
+      "calculator" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("calculator", target.id)) }
+        selectTab(MainTab.CALCULATOR)
+      }
+      "daily_ledger" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("daily_ledger", target.id)) }
+        openRoute(SarimRoute.Ledger)
+      }
+    }
+  }
+
   fun unlockFingerprint() {
+    wasBackgroundedForLock = false
     _uiState.update { it.copy(isLockedByFingerprint = false) }
+  }
+
+  fun onAppBackgrounded(isChangingConfigurations: Boolean) {
+    if (isChangingConfigurations) return
+    val st = _uiState.value
+    if (!st.isAuthenticated || st.showSplash) return
+    if (com.example.util.AppLockGuard.isSuppressed()) {
+      wasBackgroundedForLock = false
+      return
+    }
+    if (st.prefs.fingerprintLockEnabled) {
+      wasBackgroundedForLock = true
+    }
+  }
+
+  fun onAppResumed() {
+    checkDateRollover()
+    val suppressed = com.example.util.AppLockGuard.consumeIfSuppressed()
+    val st = _uiState.value
+    if (suppressed) {
+      wasBackgroundedForLock = false
+      return
+    }
+    if (wasBackgroundedForLock) {
+      wasBackgroundedForLock = false
+      if (st.prefs.fingerprintLockEnabled && st.isAuthenticated && !st.showSplash && !st.isLockedByFingerprint) {
+        _uiState.update { it.copy(isLockedByFingerprint = true) }
+      }
+    }
   }
 
   fun logout(onPerformFirebaseSignOut: () -> Unit) {
@@ -1555,8 +1735,11 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     _uiState.update { it.copy(statusMessage = null) }
   }
 
+  private val ownActionNotifier by lazy { com.example.util.OwnActionNotifier(getApplication()) }
+
   fun postStatus(msg: String) {
     _uiState.update { it.copy(statusMessage = msg) }
+    runCatching { ownActionNotifier.notifyStatus(msg) }
   }
 
   fun launchSafely(
@@ -1575,6 +1758,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
+        runCatching { ownActionNotifier.notifyFailure(errorTitle, e.localizedMessage.orEmpty()) }
         showDialog(
           AppDialogRequest(
             title = errorTitle,
@@ -1668,6 +1852,63 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun openFailedOps() {
+    if (_uiState.value.failedOps.isNotEmpty()) _uiState.update { it.copy(showFailedOps = true) }
+  }
+
+  fun closeFailedOps() {
+    _uiState.update { it.copy(showFailedOps = false) }
+  }
+
+  private fun reloadFailedOps(message: String? = null) {
+    viewModelScope.launch {
+      val failed = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
+      val pending = runCatching { syncRepo.countPendingSync() }.getOrDefault(0)
+      _uiState.update { it.copy(failedOps = failed, pendingSyncCount = pending, showFailedOps = it.showFailedOps && failed.isNotEmpty()) }
+      message?.let { postStatus(it) }
+    }
+  }
+
+  fun retryFailedOp(id: String) {
+    viewModelScope.launch {
+      val ok = runCatching { syncRepo.failedOps.retry(id) }.getOrDefault(false)
+      reloadFailedOps(if (ok) "Operation re-queued for upload" else null)
+      if (ok && isNetworkConnected() && !_uiState.value.isOfflineSession) syncDataNow()
+    }
+  }
+
+  fun dismissFailedOp(id: String) {
+    viewModelScope.launch {
+      runCatching { syncRepo.failedOps.dismiss(id) }
+      reloadFailedOps("Failed operation dismissed")
+    }
+  }
+
+  fun dismissAllFailedOps() {
+    viewModelScope.launch {
+      runCatching { syncRepo.failedOps.dismissAll() }
+      reloadFailedOps("All failed operations cleared")
+    }
+  }
+
+  /** Writes the failed operations as JSON and opens the share sheet (web "Export JSON"). */
+  fun exportFailedOps(context: android.content.Context) {
+    viewModelScope.launch {
+      val json = runCatching { syncRepo.failedOps.exportJson() }.getOrNull()
+      if (json.isNullOrBlank() || json == "[]") {
+        postStatus("No failed operations to export")
+        return@launch
+      }
+      val file = runCatching {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        java.io.File(dir, "failed_operations_${SarimFormat.dateInput(System.currentTimeMillis())}.json").also { it.writeText(json) }
+      }.getOrNull()
+      if (file == null || DirectShare.shareViaChooser(context, file, "application/json", "Failed operations") == ShareOutcome.FAILED) {
+        postStatus("Unable to export failed operations")
+      }
+    }
+  }
+
   fun refreshDiagnostics(includeCloudDiagnostics: Boolean = false) {
     viewModelScope.launch {
       try {
@@ -1680,12 +1921,15 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
           }
         }
         val pending = syncRepo.countPendingSync()
+        val failed = runCatching { syncRepo.failedOps.list() }.getOrDefault(emptyList())
         val bin = syncRepo.getRecycleBinItems()
         val structSnap = syncRepo.getDatabaseStructureSnapshot(lastLiveDiagnostics)
         _uiState.update {
           it.copy(
             isOnline = isNetworkConnected(),
             pendingSyncCount = pending,
+            failedOps = failed,
+            showFailedOps = it.showFailedOps && failed.isNotEmpty(),
             recycleBinItems = bin,
             dbStructure = structSnap.collections,
             dbStructureSnapshot = structSnap,
@@ -1877,6 +2121,7 @@ private data class ObservedDataBundle(
   val prefs: UserPrefs,
   val isOnline: Boolean,
   val pendingSyncCount: Int,
+  val failedOps: List<FailedOp>,
   val salesReps: List<String>,
   val operatingCategories: List<String>,
   val fieldExpenseCategories: List<String>,

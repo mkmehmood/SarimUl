@@ -91,6 +91,14 @@ fun CustomerDetailsScreen(
 
   var searchQuery by remember { mutableStateOf("") }
   var filterChip by remember { mutableStateOf("All") }
+  val focusKeyExpected = if (customer.isRepCustomer) "rep" else "sales"
+  val focusRecordId = state.pendingRecordFocus?.takeIf { it.targetKey == focusKeyExpected }?.recordId
+  LaunchedEffect(focusRecordId) {
+    if (focusRecordId != null) {
+      searchQuery = ""
+      filterChip = "All"
+    }
+  }
   var menuExpanded by remember { mutableStateOf(false) }
   var showMoneyOutDialog by remember { mutableStateOf(false) }
 
@@ -136,6 +144,7 @@ fun CustomerDetailsScreen(
               modifier = Modifier.combinedClickable(
                 onClick = {
                   runCatching {
+                    com.example.util.AppLockGuard.suppressFor()
                     context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${customer.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                   }.onFailure {
                     viewModel.postStatus("No dialer app available")
@@ -316,6 +325,9 @@ fun CustomerDetailsScreen(
       daySummary = { "" },
       emptyTitle = "No customer history",
       emptySubtitle = "Transactions with ${customer.name} appear here.",
+      itemKey = { it.id },
+      focusRecordKey = focusRecordId,
+      onFocusConsumed = { viewModel.consumePendingRecordFocus() },
       actions = HistoryRecordActions(
         onDelete = { tx ->
           val blockMsg = if (YearCloseMerge.isMergedId(tx.id)) {
@@ -582,7 +594,7 @@ fun CustomerEditScreen(
           contentAlignment = Alignment.Center,
         ) {
           if (!curPhoto.isNullOrBlank()) {
-            AsyncImage(model = curPhoto, contentDescription = "Customer photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(model = com.example.util.rememberPhotoModel(curPhoto.orEmpty(), 1024).value, contentDescription = "Customer photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
           } else {
             Text(SarimFormat.initials(name.ifBlank { "CU" }), color = palette.green, fontWeight = FontWeight.Bold, fontSize = 20.sp)
           }

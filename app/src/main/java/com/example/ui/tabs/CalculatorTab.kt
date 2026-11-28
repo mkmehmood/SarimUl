@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import com.example.ui.components.tripleTapTo
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.lerp
@@ -30,6 +31,7 @@ import com.example.data.backup.YearCloseMerge
 import com.example.data.local.CalculatorSettlementEntity
 import com.example.data.local.JsonCodecs
 import com.example.data.model.LineItemBreakdown
+import com.example.data.model.MainTab
 import com.example.data.model.TimePeriod
 import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
@@ -101,6 +103,18 @@ fun CalculatorTab(
   var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
   var editingSettlementId by remember { mutableStateOf<String?>(null) }
   var sheetSettlement by remember { mutableStateOf<CalculatorSettlementEntity?>(null) }
+  val focusCalcId = state.pendingRecordFocus?.takeIf { it.targetKey == "calculator" }?.recordId
+  LaunchedEffect(focusCalcId, state.settlements) {
+    if (focusCalcId != null) {
+      val match = state.settlements.firstOrNull { !it.isDeleted && it.id == focusCalcId }
+      if (match != null) {
+        selectedRepOption = match.repName
+        calcHistSearch = ""
+      } else {
+        viewModel.consumePendingRecordFocus()
+      }
+    }
+  }
 
   LaunchedEffect(state.currentLocalDayEpoch) {
     val newDay = state.currentLocalDayEpoch
@@ -363,7 +377,7 @@ fun CalculatorTab(
             )
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimTextField(SarimFormat.formatQty(totalSoldKg), {}, "Total Sold Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f))
+            SarimTextField(SarimFormat.formatQty(totalSoldKg), {}, "Total Sold Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f).tripleTapTo { viewModel.selectTab(MainTab.SALES) })
             SarimTextField(SarimFormat.formatQty(returnedKg), {}, "Returned Qty", readOnly = true, suffixText = "kg", modifier = Modifier.weight(1f))
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -415,7 +429,7 @@ fun CalculatorTab(
             SarimCallout("Expired Stock — Added to CHORA Raw Material (${SarimFormat.formatKg(expiredKg)})", palette.amber)
           }
 
-          SarimTextField(creditSalesQtyText, { creditSalesQtyText = it }, "Credit Sales Qty", suffixText = "kg", keyboardType = KeyboardType.Decimal, testTag = "calc_credit_qty")
+          SarimTextField(creditSalesQtyText, { creditSalesQtyText = it }, "Credit Sales Qty", suffixText = "kg", keyboardType = KeyboardType.Decimal, testTag = "calc_credit_qty", modifier = Modifier.tripleTapTo { viewModel.selectTab(MainTab.REP_SALES) })
 
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           Text("Commission", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -435,7 +449,7 @@ fun CalculatorTab(
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
           Text("Collections & Handover Cash", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimTextField(recoveredCreditText, { recoveredCreditText = it }, "Recovered Credit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f), testTag = "calc_recovered_credit")
+            SarimTextField(recoveredCreditText, { recoveredCreditText = it }, "Recovered Credit", prefixText = "Rs", keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f).tripleTapTo { viewModel.selectTab(MainTab.REP_SALES) }, testTag = "calc_recovered_credit")
             SarimTextField(
               value = if (fieldExpTotal > 0) SarimFormat.formatRs(fieldExpTotal, false) else "",
               onValueChange = {},
@@ -792,6 +806,9 @@ fun CalculatorTab(
           yearSummary = { "" },
           monthSummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
           daySummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
+          itemKey = { it.id },
+          focusRecordKey = focusCalcId,
+          onFocusConsumed = { viewModel.consumePendingRecordFocus() },
           onItemClick = { rec -> sheetSettlement = rec.item },
         )
       }

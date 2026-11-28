@@ -678,6 +678,7 @@ fun CloseFinancialYearScreen(
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                   }
+                  com.example.util.AppLockGuard.suppressFor()
                   context.startActivity(Intent.createChooser(intent, "Share Year-End Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
               },

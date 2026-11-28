@@ -387,6 +387,11 @@ object StatementShare {
     "Account Statement" to "اکاؤنٹ اسٹیٹمنٹ",
     "Customer Account Statement" to "کسٹمر اکاؤنٹ اسٹیٹمنٹ",
     "Rep Customer Account Statement" to "ریپ کسٹمر اکاؤنٹ اسٹیٹمنٹ",
+    "All Customers — Complete List" to "تمام کسٹمرز — مکمل فہرست",
+    "Payment Entities — Balances & Ledger" to "ادائیگی اینٹٹیز — بقایا اور لیجر",
+    "Expenses — Transaction Records" to "اخراجات — لین دین کا ریکارڈ",
+    "Daily Ledger Cashbook" to "روزانہ لیجر کیش بک",
+    "Production Record" to "پروڈکشن ریکارڈ",
   )
   private val URDU_RANGES = mapOf(
     "All Time" to "تمام وقت", "Today" to "آج", "This Week" to "اس ہفتے", "This Month" to "اس مہینے", "This Year" to "اس سال",
@@ -492,6 +497,58 @@ object StatementShare {
       add("")
       add("------------------------")
       add("*کل بقایا: ${bidiValue(closingV)}*")
+    }
+    return out.joinToString("\n")
+  }
+
+  /** The same RTL Urdu WhatsApp / SMS layout as [buildStatementText], for any [ReportSpec] table. */
+  fun buildReportText(
+    title: String,
+    name: String,
+    phone: String,
+    dateLabel: String,
+    rangeLabel: String,
+    columns: List<PdfColumn>,
+    rows: List<List<String>>,
+    summary: List<Pair<String, String>>,
+    closingLabel: String,
+    closingValue: String,
+  ): String {
+    val out = mutableListOf<String>()
+    fun add(t: String) = out.add(if (t.isEmpty()) "" else RLM + t)
+    add("*گل اینڈ زبیر نسوار ڈیلرز*")
+    add("${URDU_TITLES[title] ?: title} \u00b7 ${urduValue(URDU_RANGES[rangeLabel] ?: rangeLabel)}")
+    add("")
+    add("نام: ${bidiValue(name)}")
+    if (phone.isNotBlank() && phone != "N/A") add("فون: ${ltr(phone)}")
+    add("تاریخ اجراء: ${urduValue(dateLabel)}")
+    if (rows.isNotEmpty()) {
+      add("")
+      add("------------------------")
+      rows.forEach { r ->
+        val parts = mutableListOf<String>()
+        r.forEachIndexed { i, raw ->
+          if (i == 0) return@forEachIndexed
+          val v = urduValue(raw.replace('\n', ' '))
+          if (v.isEmpty() || v == "-" || v == "\u2014") return@forEachIndexed
+          val col = columns.getOrNull(i)
+          val label = col?.let { URDU_HEADS[it.title.lowercase()] ?: it.title }
+          parts += if (col != null && col.right && label != null) "$label: ${bidiValue(v)}" else bidiValue(v)
+        }
+        val lead = urduValue(r.firstOrNull()?.replace('\n', ' ') ?: "")
+        add("\u2022 ${bidiValue(lead)}${if (parts.isNotEmpty()) " | " + parts.joinToString(" | ") else ""}")
+      }
+    }
+    val sums = summary.filter { it.second.isNotBlank() }
+    if (sums.isNotEmpty()) {
+      add("")
+      add("------------------------")
+      sums.forEach { (k, v) -> add("${urduValue(k)}: ${bidiValue(urduValue(v))}") }
+    }
+    if (closingLabel.isNotBlank() || closingValue.isNotBlank()) {
+      add("")
+      add("------------------------")
+      add("*${urduValue(closingLabel)}${if (closingValue.isNotBlank()) ": ${bidiValue(urduValue(closingValue))}" else ""}*")
     }
     return out.joinToString("\n")
   }

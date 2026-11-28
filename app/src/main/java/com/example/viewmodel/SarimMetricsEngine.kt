@@ -4,7 +4,10 @@ import com.example.data.local.*
 import com.example.data.model.AuditFinding
 import com.example.data.model.AuditFixKind
 import com.example.data.model.ChartSeries
+import com.example.data.model.IssueGroupCount
 import com.example.data.model.MonthlySummaryRow
+import com.example.data.model.ProfitAuditSummary
+import com.example.data.model.ProfitWorstSale
 import com.example.data.model.RankedBarItem
 import com.example.data.model.RecentActivityItem
 import com.example.data.model.TimePeriod
@@ -79,6 +82,9 @@ data class BusinessSnapshot(
   val factoryOutputByMonth: List<Double> = emptyList(),
   val factoryOutputByFormula: List<RankedBarItem> = emptyList(),
   val formulaLinkedMap: Map<String, Boolean> = emptyMap(),
+  val profitAudit: ProfitAuditSummary? = null,
+  val auditByCheck: List<IssueGroupCount> = emptyList(),
+  val auditScannedCount: Int = 0,
 )
 
 object SarimMetricsEngine {
@@ -568,6 +574,7 @@ object SarimMetricsEngine {
           currentFieldValue = dupId,
           fixKind = AuditFixKind.NEW_ID,
           fieldKey = "newId",
+          code = "duplicate_id",
         )
       }
     }
@@ -600,6 +607,7 @@ object SarimMetricsEngine {
             fixKind = AuditFixKind.DELETE_ONLY,
             fieldKey = "duplicate",
             deletable = true,
+            code = "duplicate_record",
           )
         }
       }
@@ -619,6 +627,7 @@ object SarimMetricsEngine {
         currentFieldValue = SarimFormat.startOfDay(now).toString(),
         fixKind = AuditFixKind.DATE,
         fieldKey = "dateEpoch",
+        code = "future_date",
       )
     }
     activeProd.filter { !it.isReturn && SarimFormat.isFutureDate(it.dateEpoch) }.forEach { p ->
@@ -635,6 +644,7 @@ object SarimMetricsEngine {
         currentFieldValue = SarimFormat.startOfDay(now).toString(),
         fixKind = AuditFixKind.DATE,
         fieldKey = "dateEpoch",
+        code = "future_date",
       )
     }
     activePay.filter { SarimFormat.isFutureDate(it.dateEpoch) }.forEach { tx ->
@@ -651,6 +661,7 @@ object SarimMetricsEngine {
         currentFieldValue = SarimFormat.startOfDay(now).toString(),
         fixKind = AuditFixKind.DATE,
         fieldKey = "dateEpoch",
+        code = "future_date",
       )
     }
 
@@ -671,6 +682,7 @@ object SarimMetricsEngine {
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "quantityKg",
           deletable = true,
+          code = "sale_bad_qty",
         )
       } else if (s.totalValue < 0.0) {
         findings += AuditFinding(
@@ -686,6 +698,7 @@ object SarimMetricsEngine {
           currentFieldValue = s.pricePerKg.coerceAtLeast(0.0).toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "pricePerKg",
+          code = "sale_negative_value",
         )
       } else {
         val expectedVal = com.example.data.repository.SarimLinkEngine.round2(s.quantityKg * s.pricePerKg)
@@ -704,6 +717,7 @@ object SarimMetricsEngine {
             currentFieldValue = s.pricePerKg.toString(),
             fixKind = AuditFixKind.NUMBER,
             fieldKey = "pricePerKg",
+            code = "sale_total_mismatch",
           )
         } else if (abs(s.profit - expectedProfit) > 1.0) {
           findings += AuditFinding(
@@ -719,6 +733,7 @@ object SarimMetricsEngine {
             currentFieldValue = expectedProfit.toString(),
             fixKind = AuditFixKind.NUMBER,
             fieldKey = "profit",
+            code = "sale_profit_mismatch",
           )
         }
       }
@@ -736,6 +751,7 @@ object SarimMetricsEngine {
           currentFieldValue = s.totalCost.toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "totalCost",
+          code = "sale_no_cost",
         )
       }
       if (s.profit < -0.01) {
@@ -752,6 +768,7 @@ object SarimMetricsEngine {
           currentFieldValue = s.pricePerKg.toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "pricePerKg",
+          code = "sale_loss",
         )
       }
       if (s.paymentType.equals("CASH", ignoreCase = true) && !s.creditReceived) {
@@ -768,6 +785,7 @@ object SarimMetricsEngine {
           currentFieldValue = "true",
           fixKind = AuditFixKind.BOOLEAN,
           fieldKey = "creditReceived",
+          code = "sale_cash_unreceived",
         )
       }
     }
@@ -787,6 +805,7 @@ object SarimMetricsEngine {
         currentFieldValue = "1",
         fixKind = AuditFixKind.LINK_REPAIR,
         fieldKey = "linkRepair",
+        code = linkIssue.kind,
       )
     }
 
@@ -807,6 +826,7 @@ object SarimMetricsEngine {
           currentFieldValue = "PAYMENT_OUT",
           fixKind = AuditFixKind.SELECT_PAY_TYPE,
           fieldKey = "type",
+          code = "txn_bad_type",
         )
       }
       if (tx.type == "EXPENSE" && tx.amount <= 0.0) {
@@ -824,6 +844,7 @@ object SarimMetricsEngine {
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "amount",
           deletable = true,
+          code = "exp_bad_amount",
         )
       } else if (tx.amount < 0.0) {
         findings += AuditFinding(
@@ -839,6 +860,7 @@ object SarimMetricsEngine {
           currentFieldValue = "0",
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "amount",
+          code = "txn_bad_amount",
         )
       }
       if (tx.type != "EXPENSE" && !tx.entityId.isNullOrBlank() && tx.entityId !in activeEntityIds) {
@@ -855,6 +877,7 @@ object SarimMetricsEngine {
           currentFieldValue = entities.firstOrNull { !it.isDeleted && !it.isExpenseEntity }?.id.orEmpty(),
           fixKind = AuditFixKind.SELECT_ENTITY,
           fieldKey = "entityId",
+          code = "txn_missing_entity",
         )
       }
     }
@@ -876,6 +899,7 @@ object SarimMetricsEngine {
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "grossWeightKg",
           deletable = true,
+          code = "prod_bad_net",
         )
       }
       if (p.formulaName.isBlank()) {
@@ -892,6 +916,7 @@ object SarimMetricsEngine {
           currentFieldValue = formulas.firstOrNull { !it.isDeleted }?.id.orEmpty(),
           fixKind = AuditFixKind.SELECT_FORMULA,
           fieldKey = "formulaId",
+          code = "prod_no_formula",
         )
       }
       val expectedProdProfit = com.example.data.repository.SarimLinkEngine.round2(p.totalValue - p.totalFormulaCost)
@@ -909,6 +934,7 @@ object SarimMetricsEngine {
           currentFieldValue = expectedProdProfit.toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "totalProfit",
+          code = "prod_profit_mismatch",
         )
       }
     }
@@ -929,6 +955,7 @@ object SarimMetricsEngine {
           currentFieldValue = "0",
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "stockKg",
+          code = "inv_negative_qty",
         )
       } else if (m.stockKg <= 0.001) {
         findings += AuditFinding(
@@ -944,6 +971,7 @@ object SarimMetricsEngine {
           currentFieldValue = m.stockKg.toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "stockKg",
+          code = "oos_mat",
         )
       }
       if (m.stockKg > 0.001 && m.avgCostPerKg <= 0.0) {
@@ -960,11 +988,105 @@ object SarimMetricsEngine {
           currentFieldValue = m.avgCostPerKg.toString(),
           fixKind = AuditFixKind.NUMBER,
           fieldKey = "avgCostPerKg",
+          code = "inv_bad_cost",
         )
       }
     }
 
     findings.sortWith(compareBy<AuditFinding> { if (it.severity == "ERROR") 0 else 1 }.thenByDescending { it.dateEpoch })
+
+    val auditByCheck = findings
+      .filter { it.code.isNotBlank() }
+      .groupBy { it.code }
+      .map { (code, group) ->
+        IssueGroupCount(
+          code = code,
+          label = issueCodeLabel(code),
+          count = group.size,
+          severity = if (group.any { it.severity == "ERROR" }) "ERROR" else "WARNING",
+        )
+      }
+      .sortedWith(compareBy<IssueGroupCount> { if (it.severity == "ERROR") 0 else 1 }.thenByDescending { it.count })
+
+    val auditScannedCount = activeSales.size + activeProd.size + activePay.size + activeMats.size
+
+    // Profit / Loss breakdown for Checks panel (port of modules/overview-data.js & profitCheckHtml)
+    val auditRangeSales = rangeSales.filter { !isLedgerSaleRow(it) }
+    val losingSales = auditRangeSales.filter { it.profit < -0.01 }
+    val gainingSales = auditRangeSales.filter { it.profit >= -0.01 }
+    val auditTotalQtyKg = auditRangeSales.sumOf { it.quantityKg }
+    val auditTotalVal = auditRangeSales.sumOf { it.totalValue }
+    val auditTotalCost = auditRangeSales.sumOf { it.totalCost }
+    val auditAvgPricePerKg = if (auditTotalQtyKg > 0.001) auditTotalVal / auditTotalQtyKg else 0.0
+    val auditAvgCostPerKg = if (auditTotalQtyKg > 0.001) auditTotalCost / auditTotalQtyKg else 0.0
+    val prodValueTotal = rangeProd.sumOf { it.totalValue }
+    val prodCostTotal = rangeProd.sumOf { it.totalFormulaCost }
+    val prodProfitTotal = rangeProd.sumOf { it.totalProfit }
+    val prodMarginPct = if (prodValueTotal > 0.01) (prodProfitTotal / prodValueTotal) * 100.0 else 0.0
+
+    val lossByCustomer = losingSales
+      .groupBy { it.customerName.ifBlank { "Customer" } }
+      .map { (custName, list) ->
+        RankedBarItem(
+          label = custName,
+          value = list.sumOf { abs(it.profit) },
+          secondaryText = "${SarimFormat.formatRs(list.sumOf { abs(it.profit) })} · ${list.size} sale${if (list.size == 1) "" else "s"}",
+          id = list.firstOrNull { it.customerId.isNotBlank() }?.customerId.orEmpty(),
+        )
+      }
+      .sortedByDescending { it.value }
+      .take(6)
+
+    val lossByStore = losingSales
+      .groupBy { it.storeName.ifBlank { it.storeKey } }
+      .map { (storeLabel, list) ->
+        RankedBarItem(
+          label = storeLabel,
+          value = list.sumOf { abs(it.profit) },
+          secondaryText = "${SarimFormat.formatRs(list.sumOf { abs(it.profit) })} · ${list.size} sale${if (list.size == 1) "" else "s"}",
+        )
+      }
+      .sortedByDescending { it.value }
+      .take(6)
+
+    val worstSales = losingSales
+      .sortedBy { it.profit }
+      .take(8)
+      .map { s ->
+        ProfitWorstSale(
+          saleId = s.id,
+          customerName = s.customerName.ifBlank { "Customer" },
+          storeName = s.storeName.ifBlank { s.storeKey },
+          dateEpoch = s.dateEpoch,
+          quantityKg = s.quantityKg,
+          pricePerKg = s.pricePerKg,
+          costPerKg = if (s.quantityKg > 0.001) s.totalCost / s.quantityKg else 0.0,
+          lossAmount = abs(s.profit),
+          isRepSale = s.isRepSale,
+        )
+      }
+
+    val profitAudit = ProfitAuditSummary(
+      totalSalesCount = auditRangeSales.size,
+      netProfit = netProfit,
+      salesProfit = salesProfit,
+      prodValue = prodValueTotal,
+      prodCost = prodCostTotal,
+      prodProfit = prodProfitTotal,
+      prodMarginPct = prodMarginPct,
+      losingCount = losingSales.size,
+      losingSum = losingSales.sumOf { abs(it.profit) },
+      gainingCount = gainingSales.size,
+      gainingSum = gainingSales.sumOf { it.profit.coerceAtLeast(0.0) },
+      totalQtyKg = auditTotalQtyKg,
+      avgPricePerKg = auditAvgPricePerKg,
+      avgCostPerKg = auditAvgCostPerKg,
+      monthlyLabels = monthLabels,
+      monthlyProfits = monthlyRows.map { it.netProfit },
+      lossByCustomer = lossByCustomer,
+      lossByStore = lossByStore,
+      worstSales = worstSales,
+    )
 
     val ledgerInAll = ledger.filter { it.type == "IN" }.sumOf { it.amount }
     val ledgerOutAll = ledger.filter { it.type == "OUT" }.sumOf { it.amount }
@@ -1021,6 +1143,35 @@ object SarimMetricsEngine {
       factoryOutputByMonth = factoryOutputByMonth,
       factoryOutputByFormula = factoryOutputByFormula,
       formulaLinkedMap = formulaLinkedMap,
+      profitAudit = profitAudit,
+      auditByCheck = auditByCheck,
+      auditScannedCount = auditScannedCount,
     )
+  }
+
+  private fun issueCodeLabel(code: String): String = when (code) {
+    "duplicate_id" -> "Same record ID used twice"
+    "duplicate_record" -> "Identical sales entered twice"
+    "future_date" -> "Dated in the future"
+    "sale_bad_qty" -> "Sale with <= 0 kg"
+    "sale_negative_value" -> "Sale with negative value"
+    "sale_total_mismatch" -> "Sale total != qty × price"
+    "sale_profit_mismatch" -> "Sale profit mismatch"
+    "sale_no_cost" -> "Sale with Rs 0 cost"
+    "sale_loss" -> "Sale at a loss"
+    "sale_cash_unreceived" -> "Cash sale not marked received"
+    "col_unapplied" -> "Collection cash unapplied"
+    "link_orphan" -> "Deleted collection link"
+    "txn_bad_type" -> "Invalid payment type"
+    "exp_bad_amount" -> "Expense with <= 0 amount"
+    "txn_bad_amount" -> "Negative payment amount"
+    "txn_missing_entity" -> "Orphan payment account"
+    "prod_bad_net" -> "Production <= 0 kg"
+    "prod_no_formula" -> "Production without formula"
+    "prod_profit_mismatch" -> "Production profit mismatch"
+    "inv_negative_qty" -> "Material negative stock"
+    "oos_mat" -> "Out-of-stock material"
+    "inv_bad_cost" -> "Material with Rs 0 cost"
+    else -> code.replace('_', ' ')
   }
 }

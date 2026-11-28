@@ -313,7 +313,7 @@ fun FormulaEditScreen(
         SarimTextField(
           value = costFactorText,
           onValueChange = { costFactorText = it },
-          label = "Cost Adjustment (X)",
+          label = "Cost Adjustment for Sales & Calc (X)",
           placeholder = "1",
           keyboardType = KeyboardType.Decimal,
           modifier = Modifier.weight(1f),
