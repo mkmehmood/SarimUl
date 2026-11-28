@@ -55,8 +55,8 @@ fun EntityDetailsScreen(
     val q = searchQuery.trim().lowercase()
     txs.filter { tx ->
       val fOk = when (filter) {
-        "In" -> tx.type == "PAYMENT_IN"
-        "Out" -> tx.type == "PAYMENT_OUT"
+        "Payment In" -> tx.type == "PAYMENT_IN"
+        "Payment Out" -> tx.type == "PAYMENT_OUT"
         else -> true
       }
       val qOk = q.isEmpty() || tx.description.lowercase().contains(q) || tx.amount.toString().contains(q)
@@ -114,12 +114,13 @@ fun EntityDetailsScreen(
       leadingIcon = Icons.Rounded.Search,
     )
 
-    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      listOf("All", "In", "Out").forEach { chip ->
-        FilterChip(selected = filter == chip, onClick = { filter = chip }, label = { Text(chip) })
-      }
-      months.forEach { m -> SarimChip(m, palette.cyan) }
-    }
+    SarimToggleGroup(
+      options = listOf("All", "Payment In", "Payment Out"),
+      selected = filter,
+      labelOf = { it },
+      onSelect = { filter = it },
+      testTagPrefix = "entity_filter",
+    )
 
     SarimCard {
       Text("History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -218,33 +219,28 @@ fun ExpenseDetailsScreen(
       testTag = "expense_history_search",
     )
 
-    SarimPopoverSelector(
-      label = "Range",
-      selectedText = rangeOptions[rangeIndex],
-      options = rangeOptions,
-      onSelect = { idx, _ -> rangeIndex = idx },
-      testTag = "expenseOverlayRange",
-    )
-
     // Quick Add Expense
     SarimCard {
       Text("Quick Add Expense", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-      SarimTextField(
-        value = quickAmount,
-        onValueChange = { quickAmount = it },
-        label = "Amount (Rs)",
-        placeholder = "0.00",
-        prefixText = "Rs",
-        keyboardType = KeyboardType.Decimal,
-        testTag = "quickExpenseAmount",
-      )
-      SarimTextField(
-        value = quickDesc,
-        onValueChange = { quickDesc = it },
-        label = "Description (optional)",
-        placeholder = "e.g. Monthly rent",
-        testTag = "quickExpenseDescription",
-      )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+        SarimTextField(
+          value = quickAmount,
+          onValueChange = { quickAmount = it },
+          label = "Amount (Rs)",
+          placeholder = "0.00",
+          keyboardType = KeyboardType.Decimal,
+          modifier = Modifier.weight(1f),
+          testTag = "quickExpenseAmount",
+        )
+        SarimTextField(
+          value = quickDesc,
+          onValueChange = { quickDesc = it },
+          label = "Description (optional)",
+          placeholder = "e.g. Monthly rent",
+          modifier = Modifier.weight(1.5f),
+          testTag = "quickExpenseDescription",
+        )
+      }
       SarimPrimaryButton(
         text = "Save Expense",
         onClick = {
@@ -280,7 +276,7 @@ viewModel.launchSafely(
 }
         },
       )
-      Text("Adds a new expense record under $expenseName for today's date.", color = palette.textMuted, fontSize = 11.5.sp)
+      Text("* Adds a new expense record under \"$expenseName\" for today's date.", color = palette.textMuted, fontSize = 11.5.sp)
     }
 
     SarimCard {

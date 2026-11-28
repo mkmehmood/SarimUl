@@ -350,7 +350,7 @@ fun DailyLedgerScreen(
             "OUT" -> "Add Cash Out"
             else -> "Record Transfer"
           },
-          modifier = Modifier.weight(1.4f),
+          modifier = Modifier.weight(1f),
           testTag = "dl_save_btn",
           onClick = {
             if (SarimFormat.isFutureDate(dateEpoch)) {

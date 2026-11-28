@@ -213,7 +213,7 @@ fun AddEntityScreen(
       }
       SarimPrimaryButton(
         text = "Save Entity",
-        modifier = Modifier.weight(1.6f),
+        modifier = Modifier.weight(1f),
         testTag = "save_entity_btn",
         onClick = {
           val clean = name.trim()
@@ -350,7 +350,7 @@ fun AddRawMaterialScreen(
           }
           SarimPrimaryButton(
             text = "Save Purchase",
-            modifier = Modifier.weight(1.4f),
+            modifier = Modifier.weight(1f),
             testTag = "save_purchase_btn",
             onClick = {
               val cleanMat = materialName.trim()

@@ -783,7 +783,7 @@ fun CustomerEditScreen(
       }
       SarimPrimaryButton(
         text = if (existing == null) "Add Customer" else "Update Customer",
-        modifier = Modifier.weight(1.5f),
+        modifier = Modifier.weight(1f),
         onClick = {
           val clean = name.trim()
           if (clean.isEmpty() || clean.length > 80) {

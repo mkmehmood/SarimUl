@@ -432,7 +432,7 @@ fun FormulaEditScreen(
       }
       SarimPrimaryButton(
         text = "Save Formula",
-        modifier = Modifier.weight(1.4f),
+        modifier = Modifier.weight(1f),
         testTag = "save_formula_btn",
         onClick = {
           val clean = name.trim()

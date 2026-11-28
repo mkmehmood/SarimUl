@@ -511,7 +511,7 @@ fun CloseFinancialYearScreen(
           SarimDangerButton(
             text = "Close Financial Year",
             enabled = password.isNotBlank(),
-            modifier = Modifier.weight(1.4f),
+            modifier = Modifier.weight(1f),
             onClick = {
               viewModel.showDialog(
                 AppDialogRequest(

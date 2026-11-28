@@ -8,6 +8,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -137,7 +139,7 @@ fun SarimRecordTable(
   }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun RecordRowView(row: RecordRow) {
   val palette = LocalSarimPalette.current
@@ -157,7 +159,7 @@ private fun RecordRowView(row: RecordRow) {
           row.name,
           color = palette.textPrimary,
           fontWeight = FontWeight.Bold,
-          fontSize = 14.sp,
+          fontSize = 15.sp,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
           modifier = Modifier.weight(1f, fill = false),
@@ -168,29 +170,33 @@ private fun RecordRowView(row: RecordRow) {
           }
         }
       }
-      row.details.forEach { d ->
-        val mod = if (d.onClick != null || d.onLongClick != null) {
-          Modifier.combinedClickable(onClick = { d.onClick?.invoke() }, onLongClick = d.onLongClick)
-        } else {
-          Modifier
+      if (row.details.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          row.details.forEach { d ->
+            val mod = if (d.onClick != null || d.onLongClick != null) {
+              Modifier.combinedClickable(onClick = { d.onClick?.invoke() }, onLongClick = d.onLongClick)
+            } else {
+              Modifier
+            }
+            Text(
+              d.text,
+              color = d.color ?: palette.textMuted,
+              fontSize = 12.sp,
+              fontWeight = if (d.bold) FontWeight.Bold else FontWeight.Normal,
+              textDecoration = if (d.underline) TextDecoration.Underline else null,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = mod,
+            )
+          }
         }
-        Text(
-          d.text,
-          color = d.color ?: palette.textMuted,
-          fontSize = 12.sp,
-          fontWeight = if (d.bold) FontWeight.Bold else FontWeight.Normal,
-          textDecoration = if (d.underline) TextDecoration.Underline else null,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          modifier = mod,
-        )
       }
     }
     Column(horizontalAlignment = Alignment.End) {
       Text(
         row.amount,
         color = row.amountColor ?: palette.textPrimary,
-        style = TabularNumberStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold),
+        style = TabularNumberStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold),
         maxLines = 1,
       )
       row.tag?.let {

@@ -215,7 +215,7 @@ fun BatchingScreen(
         }
         SarimPrimaryButton(
           text = "Save Calculation",
-          modifier = Modifier.weight(1.4f),
+          modifier = Modifier.weight(1f),
           onClick = {
             if (selectedFormula == null || batchScaleUnits <= 0.0) {
               viewModel.showDialog(AppDialogRequest("Incomplete Calculation", "Choose a formula and enter a valid positive value.", tone = DialogTone.ERROR, cancelLabel = null))
@@ -520,7 +520,7 @@ fun BatchCorrectionScreen(
         }
         SarimPrimaryButton(
           text = "Save Correction",
-          modifier = Modifier.weight(1.4f),
+          modifier = Modifier.weight(1f),
           onClick = {
             if (selectedFormula == null || remainingVal <= 0.0) {
               viewModel.showDialog(AppDialogRequest("Incomplete Correction", "Choose a formula and enter positive batch quantities.", tone = DialogTone.ERROR, cancelLabel = null))
