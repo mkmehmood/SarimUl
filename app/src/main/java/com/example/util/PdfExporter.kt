@@ -300,6 +300,14 @@ object PdfExporter {
     }
   }
 
+  /** Web `exportUnifiedData` file-name period key: today / week / month / all. */
+  internal fun unifiedPeriodKey(periodLabel: String): String = when (periodLabel) {
+    "Today" -> "today"
+    "This Week" -> "week"
+    "This Month" -> "month"
+    else -> "all"
+  }
+
   fun createUnifiedEntitiesPdf(
     context: Context,
     periodLabel: String,
@@ -311,12 +319,6 @@ object PdfExporter {
   ): Result<File> {
     val supplierIds = materials.filter { !it.isDeleted && !it.supplierId.isNullOrBlank() }
       .mapNotNull { it.supplierId }.toSet()
-    val supplierBalances = mutableMapOf<String, Double>()
-    materials.filter { !it.isDeleted && !it.supplierId.isNullOrBlank() && it.paymentStatus == "pending" && it.pendingSupplierAmount > 0.0 }
-      .forEach { mat ->
-        val sid = mat.supplierId ?: return@forEach
-        supplierBalances[sid] = (supplierBalances[sid] ?: 0.0) + mat.pendingSupplierAmount
-      }
     val mergedEntityIds = transactions
       .filter { !it.isDeleted && !it.entityId.isNullOrBlank() && com.example.data.backup.YearCloseMerge.isMergedId(it.id) }
       .mapNotNull { it.entityId }.toSet()
@@ -324,7 +326,8 @@ object PdfExporter {
     val sorted = entities.filter { !it.isDeleted && !it.isExpenseEntity }
       .map { ent ->
         val isSup = ent.isSupplier || ent.id in supplierIds
-        val bal = if (isSup) (supplierBalances[ent.id] ?: ent.currentBalance) else ent.currentBalance
+        // Same figure the Unified Records list shows (opening balance + supplier credits included).
+        val bal = ent.currentBalance
         Triple(ent, isSup, bal)
       }
       .sortedByDescending { kotlin.math.abs(it.third) }
@@ -341,8 +344,8 @@ object PdfExporter {
       val balDisp = if (status == "SETTLED") "SETTLED" else SarimFormat.formatRs(kotlin.math.abs(bal), false, privacyHidden)
       val role = when {
         isSup -> "SUPPLIER"
-        ent.type.equals("payor", true) -> "PAYOR"
-        else -> "PAYEE"
+        ent.type.equals("payee", true) -> "PAYEE"
+        else -> "PAYOR"
       }
       val source = (if (ent.id in mergedEntityIds) "Year-End / " else "") + if (isSup) "Inventory" else "Transactions"
       listOf(
@@ -366,7 +369,7 @@ object PdfExporter {
     val netTag = if (totReceivable > totPayable) "IN OUR FAVOR" else "NET PAYABLE"
     return createStatementPdf(
       context = context,
-      fileBaseName = "Unified_Statement_entities_${periodLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      fileBaseName = "Unified_Statement_entities_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
       kindTitle = "Payment Entities — Balances & Ledger",
       name = "All Active Entities (${rows.size})",
       phone = "",
@@ -391,7 +394,8 @@ object PdfExporter {
     expenses: List<com.example.data.local.PaymentTransactionEntity>,
     privacyHidden: Boolean = false,
   ): Result<File> {
-    val operating = expenses.filter { !it.isDeleted && it.type == "EXPENSE" }.sortedBy { it.dateEpoch }
+    val operating = expenses.filter { !it.isDeleted && it.type == "EXPENSE" }
+      .sortedWith(compareBy<com.example.data.local.PaymentTransactionEntity> { if (com.example.data.backup.YearCloseMerge.isMergedId(it.id)) 0 else 1 }.thenBy { it.dateEpoch })
     val byName = linkedMapOf<String, Double>()
     operating.forEach { exp ->
       val key = exp.entityOrExpenseName.ifBlank { "Unnamed" }
@@ -415,12 +419,14 @@ object PdfExporter {
       PdfColumn("Amount", 96f, right = true),
     )
     val totalAmt = operating.sumOf { it.amount }
-    val summary = byName.entries.sortedByDescending { it.value }.take(8).map { (k, v) ->
-      k to SarimFormat.formatRs(v, false, privacyHidden)
+    val summary = if (byName.size > 1) {
+      byName.entries.sortedByDescending { it.value }.map { (k, v) -> k to SarimFormat.formatRs(v, false, privacyHidden) }
+    } else {
+      emptyList()
     }
     return createStatementPdf(
       context = context,
-      fileBaseName = "Unified_Statement_expenses_${periodLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      fileBaseName = "Unified_Statement_expenses_${unifiedPeriodKey(periodLabel)}_${SarimFormat.dateInput(System.currentTimeMillis())}",
       kindTitle = "Expenses — Transaction Records",
       name = "Operating Expenses (${rows.size})",
       phone = "",
