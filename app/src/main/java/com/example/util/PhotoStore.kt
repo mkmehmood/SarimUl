@@ -62,3 +62,14 @@ object PhotoStore {
     }.getOrDefault(uriStr)
   }
 }
+
+/** Coil 2.x cannot load `data:` URLs (the viewer stayed black); decode them to a Bitmap Coil can show. */
+fun photoModel(raw: String): Any {
+  if (!raw.startsWith("data:", ignoreCase = true)) return raw
+  val comma = raw.indexOf(',')
+  if (comma < 0) return raw
+  return runCatching {
+    val bytes = Base64.decode(raw.substring(comma + 1), Base64.DEFAULT)
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: raw
+  }.getOrDefault(raw)
+}

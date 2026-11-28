@@ -70,6 +70,7 @@ fun ProductionTab(
   var editingEntryId by remember { mutableStateOf<String?>(null) }
   var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
   var photoSelectMode by remember { mutableStateOf(false) }
+  var pickGroup by remember { mutableStateOf<ProdDayGroup?>(null) }
   var selectedPhotoIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
 
@@ -525,41 +526,51 @@ viewModel.launchSafely(
       }
       Spacer(Modifier.height(6.dp))
       val sourceEntries = if (photoSelectMode) entriesWithPhotos else state.productionEntries
-      val records = sourceEntries.map { p ->
-        val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
-        val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
-        val pPhotos = JsonCodecs.decodeStrings(p.photoUrisJson)
-        val isSelected = p.id in selectedPhotoIds
+      // One row per store per day: entries of the same store on the same date are combined.
+      val groups = remember(sourceEntries) {
+        sourceEntries
+          .groupBy { Triple(it.dateStr.ifBlank { SarimFormat.dateInput(it.dateEpoch) }, it.storeKey, it.isReturn) }
+          .map { (k, list) -> ProdDayGroup(id = "${k.first}|${k.second}|${k.third}", entries = list.sortedBy { it.createdAt }) }
+          .sortedByDescending { it.dateEpoch }
+      }
+      val records = groups.map { g ->
+        val pCostPerKg = if (g.netWeightKg > 0.0001) g.totalFormulaCost / g.netWeightKg else 0.0
+        val pSalePerKg = if (g.netWeightKg > 0.0001) g.totalValue / g.netWeightKg else 0.0
+        val photoCount = g.entries.sumOf { JsonCodecs.decodeStrings(it.photoUrisJson).size }
+        val allSelected = g.entries.all { it.id in selectedPhotoIds }
         val chipLabel = when {
-          photoSelectMode && isSelected -> "SELECTED · ${pPhotos.size} PHOTO(S)"
-          photoSelectMode -> "TAP TO SELECT · ${pPhotos.size} PHOTO(S)"
-          else -> SarimFormat.formatRs(p.totalProfit, false, hideMoney)
+          photoSelectMode && allSelected -> "SELECTED · $photoCount PHOTO(S)"
+          photoSelectMode -> "TAP TO SELECT · $photoCount PHOTO(S)"
+          else -> SarimFormat.formatRs(g.totalProfit, false, hideMoney)
         }
         val chipClr = when {
-          photoSelectMode && isSelected -> palette.green
+          photoSelectMode && allSelected -> palette.green
           photoSelectMode -> palette.cyan
-          p.totalProfit >= 0 -> palette.green
+          g.totalProfit >= 0 -> palette.green
           else -> palette.red
         }
+        val first = g.entries.first()
         HistoryRecordDisplay(
-          item = p,
-          dateEpoch = p.dateEpoch,
-          title = p.storeName,
-          subtitle = "${p.formulaName} · ${SarimFormat.formatQty(p.formulaUnitsUsed, 2)} units",
-          amountText = SarimFormat.formatKg(p.netWeightKg),
-          amountColor = storeColorForKey(p.storeKey, palette.isDark),
+          item = g,
+          dateEpoch = g.dateEpoch,
+          title = first.storeName,
+          subtitle = if (g.entries.size == 1) "${first.formulaName} · ${SarimFormat.formatQty(g.formulaUnitsUsed, 2)} units"
+          else "${g.entries.size} entries · ${SarimFormat.formatQty(g.formulaUnitsUsed, 2)} units",
+          amountText = SarimFormat.formatKg(g.netWeightKg),
+          amountColor = storeColorForKey(first.storeKey, palette.isDark),
           chipText = chipLabel,
           chipColor = chipClr,
           detailMetrics = listOf(
-            "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
-            "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
-            "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
-            "Formula Units" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
+            "Entries" to "${g.entries.size}",
+            "Gross Weight" to SarimFormat.formatKg(g.grossWeightKg),
+            "Container Weight" to SarimFormat.formatKg(g.containerWeightKg),
+            "Net Weight" to SarimFormat.formatKg(g.netWeightKg),
+            "Formula Units" to SarimFormat.formatQty(g.formulaUnitsUsed, 2),
             "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
             "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
-            "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
-            "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
-            "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+            "Total Cost" to SarimFormat.formatRs(g.totalFormulaCost, false, hideMoney),
+            "Total Value" to SarimFormat.formatRs(g.totalValue, false, hideMoney),
+            "Total Profit" to SarimFormat.formatRs(g.totalProfit, false, hideMoney),
           ),
         )
       }
@@ -569,21 +580,40 @@ viewModel.launchSafely(
         monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         itemKey = { it.id },
-        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "production" }?.recordId,
+        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "production" }?.recordId?.let { rid ->
+          groups.firstOrNull { g -> g.entries.any { it.id == rid } }?.id ?: rid
+        },
         onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         onItemClick = { rec ->
+          val g = rec.item
           if (photoSelectMode) {
-            selectedPhotoIds = if (rec.item.id in selectedPhotoIds) {
-              selectedPhotoIds - rec.item.id
-            } else {
-              selectedPhotoIds + rec.item.id
-            }
+            val ids = g.entries.map { it.id }
+            selectedPhotoIds = if (ids.all { it in selectedPhotoIds }) selectedPhotoIds - ids.toSet() else selectedPhotoIds + ids
+          } else if (g.entries.size == 1) {
+            sheetEntry = g.entries.first()
           } else {
-            sheetEntry = rec.item
+            pickGroup = g
           }
         },
       )
     }
+  }
+
+  pickGroup?.let { g ->
+    androidx.compose.material3.AlertDialog(
+      onDismissRequest = { pickGroup = null },
+      title = { Text("${g.entries.first().storeName} · ${SarimFormat.formatDate(g.dateEpoch)}") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          g.entries.forEachIndexed { i, e ->
+            androidx.compose.material3.TextButton(onClick = { pickGroup = null; sheetEntry = e }, modifier = Modifier.fillMaxWidth()) {
+              Text("#${i + 1}  ${e.timeStr.ifBlank { "—" }}  ·  ${SarimFormat.formatKg(e.netWeightKg)}  ·  ${e.formulaName}")
+            }
+          }
+        }
+      },
+      confirmButton = { androidx.compose.material3.TextButton(onClick = { pickGroup = null }) { Text("Close") } },
+    )
   }
 
   sheetEntry?.let { p ->
@@ -722,4 +752,16 @@ viewModel.launchSafely(
       },
     )
   }
+}
+
+/** All production entries of one store on one day, shown as a single history row. */
+private data class ProdDayGroup(val id: String, val entries: List<ProductionEntryEntity>) {
+  val dateEpoch: Long get() = entries.first().dateEpoch
+  val grossWeightKg: Double get() = entries.sumOf { it.grossWeightKg }
+  val containerWeightKg: Double get() = entries.sumOf { it.containerWeightKg }
+  val netWeightKg: Double get() = entries.sumOf { it.netWeightKg }
+  val formulaUnitsUsed: Double get() = entries.sumOf { it.formulaUnitsUsed }
+  val totalFormulaCost: Double get() = entries.sumOf { it.totalFormulaCost }
+  val totalValue: Double get() = entries.sumOf { it.totalValue }
+  val totalProfit: Double get() = entries.sumOf { it.totalProfit }
 }

@@ -91,7 +91,7 @@ fun AddEntityScreen(
           contentAlignment = Alignment.Center,
         ) {
           if (!currentPhoto.isNullOrBlank()) {
-            AsyncImage(model = currentPhoto, contentDescription = "Entity photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(model = androidx.compose.runtime.remember(currentPhoto) { com.example.util.photoModel(currentPhoto.orEmpty()) }, contentDescription = "Entity photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
           } else {
             Text(SarimFormat.initials(name.ifBlank { "EN" }), color = palette.green, fontWeight = FontWeight.Bold, fontSize = 20.sp)
           }

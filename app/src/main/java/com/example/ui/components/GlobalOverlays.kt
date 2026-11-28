@@ -72,7 +72,7 @@ fun FullScreenPhotoViewer(
     ) {
       val currentUri = uris.getOrNull(currentIndex).orEmpty()
       AsyncImage(
-        model = currentUri,
+        model = remember(currentUri) { com.example.util.photoModel(currentUri) },
         contentDescription = "Full screen photo",
         contentScale = ContentScale.Fit,
         modifier = Modifier
