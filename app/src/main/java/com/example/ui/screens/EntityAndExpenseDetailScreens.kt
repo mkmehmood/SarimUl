@@ -1,16 +1,22 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -23,11 +29,14 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.util.AppDialogRequest
 import com.example.util.DialogTone
+import com.example.util.DirectShare
+import com.example.util.StatementData
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EntityDetailsScreen(
   entityId: String,
@@ -35,6 +44,8 @@ fun EntityDetailsScreen(
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
+  val context = LocalContext.current
+  var showStatementFlow by remember { mutableStateOf(false) }
   val entity = remember(entityId, state.paymentEntities) { state.paymentEntities.firstOrNull { it.id == entityId } }
 
   if (entity == null) {
@@ -82,8 +93,22 @@ fun EntityDetailsScreen(
             "${txs.size} transactions · ${entity.phone.ifBlank { entity.wallet.ifBlank { "Payee / Partner" } }}",
             color = palette.textMuted,
             fontSize = 12.sp,
-            modifier = Modifier.testTag("manageEntityStats"),
+            modifier = Modifier.testTag("manageEntityStats").then(
+              if (entity.phone.isBlank()) Modifier else Modifier.combinedClickable(
+                onClick = {
+                  runCatching {
+                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  }.onFailure { viewModel.postStatus("No dialer app available") }
+                },
+                onLongClick = {
+                  if (!DirectShare.openWhatsAppChat(context, entity.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+                },
+              )
+            ),
           )
+        }
+        IconButton(onClick = { showStatementFlow = true }) {
+          Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Share statement", tint = palette.green)
         }
         IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.AddEntity(entity.id)) }) {
           Icon(Icons.Rounded.Edit, contentDescription = "Edit entity", tint = palette.cyan)
@@ -149,10 +174,28 @@ fun EntityDetailsScreen(
         actions = HistoryRecordActions<com.example.data.local.PaymentTransactionEntity>(
           extraLabel = { tx -> if (tx.photoUri.isNotBlank()) "View Attached Photo" else null },
           onExtra = { tx -> viewModel.openPhotoViewer(listOf(tx.photoUri), 0) },
+          dayActionLabel = "Invoice",
+          onDayAction = { dayItems ->
+            val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
+            val data = StatementData.entityDayInvoice(entity, txs, dayKey, state.hideMoneyFigures)
+            if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+            else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
+          },
         ),
       )
     }
     Spacer(Modifier.height(24.dp))
+  }
+
+  if (showStatementFlow) {
+    StatementShareFlow(
+      viewModel = viewModel,
+      personName = entity.name,
+      minEpoch = txs.minOfOrNull { it.dateEpoch } ?: 0L,
+      maxEpoch = txs.maxOfOrNull { it.dateEpoch } ?: 0L,
+      buildSpec = { from, to -> StatementData.entityStatement(entity, txs, from, to, state.hideMoneyFigures) },
+      onDismiss = { showStatementFlow = false },
+    )
   }
 }
 

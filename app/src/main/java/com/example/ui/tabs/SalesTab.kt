@@ -41,6 +41,9 @@ import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.ui.theme.storeColorForKey
 import com.example.util.AppDialogRequest
+import com.example.viewmodel.ShareAfterSave
+import com.example.util.StatementKind
+import com.example.util.StatementData
 import com.example.util.DialogHighlight
 import com.example.util.DialogTone
 import com.example.util.PdfExporter
@@ -531,6 +534,7 @@ fun SalesTab(
 "Transaction",
 listOf("Customer" to (if (isRepSelected) selectedRep else customerName), "Store" to store.name, "Quantity" to SarimFormat.formatKg(qtyNum), "Payment" to effPayment.name, "Date" to SarimFormat.formatDate(dateEpoch)),
 isUpdate = editingSaleId != null,
+shareAfterSave = if (isRepSelected) null else ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
 ) {
 viewModel.launchSafely(
                   errorTitle = "Save Sale Failed",
@@ -576,6 +580,7 @@ viewModel.launchSafely(
 listOf("Customer" to customerName, "Amount" to SarimFormat.formatRs(amtRec), "Expired (kg)" to expiredQtyText, "Date" to SarimFormat.formatDate(dateEpoch)),
 isUpdate = editingSaleId != null,
 warning = collWarn,
+shareAfterSave = ShareAfterSave(StatementKind.CUSTOMER, customerName, dateEpoch),
 ) {
 viewModel.launchSafely(
                     errorTitle = "Save Collection Failed",
@@ -863,26 +868,19 @@ viewModel.launchSafely(
       badgeColor = if (isCash || s.creditReceived || s.isRepReturn) palette.green else palette.amber,
       metrics = buildSaleMetrics(s, hideMoney),
       onDismiss = { sheetSale = null },
-      extraActionLabel = if (!s.isRepReturn) "Invoice PDF" else null,
+      extraActionLabel = if (!s.isRepReturn) "Invoice" else null,
       extraActionIcon = if (!s.isRepReturn) Icons.Rounded.Share else null,
       onExtraAction = if (!s.isRepReturn) {
         {
-          PdfExporter.sharePdfReport(
-            context,
-            "invoice_${s.id.take(6)}",
-            "Sales Invoice · ${s.customerName}",
-            SarimFormat.formatDate(s.dateEpoch),
-            listOf(
-              "Customer: ${s.customerName}",
-              "Store: ${s.storeName}",
-              "Quantity: ${SarimFormat.formatKg(s.quantityKg)}",
-              "Rate: ${SarimFormat.formatRs(s.pricePerKg)}/kg",
-              "Payment: ${s.paymentType}",
-              "Total Value: ${SarimFormat.formatRs(dispAmt)}",
-            ),
-          ).onFailure { err ->
-            viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice")
+          val cust = state.customers.firstOrNull { !it.isDeleted && it.isRepCustomer == s.isRepSale && (it.id == s.customerId || it.name.equals(s.customerName, ignoreCase = true)) }
+          val data = cust?.let {
+            StatementData.salesDayInvoice(
+              if (s.isRepSale) StatementKind.REP else StatementKind.CUSTOMER,
+              it, customerSalesOf(state, it), SarimFormat.dateInput(s.dateEpoch), hideMoney,
+            )
           }
+          if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+          else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
         }
       } else null,
       onEdit = {

@@ -28,6 +28,8 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
+import com.example.viewmodel.ShareAfterSave
+import com.example.util.StatementKind
 import com.example.util.DialogHighlight
 import com.example.util.DialogTone
 import com.example.util.PdfExporter
@@ -177,6 +179,7 @@ fun PaymentsTab(
 "Transaction",
 listOf("Name" to nameText, "Amount" to amountText, "Date" to SarimFormat.formatDate(dateEpoch), "Note" to descriptionText),
 isUpdate = currentEditId != null,
+shareAfterSave = if (txType == PayTxType.EXPENSE) null else ShareAfterSave(StatementKind.ENTITY, nameText, dateEpoch),
 ) {
 viewModel.launchSafely(
               errorTitle = "Save Payment Failed",

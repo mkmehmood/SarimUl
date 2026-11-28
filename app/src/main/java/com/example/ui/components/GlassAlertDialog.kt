@@ -170,6 +170,7 @@ fun GlassAlertDialog(
   var passwordText by remember { mutableStateOf("") }
   var showPassword by remember { mutableStateOf(false) }
   var passwordError by remember { mutableStateOf<String?>(null) }
+  var boxChecked by remember { mutableStateOf(request.checkbox?.checked ?: false) }
   var chipSize by remember { mutableStateOf(Size(130f, 46f)) }
   val density = LocalDensity.current
 
@@ -267,7 +268,7 @@ fun GlassAlertDialog(
           modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 18.dp),
         )
 
-        val hasBody = parsed.blocks.isNotEmpty() || request.choices.isNotEmpty() || request.requirePassword
+        val hasBody = parsed.blocks.isNotEmpty() || request.choices.isNotEmpty() || request.requirePassword || request.checkbox != null
         if (hasBody) {
           Column(
             modifier = Modifier
@@ -308,6 +309,24 @@ fun GlassAlertDialog(
                     }
                   }
                 }
+              }
+            }
+
+            request.checkbox?.let { cb ->
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(14.dp))
+                  .clickable { boxChecked = !boxChecked },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                androidx.compose.material3.Checkbox(
+                  checked = boxChecked,
+                  onCheckedChange = { boxChecked = it },
+                  colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = style.g1),
+                )
+                Text(cb.label, color = palette.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
               }
             }
 
@@ -375,7 +394,7 @@ fun GlassAlertDialog(
             }
             if (request.choices.isEmpty()) {
               DlgButton(
-                text = request.confirmLabel,
+                text = request.checkbox?.takeIf { boxChecked }?.confirmLabelWhenChecked ?: request.confirmLabel,
                 solid = true,
                 style = style,
                 modifier = Modifier.weight(if (request.cancelLabel != null) 3f else 1f),
@@ -384,6 +403,7 @@ fun GlassAlertDialog(
                   if (request.requirePassword && passwordText.isEmpty()) {
                     passwordError = "Please enter your password."
                   } else {
+                    request.checkbox?.onChanged?.invoke(boxChecked)
                     request.onConfirm(passwordText)
                     onDismiss()
                   }

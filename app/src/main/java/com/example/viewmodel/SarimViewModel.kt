@@ -13,6 +13,7 @@ import com.example.data.repository.*
 import com.example.ui.navigation.SarimNavAction
 import com.example.ui.navigation.SarimRoute
 import com.example.util.AppDialogRequest
+import com.example.util.DialogCheckbox
 import com.example.util.DialogTone
 import com.example.util.FeedbackManager
 import com.example.util.SarimFormat
@@ -101,6 +102,12 @@ data class SarimUiState(
   }
 }
 
+/** What the "Share invoice after saving" tick box asks for (web `opts.share`). */
+data class ShareAfterSave(val kind: com.example.util.StatementKind, val name: String, val dateEpoch: Long)
+
+/** A day invoice waiting for its save to land before it is rendered and shared (web `shareInvoiceAfterSave`). */
+data class PendingInvoiceShare(val kind: com.example.util.StatementKind, val name: String, val dayKey: String, val requestedAt: Long)
+
 class SarimViewModel(application: Application) : AndroidViewModel(application) {
   private val db = SarimDatabase.getInstance(application)
   private val dao = db.dao()
@@ -114,6 +121,11 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
 
   private val _uiState = MutableStateFlow(SarimUiState())
   val uiState: StateFlow<SarimUiState> = _uiState.asStateFlow()
+
+  private val sharePrefs = application.getSharedPreferences("sarim_share", android.content.Context.MODE_PRIVATE)
+  private val _pendingInvoiceShare = MutableStateFlow<PendingInvoiceShare?>(null)
+  val pendingInvoiceShare: StateFlow<PendingInvoiceShare?> = _pendingInvoiceShare.asStateFlow()
+  fun clearPendingInvoiceShare() { _pendingInvoiceShare.value = null }
 
   private val _navActions = MutableSharedFlow<SarimNavAction>(extraBufferCapacity = 32)
   val navActions: SharedFlow<SarimNavAction> = _navActions.asSharedFlow()
@@ -1261,6 +1273,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     isUpdate: Boolean = false,
     verb: String = "Save",
     warning: String? = null,
+    shareAfterSave: ShareAfterSave? = null,
     onConfirm: () -> Unit,
   ) {
     val gated = _uiState.value.isGatedSession
@@ -1294,6 +1307,18 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
         tone = if (warning != null || isUpdate) DialogTone.WARNING else DialogTone.CONFIRM,
         confirmLabel = confirmWord,
         onConfirm = { onConfirm() },
+        // A gated session only sends the entry for approval, so there is nothing to invoice yet.
+        checkbox = if (shareAfterSave != null && !gated) DialogCheckbox(
+          label = "Share invoice after saving",
+          checked = sharePrefs.getBoolean("shareInvoiceAfterSave", false),
+          confirmLabelWhenChecked = "$confirmWord & Share",
+          onChanged = { on ->
+            sharePrefs.edit().putBoolean("shareInvoiceAfterSave", on).apply()
+            _pendingInvoiceShare.value = if (on) {
+              PendingInvoiceShare(shareAfterSave.kind, shareAfterSave.name.trim(), SarimFormat.dateInput(shareAfterSave.dateEpoch), System.currentTimeMillis())
+            } else null
+          },
+        ) else null,
       )
     )
   }

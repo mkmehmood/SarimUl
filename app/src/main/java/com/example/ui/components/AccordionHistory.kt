@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -72,6 +73,9 @@ class HistoryRecordActions<T>(
   val extraLabel: (T) -> String? = { null },
   val extraIcon: ImageVector? = null,
   val onExtra: ((T) -> Unit)? = null,
+  /** Day footer button (web `cm-share` "Invoice"): receives every record of that day. */
+  val dayActionLabel: String = "Invoice",
+  val onDayAction: ((List<T>) -> Unit)? = null,
 )
 
 @Composable
@@ -488,6 +492,16 @@ fun <T> AccordionHistoryList(
                             d.items.forEachIndexed { idx, rec ->
                               LedgerRow(rec, idx) {
                                 if (onItemClick != null) onItemClick(rec) else sheetRec = rec
+                              }
+                            }
+                            val dayAction = actions?.onDayAction
+                            if (dayAction != null) {
+                              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { dayAction(d.items.map { it.item }) }) {
+                                  Icon(Icons.Rounded.Share, contentDescription = null, tint = palette.cyan, modifier = Modifier.size(14.dp))
+                                  Spacer(Modifier.width(6.dp))
+                                  Text(actions?.dayActionLabel ?: "Invoice", color = palette.cyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                               }
                             }
                           }

@@ -146,4 +146,20 @@ object DirectShare {
       ShareOutcome.FAILED
     }
   }
+
+  /** Plain system share sheet for one file (used for "PDF" – no WhatsApp targeting). */
+  fun shareViaChooser(context: Context, file: File, mime: String, title: String = "Share"): ShareOutcome {
+    if (!file.exists()) return ShareOutcome.FAILED
+    return try {
+      val send = Intent(Intent.ACTION_SEND)
+        .setType(mime)
+        .putExtra(Intent.EXTRA_STREAM, uriFor(context, file))
+        .putExtra(Intent.EXTRA_SUBJECT, title)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      context.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      ShareOutcome.SHARED_CHOOSER
+    } catch (_: Exception) {
+      ShareOutcome.FAILED
+    }
+  }
 }

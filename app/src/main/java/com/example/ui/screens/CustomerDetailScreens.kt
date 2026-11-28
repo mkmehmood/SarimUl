@@ -54,6 +54,8 @@ import com.example.util.DirectShare
 import com.example.util.InvoiceLine
 import com.example.util.PdfExporter
 import com.example.util.ShareOutcome
+import com.example.util.StatementData
+import com.example.util.StatementKind
 import com.example.util.StatementShare
 import com.example.util.SarimFormat
 import com.example.viewmodel.SarimUiState
@@ -110,70 +112,8 @@ fun CustomerDetailsScreen(
   val totalBill = customer.oldDebit + customer.totalSaleValue
   val pctReceived = if (totalBill > 0.01) ((customer.totalReceived / totalBill) * 100).toInt().coerceIn(0, 100) else 0
 
-  fun statementShareFailed(msg: String?) {
-    viewModel.showDialog(AppDialogRequest("Share Failed", msg ?: "Unable to share the statement.", tone = DialogTone.ERROR, cancelLabel = null))
-  }
-
-  fun shareStatement(format: String, ranged: List<SaleTransactionEntity>, rangeLabel: String) {
-    val hide = state.hideMoneyFigures
-    val prefix = "statement_${customer.name.replace(" ", "_")}"
-    val subtitle = "Current Debt: ${SarimFormat.formatRs(customer.currentCredit, privacyHidden = hide)}"
-    fun pdfLines() = ranged.take(120).map {
-      "${SarimFormat.formatDate(it.dateEpoch)} | ${it.mode} ${it.paymentType} | ${SarimFormat.formatKg(it.quantityKg)} | ${SarimFormat.formatRs(it.totalValue, privacyHidden = hide)} | Bal ${SarimFormat.formatRs(it.balanceAfter, privacyHidden = hide)}"
-    }.ifEmpty { listOf("No transactions recorded in selected range.") }
-    when (format) {
-      "PDF" -> PdfExporter.sharePdfReport(context, prefix, "Customer Statement — ${customer.name}", subtitle, pdfLines())
-        .onFailure { statementShareFailed(it.localizedMessage) }
-      "PDF_WA" -> PdfExporter.createPdfFile(context, prefix, "Customer Statement — ${customer.name}", subtitle, pdfLines())
-        .onSuccess { f ->
-          if (DirectShare.shareFiles(context, listOf(f), "application/pdf", customer.phone, title = "Account Statement") == ShareOutcome.FAILED) statementShareFailed(null)
-        }.onFailure { statementShareFailed(it.localizedMessage) }
-      "IMAGE" -> PdfExporter.createPdfFile(context, prefix, "Customer Statement — ${customer.name}", subtitle, pdfLines())
-        .mapCatching { pdf -> PdfExporter.pdfToJpegs(context, pdf, prefix).getOrThrow() }
-        .onSuccess { imgs ->
-          if (DirectShare.shareFiles(context, imgs, "image/jpeg", customer.phone, title = "Account Statement") == ShareOutcome.FAILED) statementShareFailed(null)
-        }.onFailure { statementShareFailed(it.localizedMessage) }
-      else -> {
-        val text = StatementShare.buildStatementText(
-          name = customer.name,
-          phone = customer.phone,
-          dateLabel = SarimFormat.formatDate(System.currentTimeMillis()),
-          rangeLabel = rangeLabel,
-          rows = ranged.sortedBy { it.dateEpoch }.map {
-            StatementShare.StatementRow(
-              date = SarimFormat.formatDate(it.dateEpoch),
-              kind = if (it.mode == "SALE") it.paymentType else it.mode,
-              qty = if (it.quantityKg > 0.0) SarimFormat.formatKg(it.quantityKg) else "",
-              amount = SarimFormat.formatRs(it.totalValue.takeIf { v -> v > 0.0 } ?: it.amountReceived, privacyHidden = hide),
-              balance = SarimFormat.formatRs(it.balanceAfter, privacyHidden = hide),
-            )
-          },
-          closing = SarimFormat.formatRs(customer.currentCredit, privacyHidden = hide),
-        )
-        val outcome = if (format == "SMS") DirectShare.sendSms(context, text, customer.phone)
-        else DirectShare.shareTextToWhatsApp(context, text, customer.phone, "Account Statement")
-        if (outcome == ShareOutcome.NOT_INSTALLED || outcome == ShareOutcome.FAILED) statementShareFailed("No app available to send the message.")
-      }
-    }
-  }
-
-  fun chooseStatementFormat(ranged: List<SaleTransactionEntity>, rangeLabel: String) {
-    viewModel.showDialog(
-      AppDialogRequest(
-        title = "Send Statement",
-        body = "How should ${customer.name}'s statement be sent?",
-        tone = DialogTone.CONFIRM,
-        choices = listOf(
-          DialogChoice("PDF", "PDF", "Share as a PDF file"),
-          DialogChoice("PDF_WA", "PDF to WhatsApp", "Send the PDF straight to WhatsApp"),
-          DialogChoice("IMAGE", "Image to WhatsApp", "Send the statement as pictures"),
-          DialogChoice("WHATSAPP", "WhatsApp message", "Send the statement as text"),
-          DialogChoice("SMS", "SMS", "Open Messages with the statement text"),
-        ),
-        onChoiceSelected = { fmt -> shareStatement(fmt, ranged, rangeLabel) },
-      )
-    )
-  }
+  val stmtKind = if (customer.isRepCustomer) StatementKind.REP else StatementKind.CUSTOMER
+  var showStatementFlow by remember { mutableStateOf(false) }
 
   Column(
     modifier = Modifier
@@ -241,34 +181,7 @@ fun CustomerDetailsScreen(
               text = { Text("Share statement", color = palette.textPrimary, fontWeight = FontWeight.Medium) },
               onClick = {
                 menuExpanded = false
-                viewModel.showDialog(
-                  AppDialogRequest(
-                    title = "Statement Range",
-                    body = "Choose the period to include in ${customer.name}'s statement PDF.",
-                    tone = DialogTone.CONFIRM,
-                    choices = listOf(
-                      DialogChoice("ALL", "All Time", "Include all transactions"),
-                      DialogChoice("MONTH", "This Month", "Transactions from the 1st of this month"),
-                      DialogChoice("LAST30", "Last 30 Days", "Recent 30 days of activity"),
-                    ),
-                    onChoiceSelected = { choiceId ->
-                      val now = System.currentTimeMillis()
-                      val cal = java.util.Calendar.getInstance()
-                      val cutoff = when (choiceId) {
-                        "MONTH" -> {
-                          cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
-                          SarimFormat.startOfDay(cal.timeInMillis)
-                        }
-                        "LAST30" -> now - 30L * 24L * 60L * 60L * 1000L
-                        else -> 0L
-                      }
-                      val rangedSales = custSales.filter { it.dateEpoch >= cutoff }
-                      val rangeLabel = when (choiceId) { "MONTH" -> "This Month"; "LAST30" -> "Last 30 Days"; else -> "All Time" }
-                      // the dialog dismisses itself right after this callback, so open the next one on the next frame
-                      android.os.Handler(android.os.Looper.getMainLooper()).post { chooseStatementFormat(rangedSales, rangeLabel) }
-                    },
-                  )
-                )
+                showStatementFlow = true
               },
             )
           }
@@ -417,34 +330,27 @@ fun CustomerDetailsScreen(
             )
           )
         },
-        extraLabel = { _ -> "Invoice" },
-        extraIcon = Icons.Rounded.Share,
-        onExtra = { tx ->
-          val isCollection = tx.mode != "SALE"
-          val title = if (isCollection) "Payment" else if (tx.paymentType == "CASH") "Cash sale" else "Credit sale"
-          val sub = if (tx.quantityKg > 0.0) "${SarimFormat.formatKg(tx.quantityKg)} @ ${SarimFormat.formatRs(tx.pricePerKg, privacyHidden = hide)}" else ""
-          val amt = if (isCollection) (tx.amountReceived.takeIf { it > 0.0 } ?: tx.totalValue) else tx.totalValue
-          val dayKey = SarimFormat.dateInput(tx.dateEpoch)
-          StatementShare.renderInvoicePng(
-            context = context,
-            fileBaseName = "Invoice_${customer.name}_$dayKey",
-            name = customer.name,
-            phone = customer.phone,
-            dateLabel = SarimFormat.formatDate(tx.dateEpoch),
-            previousBalance = null,
-            lines = listOf(InvoiceLine(title, sub, SarimFormat.formatRs(amt, privacyHidden = hide), incoming = isCollection)),
-            totalLines = emptyList(),
-            dueLabel = "Balance due",
-            dueText = SarimFormat.formatRs(tx.balanceAfter, privacyHidden = hide),
-          ).onSuccess { png ->
-            if (DirectShare.shareFiles(context, listOf(png), "image/png", customer.phone, title = "Invoice") == ShareOutcome.FAILED) {
-              viewModel.postStatus("Unable to share invoice")
-            }
-          }.onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to share invoice") }
+        dayActionLabel = "Invoice",
+        onDayAction = { dayItems ->
+          val dayKey = SarimFormat.dateInput(dayItems.first().dateEpoch)
+          val data = StatementData.salesDayInvoice(stmtKind, customer, custSales, dayKey, hide)
+          if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+          else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
         },
       ),
     )
     Spacer(Modifier.height(24.dp))
+  }
+
+  if (showStatementFlow) {
+    StatementShareFlow(
+      viewModel = viewModel,
+      personName = customer.name,
+      minEpoch = custSales.minOfOrNull { it.dateEpoch } ?: 0L,
+      maxEpoch = custSales.maxOfOrNull { it.dateEpoch } ?: 0L,
+      buildSpec = { from, to -> StatementData.salesStatement(stmtKind, customer, custSales, from, to, state.hideMoneyFigures) },
+      onDismiss = { showStatementFlow = false },
+    )
   }
 
   if (showMoneyOutDialog) {

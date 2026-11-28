@@ -19,6 +19,16 @@ data class DialogChoice(
   val subtitle: String? = null,
 )
 
+/** Optional tick box inside a dialog (web `dialogBoxes`: "Share invoice after saving"). */
+data class DialogCheckbox(
+  val label: String,
+  val checked: Boolean,
+  /** Replaces the confirm button text while ticked, e.g. "Save & Share". */
+  val confirmLabelWhenChecked: String? = null,
+  /** Called with the final tick state when the person confirms. */
+  val onChanged: (Boolean) -> Unit = {},
+)
+
 data class AppDialogRequest(
   val title: String,
   val body: String,
@@ -32,6 +42,7 @@ data class AppDialogRequest(
   val onConfirm: (String) -> Unit = {},
   val onChoiceSelected: (String) -> Unit = {},
   val onCancel: () -> Unit = {},
+  val checkbox: DialogCheckbox? = null,
 )
 
 /**

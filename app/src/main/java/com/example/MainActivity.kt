@@ -18,6 +18,7 @@ import com.example.data.remote.SarimPush
 import com.example.data.remote.authStateFlow
 import com.example.ui.components.FullScreenPhotoViewer
 import com.example.ui.components.GlassAlertDialog
+import com.example.ui.components.InvoiceShareHost
 import com.example.ui.shell.*
 import com.example.ui.theme.SarimTheme
 import com.example.viewmodel.SarimViewModel
@@ -120,6 +121,8 @@ class MainActivity : ComponentActivity() {
             }
           }
         }
+
+        InvoiceShareHost(state = state, viewModel = viewModel)
 
         state.activeDialog?.let { req ->
           GlassAlertDialog(

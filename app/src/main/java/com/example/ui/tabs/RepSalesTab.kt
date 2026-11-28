@@ -1,5 +1,7 @@
 package com.example.ui.tabs
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -9,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +33,9 @@ import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.avatarColorForName
 import com.example.util.AppDialogRequest
+import com.example.viewmodel.ShareAfterSave
+import com.example.util.StatementKind
+import com.example.util.StatementData
 import com.example.util.DialogHighlight
 import com.example.util.DialogTone
 import com.example.util.PdfExporter
@@ -168,6 +174,7 @@ fun RepSalesTab(
 listOf("Date" to SarimFormat.formatDate(dateEpoch), "Customer" to customerName, "Quantity" to quantityText, "Collected" to amountReceivedText, "Expired (kg)" to expiredQtyText),
 isUpdate = currentEditId != null,
 warning = repWarn,
+shareAfterSave = ShareAfterSave(StatementKind.REP, customerName, dateEpoch),
 ) {
 viewModel.launchSafely(
                 errorTitle = "Save Rep Transaction Failed",
@@ -312,7 +319,25 @@ viewModel.launchSafely(
               key = c.id,
               name = c.name.uppercase(),
               avatarBadge = c.ledgerPage,
-              details = listOf(RecordDetail(c.phone.ifBlank { "No phone" })),
+              details = if (c.phone.isNotBlank()) {
+                listOf(
+                  RecordDetail(
+                    text = c.phone,
+                    color = palette.green,
+                    underline = true,
+                    onClick = {
+                      runCatching {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${c.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                      }.onFailure { viewModel.postStatus("No dialer app available") }
+                    },
+                    onLongClick = {
+                      if (!com.example.util.DirectShare.openWhatsAppChat(context, c.phone)) viewModel.postStatus("WhatsApp or browser unavailable")
+                    },
+                  ),
+                )
+              } else {
+                listOf(RecordDetail("No phone"))
+              },
               amount = SarimFormat.formatRs(c.currentCredit),
               amountColor = if (c.currentCredit > 1.0) palette.amber else palette.emerald,
               onClick = { viewModel.openStandalone(StandaloneScreen.RepCustomerDetails(c.id)) },
@@ -398,6 +423,14 @@ viewModel.launchSafely(
         add("Balance After" to SarimFormat.formatRs(s.balanceAfter))
       },
       onDismiss = { sheetRepSale = null },
+      extraActionLabel = "Invoice",
+      extraActionIcon = Icons.Rounded.Share,
+      onExtraAction = {
+        val cust = state.customers.firstOrNull { !it.isDeleted && it.isRepCustomer && (it.id == s.customerId || it.name.equals(s.customerName, ignoreCase = true)) }
+        val data = cust?.let { StatementData.salesDayInvoice(StatementKind.REP, it, customerSalesOf(state, it), SarimFormat.dateInput(s.dateEpoch), state.hideMoneyFigures) }
+        if (data == null) viewModel.postStatus("Nothing to invoice for this day.")
+        else StatementData.shareDayInvoice(context, data)?.let { viewModel.postStatus(it) }
+      },
       onEdit = {
         editingRepTxId = s.id
         dateEpoch = s.dateEpoch
