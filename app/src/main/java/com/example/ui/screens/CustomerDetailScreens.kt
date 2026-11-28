@@ -230,12 +230,14 @@ fun CustomerDetailsScreen(
       }
     }
 
-    // Filter chips
-    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      listOf("All", "Credit", "Cash", "Payments", "Unpaid").forEach { chip ->
-        FilterChip(selected = filterChip == chip, onClick = { filterChip = chip }, label = { Text(chip) })
-      }
-    }
+    // Filter toggle (web .cm-filters)
+    SarimToggleGroup(
+      options = listOf("All", "Credit", "Cash", "Payments", "Unpaid"),
+      selected = filterChip,
+      labelOf = { it },
+      onSelect = { filterChip = it },
+      testTagPrefix = "cust_filter",
+    )
 
     // History: same year > month > day ledger + entry sheet as every other history list
     val hide = state.hideMoneyFigures

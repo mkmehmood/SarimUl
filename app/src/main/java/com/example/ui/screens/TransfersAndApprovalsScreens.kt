@@ -57,20 +57,27 @@ fun StockTransferScreen(
   ) {
     SarimFieldLabel("Move Stock Between Stores")
     SarimCard {
-      SarimPopoverSelector(
-        label = "From Store",
-        selectedText = storeNames.getOrElse(fromIndex) { "Select Store" },
-        options = storeNames,
-        onSelect = { idx, _ -> fromIndex = idx },
-        testTag = "stockTransferFromBtn",
-      )
-      SarimPopoverSelector(
-        label = "To Store",
-        selectedText = storeNames.getOrElse(toIndex) { "Select Store" },
-        options = storeNames,
-        onSelect = { idx, _ -> toIndex = idx },
-        testTag = "stockTransferToBtn",
-      )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          SarimPopoverSelector(
+            label = "From Store",
+            selectedText = storeNames.getOrElse(fromIndex) { "Select Store" },
+            options = storeNames,
+            onSelect = { idx, _ -> fromIndex = idx },
+            testTag = "stockTransferFromBtn",
+          )
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          SarimPopoverSelector(
+            label = "To Store",
+            selectedText = storeNames.getOrElse(toIndex) { "Select Store" },
+            options = storeNames,
+            onSelect = { idx, _ -> toIndex = idx },
+            testTag = "stockTransferToBtn",
+          )
+        }
+      }
+
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         SarimDatePickerField(
           label = "Date",
@@ -249,33 +256,38 @@ fun PaymentTransferScreen(
   ) {
     SarimFieldLabel("Move Balance Between Entities")
     SarimCard {
-      SarimSearchFieldWithDropdown(
-        value = fromQuery,
-        onValueChange = { fromQuery = it },
-        label = "From Entity",
-        placeholder = "Search entity...",
-        suggestions = entityNames,
-        onSuggestionSelected = { fromQuery = it },
-        testTag = "payment_transfer_from_search",
-      )
-      if (fromEntity != null) {
-        Text(
-          "Balance: ${SarimFormat.formatRs(fromEntity.currentBalance, privacyHidden = state.hideMoneyFigures)}",
-          color = if (fromEntity.currentBalance > 0) palette.green else palette.amber,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Medium,
-        )
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          SarimSearchFieldWithDropdown(
+            value = fromQuery,
+            onValueChange = { fromQuery = it },
+            label = "From Entity",
+            placeholder = "Search entity...",
+            suggestions = entityNames,
+            onSuggestionSelected = { fromQuery = it },
+            testTag = "payment_transfer_from_search",
+          )
+          if (fromEntity != null) {
+            Text(
+              "Balance: ${SarimFormat.formatRs(fromEntity.currentBalance, privacyHidden = state.hideMoneyFigures)}",
+              color = if (fromEntity.currentBalance > 0) palette.green else palette.amber,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Medium,
+            )
+          }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          SarimSearchFieldWithDropdown(
+            value = toQuery,
+            onValueChange = { toQuery = it },
+            label = "To Entity",
+            placeholder = "Search entity...",
+            suggestions = entityNames,
+            onSuggestionSelected = { toQuery = it },
+            testTag = "payment_transfer_to_search",
+          )
+        }
       }
-
-      SarimSearchFieldWithDropdown(
-        value = toQuery,
-        onValueChange = { toQuery = it },
-        label = "To Entity",
-        placeholder = "Search entity...",
-        suggestions = entityNames,
-        onSuggestionSelected = { toQuery = it },
-        testTag = "payment_transfer_to_search",
-      )
 
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         SarimDatePickerField(

@@ -454,28 +454,35 @@ viewModel.launchSafely(
       // Material Card
       SarimCard {
         SarimFieldLabel("Material")
-        SarimSearchFieldWithDropdown(
-          value = materialName,
-          onValueChange = { materialName = it },
-          label = "Search or add material",
-          placeholder = "Search saved materials or type a new one",
-          suggestions = materials.map { it.name },
-          onSuggestionSelected = { picked ->
-            materialName = picked
-            materials.firstOrNull { it.name.equals(picked, ignoreCase = true) }?.let { m ->
-              unitName = m.unitName
-              weightPerUnitText = m.conversionFactorKg.toString()
-            }
-          },
-          leadingIcon = Icons.Rounded.Inventory2,
-          testTag = "factoryMaterialName",
-        )
-        SarimDatePickerField(
-          label = "Date",
-          dateEpoch = dateEpoch,
-          onDateSelected = { dateEpoch = it },
-          testTag = "factoryPurchaseDate",
-        )
+        // Web .pf-inline-row: material search grows, date sits beside it
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+          Box(modifier = Modifier.weight(1.4f)) {
+            SarimSearchFieldWithDropdown(
+              value = materialName,
+              onValueChange = { materialName = it },
+              label = "Search or add material",
+              placeholder = "Search saved materials or type a new one",
+              suggestions = materials.map { it.name },
+              onSuggestionSelected = { picked ->
+                materialName = picked
+                materials.firstOrNull { it.name.equals(picked, ignoreCase = true) }?.let { m ->
+                  unitName = m.unitName
+                  weightPerUnitText = m.conversionFactorKg.toString()
+                }
+              },
+              leadingIcon = Icons.Rounded.Inventory2,
+              testTag = "factoryMaterialName",
+            )
+          }
+          Box(modifier = Modifier.weight(1f)) {
+            SarimDatePickerField(
+              label = "Date",
+              dateEpoch = dateEpoch,
+              onDateSelected = { dateEpoch = it },
+              testTag = "factoryPurchaseDate",
+            )
+          }
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           SarimStatTile("Collected", SarimFormat.formatKg(matchedMaterial?.collectedKg ?: 0.0), modifier = Modifier.weight(1f), accentColor = palette.cyan)
           SarimStatTile("In stock", SarimFormat.formatKg(matchedMaterial?.stockKg ?: 0.0), modifier = Modifier.weight(1f), accentColor = palette.green)
