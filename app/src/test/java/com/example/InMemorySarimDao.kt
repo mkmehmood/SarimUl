@@ -276,6 +276,7 @@ class InMemorySarimDao : SarimDao {
     return if (s >= d.length) "" else d.substring(s, minOf(d.length, s + len))
   }
   override suspend fun getPhotoData(photoKey: String): String? = photos[photoKey]?.takeIf { !it.deleted }?.data
+  override suspend fun getPhotoCharLength(photoKey: String): Int? = photos[photoKey]?.takeIf { !it.deleted }?.data?.length ?: 0
   override suspend fun upsertPhoto(item: PhotoRecordEntity) { photos[item.photoKey] = item }
   override suspend fun hardDeletePhoto(key: String) { photos.remove(key) }
   override suspend fun clearPhotos() { photos.clear() }
