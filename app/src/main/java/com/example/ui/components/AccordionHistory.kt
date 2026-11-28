@@ -377,7 +377,7 @@ private fun LedgerGroupHeader(name: String, count: String, sum: String, open: Bo
 
 /** Web `.hl-row`: expressive tonal transaction card with leading accent bar, dot, title, badge, subtitle, and amount. */
 @Composable
-private fun <T> LedgerRow(rec: HistoryRecordDisplay<T>, index: Int, onClick: () -> Unit) {
+internal fun <T> LedgerRow(rec: HistoryRecordDisplay<T>, index: Int, onClick: () -> Unit) {
   val palette = LocalSarimPalette.current
   val scheme = MaterialTheme.colorScheme
   val tone = historyToneOf(rec.amountColor, rec.tone)

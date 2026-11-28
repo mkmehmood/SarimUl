@@ -1,5 +1,6 @@
 package com.example.ui.tabs
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,7 +22,9 @@ import androidx.compose.ui.unit.sp
 import com.example.data.backup.YearCloseMerge
 import com.example.data.local.JsonCodecs
 import com.example.data.local.ProductionEntryEntity
+import com.example.data.model.StandaloneScreen
 import com.example.data.model.TimePeriod
+import com.example.data.repository.SarimStoreSummary
 import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
@@ -82,7 +85,8 @@ fun ProductionTab(
     }
   }
 
-  var combinedPeriod by remember { mutableStateOf(TimePeriod.DAILY) }
+  var combinedPeriod by remember { mutableStateOf(SarimStoreSummary.Period.DAY) }
+  var storePeriod by remember { mutableStateOf(SarimStoreSummary.Period.DAY) }
   var compareMetric by remember { mutableStateOf(CompareMetric.WEIGHT) }
   var analyticsPeriod by remember { mutableStateOf(TimePeriod.WEEKLY) }
 
@@ -106,6 +110,45 @@ fun ProductionTab(
   val profitPerKg = salePricePerKg - costPerKg
   val unitsAvailable = linkedFormula?.unitsAvailable ?: 0.0
   val insufficientUnits = unitsNum > unitsAvailable + unitCredit + 1e-9
+
+  val overview = remember(state.stores, state.productionEntries, state.sales, state.stockTransfers, combinedPeriod, selectedDate, state.isAdmin, topView) {
+    if (state.isAdmin && topView == ProdTopView.COMBINED) {
+      SarimStoreSummary.summarize(
+        state.stores.map { it.storeKey to it.name },
+        state.productionEntries, state.sales, state.stockTransfers, combinedPeriod, selectedDate,
+      )
+    } else null
+  }
+  val storeEntries = remember(state.productionEntries, selectedStoreKey) {
+    state.productionEntries.filter { !it.isDeleted && it.storeKey == selectedStoreKey }
+  }
+  val storeStats = remember(storeEntries, selectedDate) { SarimStoreSummary.periodStats(storeEntries, selectedDate) }
+
+  fun displayRecords(list: List<ProductionEntryEntity>): List<HistoryRecordDisplay<ProductionEntryEntity>> = list.map { p ->
+    val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
+    val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
+    HistoryRecordDisplay(
+      item = p,
+      dateEpoch = p.dateEpoch,
+      title = p.storeName,
+      subtitle = "${p.formulaName} · ${SarimFormat.formatQty(p.formulaUnitsUsed, 2)} units",
+      amountText = SarimFormat.formatKg(p.netWeightKg),
+      amountColor = storeColorForKey(p.storeKey, palette.isDark),
+      chipText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+      chipColor = if (p.totalProfit >= 0) palette.green else palette.red,
+      detailMetrics = listOf(
+        "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
+        "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
+        "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
+        "Formula Units" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
+        "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
+        "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
+        "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
+        "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
+        "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+      ),
+    )
+  }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -374,39 +417,81 @@ viewModel.launchSafely(
           )
         }
       }
-    } else {
-      // Combined View
-      item {
-        val cutoff = SarimMetricsEngine.periodStart(combinedPeriod)
-        val filteredProd = state.productionEntries.filter { it.dateEpoch >= cutoff }
-        SarimCard {
-          Text("All Stores Overview", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-          SarimToggleGroup(TimePeriod.entries, combinedPeriod, { it.label }, { combinedPeriod = it })
-          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            state.stores.forEach { store ->
-              val items = filteredProd.filter { it.storeKey == store.storeKey }
-              val sColor = storeColorForKey(store.storeKey, palette.isDark)
-              val scheme = MaterialTheme.colorScheme
-              Surface(shape = MaterialTheme.shapes.large, color = lerp(scheme.surfaceContainerHigh, sColor, 0.10f)) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                  Text(store.name, color = sColor, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
-                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SarimStatTile("Weight", SarimFormat.formatKg(items.sumOf { it.netWeightKg }), Modifier.weight(1f), sColor)
-                    SarimStatTile("Value", SarimFormat.formatRs(items.sumOf { it.totalValue }, false, hideMoney), Modifier.weight(1f), palette.green)
-                  }
-                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SarimStatTile("Cost", SarimFormat.formatRs(items.sumOf { it.totalFormulaCost }, false, hideMoney), Modifier.weight(1f), palette.red)
-                    SarimStatTile("Net Profit", SarimFormat.formatRs(items.sumOf { it.totalProfit }, false, hideMoney), Modifier.weight(1f), palette.emerald)
-                  }
-                }
+      if (state.isAdmin) {
+        item {
+         Column {
+          val dayRows = SarimStoreSummary.storeDayHistory(storeEntries, selectedStoreKey, selectedDate)
+          val sColor = storeColorForKey(selectedStoreKey, palette.isDark)
+          val st = storeStats[storePeriod] ?: SarimStoreSummary.Stats()
+          SarimCard {
+            Text("${selectedStore?.name ?: "Store"} production", color = sColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            SarimToggleGroup(SarimStoreSummary.Period.entries, storePeriod, { it.label }, { storePeriod = it })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimStatTile("Weight", SarimFormat.formatKg(st.qty), Modifier.weight(1f), sColor)
+              SarimStatTile("Value", SarimFormat.formatRs(st.value, false, hideMoney), Modifier.weight(1f), palette.green)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimStatTile("Cost", SarimFormat.formatRs(st.cost, false, hideMoney), Modifier.weight(1f), palette.red)
+              SarimStatTile("Net Profit", SarimFormat.formatRs(st.profit, false, hideMoney), Modifier.weight(1f), palette.emerald)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              SarimStatTile("Formula units", SarimFormat.formatQty(st.formulaUnits, 2), Modifier.weight(1f), palette.amber)
+              SarimStatTile("Formula cost", SarimFormat.formatRs(st.formulaCost, false, hideMoney), Modifier.weight(1f), palette.red)
+            }
+          }
+          Spacer(Modifier.height(10.dp))
+          Text(
+            "${selectedStore?.name ?: "Store"} · ${SarimFormat.formatDate(selectedDate)}",
+            color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+          )
+          Spacer(Modifier.height(6.dp))
+          if (dayRows.isEmpty()) {
+            SarimEmptyState("No records found for this selection.", "Production saved for this store on this date will appear here.")
+          } else {
+            val recs = displayRecords(dayRows)
+            recs.forEachIndexed { idx, rec ->
+              Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                LedgerRow(rec, idx) { sheetEntry = rec.item }
               }
             }
           }
+         }
+        }
+      }
+    } else {
+      // Combined View
+      item {
+        SarimCard {
+          Text("All Stores Overview", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+          SarimDatePickerField("Select Date", selectedDate, onDateSelected = { selectedDate = it }, testTag = "prod_combined_date")
+          SarimToggleGroup(SarimStoreSummary.Period.entries, combinedPeriod, { it.label }, { combinedPeriod = it })
+        }
+      }
+      overview?.stores?.forEach { sum ->
+        item(key = "store_${sum.storeKey}") {
+          StoreSummaryCard(
+            summary = sum,
+            accent = storeColorForKey(sum.storeKey, palette.isDark),
+            periodLabel = combinedPeriod.label,
+            hideMoney = hideMoney,
+            onCustomerClick = { id -> viewModel.openStandalone(StandaloneScreen.CustomerDetails(id)) },
+          )
+        }
+      }
+      overview?.combined?.let { total ->
+        item(key = "store_total") {
+          StoreSummaryCard(
+            summary = total,
+            accent = palette.cyan,
+            periodLabel = combinedPeriod.label,
+            hideMoney = hideMoney,
+            isTotal = true,
+            onCustomerClick = { id -> viewModel.openStandalone(StandaloneScreen.CustomerDetails(id)) },
+          )
         }
       }
       item {
-        val cutoff = SarimMetricsEngine.periodStart(combinedPeriod)
-        val filteredProd = state.productionEntries.filter { it.dateEpoch >= cutoff }
+        val filteredProd = state.productionEntries.filter { !it.isDeleted && SarimStoreSummary.inPeriod(it.dateEpoch, combinedPeriod, selectedDate) }
         SarimCard {
           Text("Compare Stores By", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           SarimToggleGroup(CompareMetric.entries, compareMetric, { it.label }, { compareMetric = it })
@@ -452,7 +537,7 @@ viewModel.launchSafely(
     }
 
     // Production History Accordion (admin only; entry-only for other roles)
-    if (state.isAdmin) item {
+    if (state.isAdmin && topView == ProdTopView.COMBINED) item {
       val entriesWithPhotos = remember(state.productionEntries) {
         state.productionEntries.filter { JsonCodecs.decodeStrings(it.photoUrisJson).isNotEmpty() }
       }
@@ -751,6 +836,109 @@ viewModel.launchSafely(
         }
       },
     )
+  }
+}
+
+
+/** Web `sxBreakdown`: collapsible "Sold by customer" list; rows open the customer. */
+@Composable
+private fun SoldByCustomerBreakdown(
+  entries: List<SarimStoreSummary.CustomerSold>,
+  onCustomerClick: (String) -> Unit,
+) {
+  val palette = LocalSarimPalette.current
+  var open by remember { mutableStateOf(false) }
+  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(
+      modifier = Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 6.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text("Sold by customer", color = palette.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+      Text("${entries.size} ${if (open) "▲" else "▼"}", color = palette.textMuted, fontSize = 12.sp)
+    }
+    if (open) {
+      if (entries.isEmpty()) {
+        Text("No sales in this period.", color = palette.textMuted, fontSize = 12.sp)
+      }
+      entries.forEach { e ->
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .then(if (e.customerId.isNotBlank()) Modifier.clickable { onCustomerClick(e.customerId) } else Modifier)
+            .padding(vertical = 4.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(e.name, color = if (e.customerId.isNotBlank()) palette.cyan else palette.textMuted, fontSize = 12.5.sp, modifier = Modifier.weight(1f))
+          Text(SarimFormat.formatKg(e.kg), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold))
+        }
+      }
+    }
+  }
+}
+
+/** Web per-store card / "Total combined" card from `updateAllStoresOverview`. */
+@Composable
+private fun StoreSummaryCard(
+  summary: SarimStoreSummary.StoreSummary,
+  accent: androidx.compose.ui.graphics.Color,
+  periodLabel: String,
+  hideMoney: Boolean,
+  onCustomerClick: (String) -> Unit,
+  isTotal: Boolean = false,
+) {
+  val palette = LocalSarimPalette.current
+  val money = { v: Double -> SarimFormat.formatRs(v, false, hideMoney) }
+  SarimCard(borderColor = if (isTotal) accent.copy(alpha = 0.5f) else null) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+      Text(summary.name, color = accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+      SarimChip(periodLabel, palette.textMuted)
+    }
+    if (isTotal) {
+      val margin = summary.marginPercent
+      Text("Net profit", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+      Text(money(summary.profit), color = if (summary.profit >= 0) palette.emerald else palette.red, style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold))
+      Text(
+        "on ${money(summary.value)} total value" + (margin?.let { " · $it% margin" } ?: ""),
+        color = palette.textMuted, fontSize = 11.5.sp,
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SarimStatTile("Total value", money(summary.value), Modifier.weight(1f), palette.green)
+        SarimStatTile("Total cost", money(summary.cost), Modifier.weight(1f), palette.red)
+      }
+      HorizontalDivider(color = palette.border)
+    }
+    Text(if (isTotal) "Total remaining" else "Remaining stock", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+      Text(SarimFormat.formatKg(summary.remaining), color = palette.textPrimary, style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold))
+      summary.percentLeft?.let { SarimChip("$it% left", if (summary.remaining > 0) palette.green else palette.amber) }
+    }
+    Text(
+      "${SarimFormat.formatKg(summary.totalIn)} in · ${SarimFormat.formatKg(summary.sold)} sold",
+      color = palette.textMuted, fontSize = 11.5.sp,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      SarimStatTile(if (isTotal) "Fresh production" else "Produced", SarimFormat.formatKg(summary.production), Modifier.weight(1f), palette.green)
+      if (summary.returns > 0.0) {
+        SarimStatTile(if (isTotal) "Total returns" else "Returns received", SarimFormat.formatKg(summary.returns), Modifier.weight(1f), palette.amber)
+      }
+      SarimStatTile(if (isTotal) "Total sold" else "Sold (Sales tab)", SarimFormat.formatKg(summary.sold), Modifier.weight(1f), palette.red)
+    }
+    SoldByCustomerBreakdown(summary.soldByCustomer, onCustomerClick)
+    HorizontalDivider(color = palette.border)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      SarimStatTile("Formula units", SarimFormat.formatQty(summary.formulaUnits, 2), Modifier.weight(1f), palette.amber)
+      SarimStatTile("Formula cost", money(summary.formulaCost), Modifier.weight(1f), palette.red)
+    }
+    if (!isTotal) {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SarimStatTile("Total value", money(summary.value), Modifier.weight(1f), palette.green)
+        SarimStatTile(
+          "Net profit", money(summary.profit), Modifier.weight(1f), palette.emerald,
+          subText = summary.marginPercent?.let { "$it% margin" },
+        )
+      }
+    }
   }
 }
 
