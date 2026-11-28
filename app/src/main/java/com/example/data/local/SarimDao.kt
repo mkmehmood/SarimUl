@@ -685,6 +685,9 @@ interface SarimDao {
   @Query("SELECT data FROM photos WHERE `key` = :photoKey AND deleted = 0 LIMIT 1")
   suspend fun getPhotoData(photoKey: String): String?
 
+  @Query("SELECT COALESCE(LENGTH(data), 0) FROM photos WHERE `key` = :photoKey AND deleted = 0 LIMIT 1")
+  suspend fun getPhotoCharLength(photoKey: String): Int?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertPhoto(item: PhotoRecordEntity)
 

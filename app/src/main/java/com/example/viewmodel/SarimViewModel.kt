@@ -356,6 +356,7 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   init {
+    com.example.util.PhotoResolver.lookup = { key -> repository.photoData(key) }
     startAutoSync()
     syncManager.onQuotaEvent = { reads, writes ->
       viewModelScope.launch {

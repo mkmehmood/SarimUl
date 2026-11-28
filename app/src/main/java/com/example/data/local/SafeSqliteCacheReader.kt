@@ -138,6 +138,15 @@ class SafeSqliteCacheReader(private val dao: SarimDao) {
     )
   }
 
+  /** Reads one photo's data by key, in chunks so large web-captured photos never overflow the cursor window. */
+  suspend fun getPhotoDataByKey(photoKey: String): String? {
+    val len = runCatchingExceptCancel { dao.getPhotoCharLength(photoKey) } ?: return null
+    if (len <= 0) return null
+    return runCatchingExceptCancel {
+      readTextInChunks(len) { pos, l -> dao.readPhotoDataChunk(photoKey, pos, l) }
+    }
+  }
+
   private suspend fun materializePhoto(meta: PhotoMetaRow): PhotoRecordEntity {
     val data = when {
       meta.isDataNull -> null

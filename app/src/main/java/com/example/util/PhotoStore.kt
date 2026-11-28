@@ -79,25 +79,48 @@ fun photoModel(raw: String): Any {
   }.getOrDefault(raw)
 }
 
+/** Lets the UI turn a photo key (what the web app and synced records store) into its image data. */
+object PhotoResolver {
+  @Volatile var lookup: (suspend (String) -> String?)? = null
+
+  fun isDirectModel(raw: String): Boolean {
+    val t = raw.trim()
+    return t.startsWith("data:", true) || t.startsWith("content:", true) || t.startsWith("file:", true) ||
+      t.startsWith("http", true) || t.startsWith("/")
+  }
+}
+
+private fun decodeDataUrl(raw: String, maxDim: Int): Bitmap? {
+  val t = raw.trim()
+  val payload = if (t.startsWith("data:", true)) {
+    val comma = t.indexOf(',')
+    if (comma < 0) return null
+    t.substring(comma + 1)
+  } else t
+  // Web data URLs can carry line breaks / URL-encoding; Base64.DEFAULT tolerates whitespace.
+  val clean = payload.replace("%2B", "+").replace("%2F", "/").replace("%3D", "=")
+  val bytes = Base64.decode(clean, Base64.DEFAULT)
+  val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+  BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+  var sample = 1
+  while (bounds.outWidth / (sample * 2) >= maxDim && bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
+  return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+}
+
 /**
- * Off-main-thread, down-sampled version of [photoModel]. Decoding a multi-megabyte base64 photo inside
- * composition blocked the UI thread (app "not responding"); this decodes on Dispatchers.Default instead
- * and shows nothing until the bitmap is ready.
+ * Off-main-thread, down-sampled photo model. Accepts data URLs, content/file/http URIs and photo keys
+ * (e.g. "prod:<id>:0" saved by the web app), resolving keys from the local photo store.
  */
 @Composable
 fun rememberPhotoModel(raw: String, maxDim: Int = 2048): State<Any?> =
-  produceState<Any?>(initialValue = if (raw.startsWith("data:", ignoreCase = true)) null else raw, raw) {
-    if (!raw.startsWith("data:", ignoreCase = true)) { value = raw; return@produceState }
+  produceState<Any?>(initialValue = if (PhotoResolver.isDirectModel(raw) && !raw.startsWith("data:", true)) raw else null, raw) {
+    if (raw.isBlank()) { value = null; return@produceState }
+    if (PhotoResolver.isDirectModel(raw) && !raw.startsWith("data:", true)) { value = raw; return@produceState }
     value = withContext(Dispatchers.Default) {
-      val comma = raw.indexOf(',')
-      if (comma < 0) return@withContext null
-      runCatching {
-        val bytes = Base64.decode(raw.substring(comma + 1), Base64.DEFAULT)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= maxDim && bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-      }.getOrNull()
+      var data: String? = if (raw.startsWith("data:", true)) raw else null
+      if (data == null) data = runCatching { PhotoResolver.lookup?.invoke(raw) }.getOrNull()
+      if (data == null) return@withContext null
+      if (PhotoResolver.isDirectModel(data) && !data.startsWith("data:", true)) return@withContext data
+      runCatching { decodeDataUrl(data, maxDim) }.getOrNull()
     }
   }

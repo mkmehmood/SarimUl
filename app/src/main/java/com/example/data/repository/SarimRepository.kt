@@ -169,7 +169,9 @@ class SarimRepository(
   }
 
   /** Photo data (data URL / URI) stored under [photoKey], or null when missing or too large to read. */
-  suspend fun photoData(photoKey: String): String? = runCatching { dao.getPhotoData(photoKey) }.getOrNull()?.takeIf { it.isNotBlank() }
+  suspend fun photoData(photoKey: String): String? =
+    runCatching { dao.getPhotoData(photoKey) }.getOrNull()?.takeIf { it.isNotBlank() }
+      ?: runCatching { safeReader.getPhotoDataByKey(photoKey) }.getOrNull()?.takeIf { it.isNotBlank() }
 
   private suspend fun upsertPhotoKey(photoKey: String, data: String, now: Long = System.currentTimeMillis()) {
     dao.upsertPhoto(
