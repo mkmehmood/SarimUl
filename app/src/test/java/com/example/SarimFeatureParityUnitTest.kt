@@ -217,7 +217,8 @@ class SarimFeatureParityUnitTest {
     assertEquals(3, visibleCaptions.size)
     assertTrue(visibleCaptions[0].contains("Zubair Store"))
     assertTrue(visibleCaptions[1].contains("50"))
-    assertTrue(visibleCaptions[2].contains("Profit"))
+    assertTrue(visibleCaptions[2].contains("Value"))
+    assertFalse(visibleCaptions.joinToString("\n").let { it.contains("Profit") || it.contains("Cost") })
 
     val hiddenCaptions = ProductionPhotoSharer.buildCaptionLines(entry, privacyHidden = true)
     assertEquals(2, hiddenCaptions.size)
