@@ -667,9 +667,19 @@ viewModel.launchSafely(
           Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             IconButton(
               onClick = {
-                val lines = filteredCusts.map { "${it.name.uppercase()} | ${it.phone} | Balance: ${SarimFormat.formatRs(it.currentCredit)}" }
-                PdfExporter.sharePdfReport(context, "customers", "Direct Customers", "${filteredCusts.size} customers", lines)
-                  .onFailure { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") }
+                com.example.util.CustomerListPdf.create(
+                  context,
+                  fileName = "All_Customers_List.pdf",
+                  title = "All Customers — Complete List",
+                  rows = com.example.util.CustomerListPdf.rowsFor(directCustomers, state.sales),
+                ).fold(
+                  onSuccess = { f ->
+                    if (com.example.util.DirectShare.shareViaChooser(context, f, "application/pdf", "All Customers — Complete List") == com.example.util.ShareOutcome.FAILED) {
+                      viewModel.postStatus("Unable to share the customer list")
+                    }
+                  },
+                  onFailure = { err -> viewModel.postStatus(err.localizedMessage ?: "Unable to export PDF") },
+                )
               },
             ) { Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export customers PDF", tint = palette.cyan) }
             IconButton(onClick = { viewModel.openStandalone(StandaloneScreen.CustomerEdit(null)) }) {
