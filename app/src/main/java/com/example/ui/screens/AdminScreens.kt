@@ -330,7 +330,7 @@ fun StoreManagerScreen(
         }
         SarimPrimaryButton(
           text = if (editingStoreKey == null) "Add Store" else "Update",
-          modifier = Modifier.weight(1.4f),
+          modifier = Modifier.weight(1f),
           onClick = {
             val clean = storeName.trim()
             if (clean.isEmpty()) {

@@ -245,8 +245,8 @@ fun GlassAlertDialog(
             Surface(
               modifier = Modifier
                 .weight(1f)
-                .height(46.dp)
-                .clip(RoundedCornerShape(50))
+                .height(SarimButtonDefaults.Height)
+                .clip(RoundedCornerShape(SarimButtonDefaults.CornerRadius))
                 .testTag("dialog_confirm_btn")
                 .clickable {
                   request.onConfirm(passwordText)

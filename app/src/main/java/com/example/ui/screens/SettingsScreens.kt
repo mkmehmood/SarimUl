@@ -228,34 +228,37 @@ fun BackupRestoreScreen(
     SarimCard {
       SarimFieldLabel("Backup")
       Text("Save a local copy of all data to your device", color = palette.textMuted, fontSize = 13.sp)
-      SarimPrimaryButton(
-        text = "Backup to Phone",
-        onClick = {
-          runCatching {
-            createDocLauncher.launch("gull_zubair_backup_${System.currentTimeMillis()}.gznd")
-          }.onFailure { err ->
-            viewModel.showDialog(AppDialogRequest("Backup Unavailable", err.localizedMessage ?: "No file picker available.", tone = DialogTone.ERROR, cancelLabel = null))
-          }
-        },
-      )
-      SarimSecondaryButton(
-        text = "Quick Share Backup File",
-        modifier = Modifier.fillMaxWidth(),
-        onClick = {
-          viewModel.launchSafely(errorTitle = "Quick Share Failed") {
-            val json = viewModel.syncRepo.exportBackupJson()
-            val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val file = File(dir, "gull_zubair_backup.gznd").apply { writeText(json) }
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-              type = "application/json"
-              putExtra(Intent.EXTRA_STREAM, uri)
-              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(SarimButtonDefaults.RowSpacing)) {
+        SarimPrimaryButton(
+          text = "Backup to Phone",
+          modifier = Modifier.weight(1f),
+          onClick = {
+            runCatching {
+              createDocLauncher.launch("gull_zubair_backup_${System.currentTimeMillis()}.gznd")
+            }.onFailure { err ->
+              viewModel.showDialog(AppDialogRequest("Backup Unavailable", err.localizedMessage ?: "No file picker available.", tone = DialogTone.ERROR, cancelLabel = null))
             }
-            context.startActivity(Intent.createChooser(intent, "Share Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-          }
-        },
-      )
+          },
+        )
+        SarimSecondaryButton(
+          text = "Quick Share",
+          modifier = Modifier.weight(1f),
+          onClick = {
+            viewModel.launchSafely(errorTitle = "Quick Share Failed") {
+              val json = viewModel.syncRepo.exportBackupJson()
+              val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+              val file = File(dir, "gull_zubair_backup.gznd").apply { writeText(json) }
+              val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+              val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+              }
+              context.startActivity(Intent.createChooser(intent, "Share Backup").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+          },
+        )
+      }
     }
 
     SarimCard {

@@ -555,6 +555,15 @@ fun SarimPopoverSelector(
   }
 }
 
+/** Every button (primary, secondary, danger, dialog actions) shares one size so pairs line up in a row. */
+object SarimButtonDefaults {
+  val Height = 48.dp
+  val CornerRadius = 24.dp
+  val HorizontalPadding = 14.dp
+  val TextSize = 14.sp
+  val RowSpacing = 10.dp
+}
+
 @Composable
 fun SarimPrimaryButton(
   text: String,
@@ -565,12 +574,12 @@ fun SarimPrimaryButton(
 ) {
   val scheme = MaterialTheme.colorScheme
   val source = remember { MutableInteractionSource() }
-  val (scale, corner) = rememberExpressivePress(source, restCorner = 28.dp, pressedCorner = 14.dp)
+  val (scale, corner) = rememberExpressivePress(source, restCorner = SarimButtonDefaults.CornerRadius, pressedCorner = 12.dp)
   val shape = RoundedCornerShape(corner)
   Box(
     modifier = modifier
       .fillMaxWidth()
-      .height(56.dp)
+      .height(SarimButtonDefaults.Height)
       .graphicsLayer { scaleX = scale; scaleY = scale }
       .clip(shape)
       .background(if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.12f), shape)
@@ -587,7 +596,10 @@ fun SarimPrimaryButton(
       text = text,
       color = if (enabled) scheme.onPrimary else scheme.onSurface.copy(alpha = 0.38f),
       fontWeight = FontWeight.Bold,
-      fontSize = 16.sp,
+      fontSize = SarimButtonDefaults.TextSize,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.padding(horizontal = SarimButtonDefaults.HorizontalPadding),
     )
   }
 }
@@ -602,11 +614,11 @@ fun SarimSecondaryButton(
 ) {
   val scheme = MaterialTheme.colorScheme
   val source = remember { MutableInteractionSource() }
-  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 12.dp)
+  val (scale, corner) = rememberExpressivePress(source, restCorner = SarimButtonDefaults.CornerRadius, pressedCorner = 12.dp)
   val shape = RoundedCornerShape(corner)
   Box(
     modifier = modifier
-      .defaultMinSize(minHeight = 48.dp)
+      .height(SarimButtonDefaults.Height)
       .graphicsLayer { scaleX = scale; scaleY = scale }
       .clip(shape)
       .background(scheme.secondaryContainer, shape)
@@ -615,7 +627,7 @@ fun SarimSecondaryButton(
     contentAlignment = Alignment.Center,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+      modifier = Modifier.padding(horizontal = SarimButtonDefaults.HorizontalPadding),
       horizontalArrangement = Arrangement.Center,
       verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -623,7 +635,7 @@ fun SarimSecondaryButton(
         Icon(icon, contentDescription = null, tint = scheme.onSecondaryContainer, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
       }
-      Text(text, color = scheme.onSecondaryContainer, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+      Text(text, color = scheme.onSecondaryContainer, fontSize = SarimButtonDefaults.TextSize, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
   }
 }
@@ -640,12 +652,12 @@ fun SarimDangerButton(
   val palette = LocalSarimPalette.current
   val scheme = MaterialTheme.colorScheme
   val source = remember { MutableInteractionSource() }
-  val (scale, corner) = rememberExpressivePress(source, restCorner = 24.dp, pressedCorner = 12.dp)
+  val (scale, corner) = rememberExpressivePress(source, restCorner = SarimButtonDefaults.CornerRadius, pressedCorner = 12.dp)
   val shape = RoundedCornerShape(corner)
   val content = if (enabled) palette.red else palette.textMuted
   Box(
     modifier = modifier
-      .defaultMinSize(minHeight = 48.dp)
+      .height(SarimButtonDefaults.Height)
       .graphicsLayer { scaleX = scale; scaleY = scale }
       .clip(shape)
       .background(if (enabled) palette.red.copy(alpha = 0.18f) else scheme.onSurface.copy(alpha = 0.08f), shape)
@@ -654,7 +666,7 @@ fun SarimDangerButton(
     contentAlignment = Alignment.Center,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+      modifier = Modifier.padding(horizontal = SarimButtonDefaults.HorizontalPadding),
       horizontalArrangement = Arrangement.Center,
       verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -662,7 +674,7 @@ fun SarimDangerButton(
         Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
       }
-      Text(text, color = content, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+      Text(text, color = content, fontSize = SarimButtonDefaults.TextSize, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
   }
 }
