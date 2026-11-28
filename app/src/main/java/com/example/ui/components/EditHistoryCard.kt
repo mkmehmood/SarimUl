@@ -35,20 +35,29 @@ fun EditHistoryCard(
   var confirmDeleteIndex by remember { mutableStateOf<Int?>(null) }
   val dateTimeFmt = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
 
-  val countBadge = if (entries.isNotEmpty()) "${entries.size} edit${if (entries.size == 1) "" else "s"}" else ""
-  val createdSummary = if (createdAt != null && createdAt > 0L) "Added ${dateTimeFmt.format(Date(createdAt))}" else ""
+  SarimCard(modifier = modifier) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Icon(
+          Icons.Rounded.History,
+          contentDescription = null,
+          tint = palette.cyan,
+          modifier = Modifier.size(16.dp),
+        )
+        SarimFieldLabel("Edit History")
+      }
+      if (entries.isNotEmpty()) {
+        SarimChip("${entries.size} edit${if (entries.size == 1) "" else "s"}", palette.cyan)
+      }
+    }
 
-  SarimCollapsibleCard(
-    title = "Edit History",
-    subtitle = createdSummary,
-    badgeText = countBadge,
-    badgeColor = palette.cyan,
-    leadingIcon = Icons.Rounded.History,
-    iconTint = palette.cyan,
-    tonalAccent = palette.cyan,
-    initiallyExpanded = false,
-    modifier = modifier,
-  ) {
     if (entries.isEmpty()) {
       Text(
         "No edits recorded yet.",

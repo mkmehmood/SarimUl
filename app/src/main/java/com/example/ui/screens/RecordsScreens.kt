@@ -701,17 +701,12 @@ fun AddRawMaterialScreen(
       }
 
       // Purchase history accordion
-      val hist = remember(state.purchases, matchedMaterial) {
-        state.purchases.filter { !it.isDeleted && (matchedMaterial == null || it.materialId == matchedMaterial.id) }
-          .sortedByDescending { it.dateEpoch }
-      }
-      SarimCollapsibleCard(
-        title = "Purchase history",
-        badgeText = "${hist.size}",
-        badgeColor = palette.amber,
-        tonalAccent = palette.amber,
-        initiallyExpanded = false,
-      ) {
+      SarimCard {
+        SarimFieldLabel("Purchase history")
+        val hist = remember(state.purchases, matchedMaterial) {
+          state.purchases.filter { !it.isDeleted && (matchedMaterial == null || it.materialId == matchedMaterial.id) }
+            .sortedByDescending { it.dateEpoch }
+        }
         AccordionHistoryList(
           records = hist.map { p ->
             HistoryRecordDisplay(

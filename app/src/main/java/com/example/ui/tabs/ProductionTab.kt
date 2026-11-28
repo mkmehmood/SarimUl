@@ -368,12 +368,8 @@ viewModel.launchSafely(
       item {
         val cutoff = SarimMetricsEngine.periodStart(combinedPeriod)
         val filteredProd = state.productionEntries.filter { it.dateEpoch >= cutoff }
-        SarimCollapsibleCard(
-          title = "All Stores Overview",
-          subtitle = "${combinedPeriod.label} · ${SarimFormat.formatKg(filteredProd.sumOf { it.netWeightKg })}",
-          tonalAccent = palette.cyan,
-          initiallyExpanded = false,
-        ) {
+        SarimCard {
+          Text("All Stores Overview", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           SarimToggleGroup(TimePeriod.entries, combinedPeriod, { it.label }, { combinedPeriod = it })
           Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             state.stores.forEach { store ->
@@ -400,13 +396,8 @@ viewModel.launchSafely(
       item {
         val cutoff = SarimMetricsEngine.periodStart(combinedPeriod)
         val filteredProd = state.productionEntries.filter { it.dateEpoch >= cutoff }
-        SarimCollapsibleCard(
-          title = "Compare Stores By",
-          badgeText = compareMetric.label,
-          badgeColor = palette.purple,
-          tonalAccent = palette.purple,
-          initiallyExpanded = false,
-        ) {
+        SarimCard {
+          Text("Compare Stores By", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           SarimToggleGroup(CompareMetric.entries, compareMetric, { it.label }, { compareMetric = it })
           val labels = state.stores.map { it.name }
           val vals = state.stores.map { store ->
@@ -429,12 +420,8 @@ viewModel.launchSafely(
       item {
         val cutoff = SarimMetricsEngine.periodStart(analyticsPeriod)
         val filtered = state.productionEntries.filter { it.dateEpoch >= cutoff }
-        SarimCollapsibleCard(
-          title = "Analytics",
-          subtitle = analyticsPeriod.label,
-          tonalAccent = palette.green,
-          initiallyExpanded = false,
-        ) {
+        SarimCard {
+          Text("Analytics", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
           SarimToggleGroup(
             listOf(TimePeriod.WEEKLY, TimePeriod.MONTHLY, TimePeriod.YEARLY, TimePeriod.ALL_TIME),
             analyticsPeriod,
@@ -455,46 +442,40 @@ viewModel.launchSafely(
 
     // Production History Accordion (admin only; entry-only for other roles)
     if (state.isAdmin) item {
-      SarimCollapsibleCard(
-        title = "Production History",
-        badgeText = "${state.productionEntries.size}",
-        badgeColor = palette.cyan,
-        tonalAccent = palette.cyan,
-        initiallyExpanded = false,
-      ) {
-        val records = state.productionEntries.map { p ->
-          val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
-          val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
-          HistoryRecordDisplay(
-            item = p,
-            dateEpoch = p.dateEpoch,
-            title = p.storeName,
-            subtitle = "${p.formulaName} · ${SarimFormat.formatQty(p.formulaUnitsUsed, 2)} units",
-            amountText = SarimFormat.formatKg(p.netWeightKg),
-            amountColor = storeColorForKey(p.storeKey, palette.isDark),
-            chipText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
-            chipColor = if (p.totalProfit >= 0) palette.green else palette.red,
-            detailMetrics = listOf(
-              "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
-              "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
-              "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
-              "Formula Units" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
-              "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
-              "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
-              "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
-              "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
-              "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
-            ),
-          )
-        }
-        AccordionHistoryList(
-          records = records,
-          yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-          monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-          daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-          onItemClick = { rec -> sheetEntry = rec.item },
+      Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+      Spacer(Modifier.height(6.dp))
+      val records = state.productionEntries.map { p ->
+        val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
+        val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
+        HistoryRecordDisplay(
+          item = p,
+          dateEpoch = p.dateEpoch,
+          title = p.storeName,
+          subtitle = "${p.formulaName} · ${SarimFormat.formatQty(p.formulaUnitsUsed, 2)} units",
+          amountText = SarimFormat.formatKg(p.netWeightKg),
+          amountColor = storeColorForKey(p.storeKey, palette.isDark),
+          chipText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+          chipColor = if (p.totalProfit >= 0) palette.green else palette.red,
+          detailMetrics = listOf(
+            "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
+            "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
+            "Net Weight" to SarimFormat.formatKg(p.netWeightKg),
+            "Formula Units" to SarimFormat.formatQty(p.formulaUnitsUsed, 2),
+            "Cost / kg" to SarimFormat.formatRs(pCostPerKg, true, hideMoney),
+            "Sale / kg" to SarimFormat.formatRs(pSalePerKg, true, hideMoney),
+            "Total Cost" to SarimFormat.formatRs(p.totalFormulaCost, false, hideMoney),
+            "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
+            "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
+          ),
         )
       }
+      AccordionHistoryList(
+        records = records,
+        yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
+        monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
+        daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
+        onItemClick = { rec -> sheetEntry = rec.item },
+      )
     }
   }
 

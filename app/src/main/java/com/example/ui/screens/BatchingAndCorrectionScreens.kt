@@ -1,10 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,7 +18,6 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
 import androidx.compose.material.icons.rounded.Calculate
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -167,31 +162,17 @@ private fun SavedCalcCard(
           Triple("Total batch weight", amt(d["totalWeight"] ?: calc.inputValue), palette.green),
         )
       }
-      var expanded by remember(calc.id) { mutableStateOf(false) }
-      val chevronRot by animateFloatAsState(
-        targetValue = if (expanded) 0f else -90f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMedium),
-        label = "savedCalcChevron",
-      )
       val shape = RoundedCornerShape(28.dp)
       Surface(
         modifier = Modifier.fillMaxWidth().clip(shape),
         shape = shape,
-        color = lerp(MaterialTheme.colorScheme.surfaceContainer, tone, if (expanded) 0.12f else 0.08f),
+        color = lerp(MaterialTheme.colorScheme.surfaceContainer, tone, 0.08f),
       ) {
         Column(
           modifier = Modifier.savedCalcPattern(tone, stripes = isFix).padding(16.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .defaultMinSize(minHeight = 48.dp)
-              .clip(RoundedCornerShape(18.dp))
-              .clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(shape = RoundedCornerShape(18.dp), color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, tone, 0.16f)) {
               Icon(Icons.Rounded.Calculate, contentDescription = null, tint = tone, modifier = Modifier.padding(12.dp).size(26.dp))
             }
@@ -200,64 +181,54 @@ private fun SavedCalcCard(
               Text(savedWhen(calc.updatedAt), color = palette.textMuted, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text(headAmount, color = tone, style = TabularNumberStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
+              Text(headAmount, color = tone, style = TabularNumberStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold), maxLines = 1)
               Surface(shape = RoundedCornerShape(50), color = tone.copy(alpha = 0.18f)) {
-                Text(if (isFix) "CORRECTION" else "BATCH", color = tone, fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp))
+                Text(if (isFix) "CORRECTION" else "BATCH", color = tone, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp))
               }
             }
-            Icon(
-              imageVector = Icons.Rounded.ExpandMore,
-              contentDescription = if (expanded) "Collapse ${calc.name}" else "Expand ${calc.name}",
-              tint = palette.textMuted,
-              modifier = Modifier.size(22.dp).rotate(chevronRot),
-            )
           }
-          AnimatedVisibility(visible = expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-              HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-              Box(
-                Modifier.fillMaxWidth().height(1.dp).drawBehind {
-                  drawLine(tone.copy(alpha = 0.55f), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
-                },
-              )
-              if (d.isEmpty()) {
-                if (calc.summaryText.isNotBlank()) Text(calc.summaryText, color = palette.textMuted, fontSize = 12.5.sp)
-              } else {
-                SavedCalcTileGrid(tiles)
-                if (rows.isNotEmpty()) {
-                  Surface(shape = RoundedCornerShape(22.dp), color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.green, 0.10f)) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                      Text(if (isFix) "INGREDIENTS TO ADD" else "REQUIRED INGREDIENTS", color = palette.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
-                      SavedCalcTileGrid(rows.map { (n, v, fix) -> Triple(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, unit)} $unit", palette.cyan) })
-                    }
-                  }
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+          Box(
+            Modifier.fillMaxWidth().height(1.dp).drawBehind {
+              drawLine(tone.copy(alpha = 0.55f), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
+            },
+          )
+          if (d.isEmpty()) {
+            if (calc.summaryText.isNotBlank()) Text(calc.summaryText, color = palette.textMuted, fontSize = 12.5.sp)
+          } else {
+            SavedCalcTileGrid(tiles)
+            if (rows.isNotEmpty()) {
+              Surface(shape = RoundedCornerShape(22.dp), color = lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.green, 0.10f)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                  Text(if (isFix) "INGREDIENTS TO ADD" else "REQUIRED INGREDIENTS", color = palette.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
+                  SavedCalcTileGrid(rows.map { (n, v, fix) -> Triple(n, "${if (fix && v > 0.0) "+" else ""}${fmtAmt(v, unit)} $unit", palette.cyan) })
                 }
               }
-              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SarimSecondaryButton(text = "Edit", onClick = { onOpen(calc) }, modifier = Modifier.weight(1f), testTag = "saved_calc_edit")
-                SarimDangerButton(
-                  text = "Delete",
-                  modifier = Modifier.weight(1f),
-                  testTag = "saved_calc_delete",
-                  onClick = {
-                    viewModel.showDialog(
-                      AppDialogRequest(
-                        title = deleteTitle,
-                        body = "$deleteBody (${calc.name})?",
-                        tone = DialogTone.PERMANENT,
-                        confirmLabel = "Delete",
-                        onConfirm = {
-                          viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
-                            viewModel.repository.deleteMixCalc(calc.id)
-                            onDeleted(calc.id)
-                          }
-                        },
-                      )
-                    )
-                  },
-                )
-              }
             }
+          }
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SarimSecondaryButton(text = "Edit", onClick = { onOpen(calc) }, modifier = Modifier.weight(1f), testTag = "saved_calc_edit")
+            SarimDangerButton(
+              text = "Delete",
+              modifier = Modifier.weight(1f),
+              testTag = "saved_calc_delete",
+              onClick = {
+                viewModel.showDialog(
+                  AppDialogRequest(
+                    title = deleteTitle,
+                    body = "$deleteBody (${calc.name})?",
+                    tone = DialogTone.PERMANENT,
+                    confirmLabel = "Delete",
+                    onConfirm = {
+                      viewModel.launchSafely(errorTitle = "Delete Failed", successMessage = deletedMessage) {
+                        viewModel.repository.deleteMixCalc(calc.id)
+                        onDeleted(calc.id)
+                      }
+                    },
+                  )
+                )
+              },
+            )
           }
         }
       }
@@ -401,14 +372,8 @@ fun BatchingScreen(
     } else if (plan.units <= 0.0) {
       SarimEmptyState("Enter a value", "Enter a value to build the batch.")
     } else {
-      SarimCollapsibleCard(
-        title = "Weigh Amounts",
-        subtitle = "${String.format(java.util.Locale.US, "%.3f", plan.units)} units · ${plan.rows.size} ingredients",
-        badgeText = "${fmtAmt(plan.totalWeight * mult, unit)} $unit",
-        badgeColor = palette.green,
-        tonalAccent = palette.green,
-        initiallyExpanded = false,
-      ) {
+      SarimCard(tonalAccent = palette.green) {
+        Text("Weigh Amounts", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         BatchLine("Units", String.format(java.util.Locale.US, "%.3f", plan.units), palette.textPrimary)
         BatchLine("Weight per Unit", "${fmtAmt(plan.unitWeight * mult, unit)} $unit", palette.textPrimary)
         BatchLine("Total Batch Weight", "${fmtAmt(plan.totalWeight * mult, unit)} $unit", palette.green, bold = true)

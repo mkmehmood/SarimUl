@@ -132,21 +132,22 @@ fun DailyLedgerScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
       ) {
         // Hero card: Cash In Hand + Sync + PDF Export
-        SarimCollapsibleHeaderCard(
-          tonalAccent = palette.green,
-          initiallyExpanded = false,
-          collapseDescription = "Cash In Hand",
-          headerContent = {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        SarimCard(tonalAccent = palette.green) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+          ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
               Text("CASH IN HAND", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
               Text(
                 text = SarimFormat.formatRs(totalCashInHand, privacyHidden = state.hideMoneyFigures),
                 color = if (totalCashInHand >= 0) palette.green else palette.red,
-                style = TabularNumberStyle.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
+                style = TabularNumberStyle.copy(fontSize = 26.sp, fontWeight = FontWeight.ExtraBold),
                 modifier = Modifier.testTag("dl_hero_amt"),
               )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
               if (!state.isOfflineSession) {
                 IconButton(
                   onClick = { viewModel.syncDataNow() },
@@ -179,29 +180,29 @@ fun DailyLedgerScreen(
                 Icon(Icons.Rounded.PictureAsPdf, contentDescription = "Export Daily Ledger PDF", tint = Color(0xFF022112), modifier = Modifier.size(20.dp))
               }
             }
-          },
-        ) {
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SarimStatTile(
-              label = "Cash",
-              value = SarimFormat.formatRs(cashGroup, privacyHidden = state.hideMoneyFigures),
-              modifier = Modifier.weight(1f),
-              accentColor = palette.green,
-            )
-            SarimStatTile(
-              label = "Bank",
-              value = SarimFormat.formatRs(bankGroup, privacyHidden = state.hideMoneyFigures),
-              modifier = Modifier.weight(1f),
-              accentColor = palette.cyan,
-            )
-            SarimStatTile(
-              label = "Others",
-              value = SarimFormat.formatRs(othersGroup, privacyHidden = state.hideMoneyFigures),
-              modifier = Modifier.weight(1f),
-              accentColor = palette.purple,
-            )
           }
-        }
+
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SarimStatTile(
+          label = "Cash",
+          value = SarimFormat.formatRs(cashGroup, privacyHidden = state.hideMoneyFigures),
+          modifier = Modifier.weight(1f),
+          accentColor = palette.green,
+        )
+        SarimStatTile(
+          label = "Bank",
+          value = SarimFormat.formatRs(bankGroup, privacyHidden = state.hideMoneyFigures),
+          modifier = Modifier.weight(1f),
+          accentColor = palette.cyan,
+        )
+        SarimStatTile(
+          label = "Others",
+          value = SarimFormat.formatRs(othersGroup, privacyHidden = state.hideMoneyFigures),
+          modifier = Modifier.weight(1f),
+          accentColor = palette.purple,
+        )
+      }
+    }
 
     // Summary Tiles
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -431,13 +432,8 @@ fun DailyLedgerScreen(
     }
 
     // Payment Channels Card
-    SarimCollapsibleCard(
-      title = "Payment Channels",
-      badgeText = "${channelBalances.size}",
-      badgeColor = palette.cyan,
-      tonalAccent = palette.cyan,
-      initiallyExpanded = false,
-    ) {
+    SarimCard {
+      Text("Payment Channels", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
       if (channelBalances.isEmpty()) {
         Text("No channel movements yet.", color = palette.textMuted, fontSize = 12.5.sp)
       } else {
@@ -467,13 +463,8 @@ fun DailyLedgerScreen(
     }
 
     // Category Summary Card
-    SarimCollapsibleCard(
-      title = "Category Summary",
-      badgeText = "${categorySummary.size}",
-      badgeColor = palette.amber,
-      tonalAccent = palette.amber,
-      initiallyExpanded = false,
-    ) {
+    SarimCard {
+      Text("Category Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
       if (categorySummary.isEmpty()) {
         Text("No expense categories recorded yet.", color = palette.textMuted, fontSize = 12.5.sp)
       } else {
@@ -502,13 +493,8 @@ fun DailyLedgerScreen(
     }
 
     // Cashbook Log & History
-    SarimCollapsibleCard(
-      title = "Cashbook Log & History",
-      badgeText = "${ledgerState.filteredEntries.size}",
-      badgeColor = palette.cyan,
-      tonalAccent = palette.cyan,
-      initiallyExpanded = false,
-    ) {
+    SarimCard {
+      Text("Cashbook Log & History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
       SarimToggleGroup(
         options = listOf("ALL", "IN", "OUT", "TRANSFER"),
         selected = ledgerState.typeFilter,

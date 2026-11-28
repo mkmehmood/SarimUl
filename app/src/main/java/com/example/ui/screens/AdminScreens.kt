@@ -166,21 +166,17 @@ fun AppAccountsScreen(
       )
     }
 
-    SarimCollapsibleCard(
-      title = "Registered Accounts",
-      badgeText = "${state.accounts.size}",
-      badgeColor = palette.cyan,
-      tonalAccent = palette.cyan,
-      initiallyExpanded = false,
-      headerActions = {
+    SarimCard {
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text("Registered Accounts (${state.accounts.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         SarimSecondaryButton(
           text = "Refresh",
           icon = Icons.Rounded.Refresh,
           testTag = "acct_refresh_btn",
           onClick = { viewModel.refreshAccounts() },
         )
-      },
-    ) {
+      }
+
       if (state.accounts.isEmpty()) {
         SarimEmptyState("No accounts configured", "Add an account above to assign role permissions.")
       } else {
@@ -189,73 +185,82 @@ fun AppAccountsScreen(
           val isOwner = targetUid == wsRootUid
           val isSelf = targetUid == state.currentUid
           val acctRoles = RolesHelper.parseRolesCsv(acct.rolesCsv)
-          SarimCollapsibleHeaderCard(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentPadding = 12.dp,
-            initiallyExpanded = false,
-            collapseDescription = acct.name.ifBlank { acct.email },
-            headerContent = {
-              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                  Text(acct.name.ifBlank { acct.email }, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
-                  if (isOwner) SarimChip("Owner", palette.green)
-                  if (isSelf) SarimChip("You", palette.cyan)
-                  if (!acct.approved) SarimChip("Suspended", palette.red)
-                }
-                Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
-                Text(
-                  text = "Roles: ${RolesHelper.roleNames(acctRoles)}",
-                  color = palette.cyan,
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.Medium,
-                )
-              }
-              if (!isOwner && !isSelf) {
-                IconButton(
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.toggleAccountSuspension(acct) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_suspend_$targetUid"),
-                ) {
-                  Icon(
-                    imageVector = if (acct.approved) Icons.Rounded.Block else Icons.Rounded.CheckCircle,
-                    contentDescription = if (acct.approved) "Suspend account" else "Reinstate account",
-                    tint = if (acct.approved) palette.amber else palette.green,
+          Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+          ) {
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(14.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  ) {
+                    Text(acct.name.ifBlank { acct.email }, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                    if (isOwner) SarimChip("Owner", palette.green)
+                    if (isSelf) SarimChip("You", palette.cyan)
+                    if (!acct.approved) SarimChip("Suspended", palette.red)
+                  }
+                  Text(acct.email, color = palette.textMuted, fontSize = 12.sp)
+                  Text(
+                    text = "Roles: ${RolesHelper.roleNames(acctRoles)}",
+                    color = palette.cyan,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
                   )
                 }
-                IconButton(
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.removeAccount(acct) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_remove_$targetUid"),
-                ) {
-                  Icon(Icons.Rounded.Delete, contentDescription = "Remove account", tint = palette.red)
+                if (!isOwner && !isSelf) {
+                  IconButton(
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.toggleAccountSuspension(acct) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_suspend_$targetUid"),
+                  ) {
+                    Icon(
+                      imageVector = if (acct.approved) Icons.Rounded.Block else Icons.Rounded.CheckCircle,
+                      contentDescription = if (acct.approved) "Suspend account" else "Reinstate account",
+                      tint = if (acct.approved) palette.amber else palette.green,
+                    )
+                  }
+                  IconButton(
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.removeAccount(acct) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_remove_$targetUid"),
+                  ) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "Remove account", tint = palette.red)
+                  }
                 }
               }
-            },
-          ) {
-            @OptIn(ExperimentalLayoutApi::class)
-            FlowRow(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              RolesHelper.ROLE_KEYS.forEach { roleKey ->
-                val active = roleKey in acctRoles
-                FilterChip(
-                  selected = active,
-                  enabled = !state.isAccountActionBusy,
-                  onClick = { viewModel.toggleAccountRole(acct, roleKey) },
-                  label = { Text(RolesHelper.ROLE_LABELS[roleKey] ?: roleKey, fontSize = 11.5.sp) },
-                  modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("acct_chip_${targetUid}_$roleKey"),
-                )
+
+              @OptIn(ExperimentalLayoutApi::class)
+              FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                RolesHelper.ROLE_KEYS.forEach { roleKey ->
+                  val active = roleKey in acctRoles
+                  FilterChip(
+                    selected = active,
+                    enabled = !state.isAccountActionBusy,
+                    onClick = { viewModel.toggleAccountRole(acct, roleKey) },
+                    label = { Text(RolesHelper.ROLE_LABELS[roleKey] ?: roleKey, fontSize = 11.5.sp) },
+                    modifier = Modifier
+                      .minimumInteractiveComponentSize()
+                      .testTag("acct_chip_${targetUid}_$roleKey"),
+                  )
+                }
               }
             }
           }
@@ -402,13 +407,8 @@ fun StoreManagerScreen(
       )
     }
 
-    SarimCollapsibleCard(
-      title = "Existing Stores",
-      badgeText = "${stores.size}",
-      badgeColor = palette.green,
-      tonalAccent = palette.green,
-      initiallyExpanded = false,
-    ) {
+    SarimCard {
+      Text("Existing Stores (${stores.size})", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
       stores.forEach { st ->
         val formulaName = formulas.firstOrNull { it.id == st.formulaId }?.name ?: "Unlinked"
         Surface(
@@ -518,31 +518,22 @@ fun CloseFinancialYearScreen(
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
     // Header band
-    SarimCollapsibleCard(
-      title = "CLOSE FINANCIAL YEAR",
-      subtitle = "Merge all records into opening balances",
-      badgeText = if (isComplete) "DONE" else "PREVIEW",
-      badgeColor = if (isComplete) palette.green else palette.red,
-      leadingIcon = Icons.Rounded.Warning,
-      iconTint = palette.red,
-      tonalAccent = palette.red,
-      initiallyExpanded = false,
-    ) {
-      Text(
-        "Creates an encrypted year-end backup first, merges historical transactions into opening balances, and broadcasts the close to synced devices.",
-        color = palette.textMuted,
-        fontSize = 12.5.sp,
-      )
+    SarimCard(tonalAccent = palette.red) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(Icons.Rounded.Warning, contentDescription = null, tint = palette.red, modifier = Modifier.size(28.dp))
+        Column(modifier = Modifier.weight(1f)) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("CLOSE FINANCIAL YEAR", color = palette.red, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            SarimChip(if (isComplete) "DONE" else "PREVIEW", if (isComplete) palette.green else palette.red)
+          }
+          Text("Merge all records into opening balances", color = palette.textMuted, fontSize = 12.5.sp)
+        }
+      }
     }
 
     // Preview Grid
-    SarimCollapsibleCard(
-      title = "Compaction Preview",
-      badgeText = "${state.sales.count { !it.isDeleted } + state.productionEntries.count { !it.isDeleted } + state.dailyLedger.count { !it.isDeleted } + state.paymentTransactions.count { !it.isDeleted }} entries",
-      badgeColor = palette.amber,
-      tonalAccent = palette.amber,
-      initiallyExpanded = false,
-    ) {
+    SarimCard {
+      SarimFieldLabel("Compaction Preview")
       PreviewRow("Sales & Rep Records", "${state.sales.count { !it.isDeleted }} entries")
       PreviewRow("Production Entries", "${state.productionEntries.count { !it.isDeleted }} entries")
       PreviewRow("Daily Ledger Entries", "${state.dailyLedger.count { !it.isDeleted }} entries")

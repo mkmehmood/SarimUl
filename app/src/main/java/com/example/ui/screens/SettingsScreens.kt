@@ -499,18 +499,16 @@ fun RecycleBinScreen(
       )
     } else {
       items.forEach { rec ->
-        SarimCollapsibleHeaderCard(
-          initiallyExpanded = false,
-          collapseDescription = rec.title,
-          headerContent = {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SarimCard {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(modifier = Modifier.weight(1f)) {
               SarimChip(rec.tabCategory, palette.cyan)
+              Spacer(Modifier.height(4.dp))
               Text(rec.title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
               Text("${rec.subtitle} · Deleted ${SarimFormat.formatDate(rec.deletedAt)}", color = palette.textMuted, fontSize = 11.5.sp)
             }
             Text(rec.amountText, color = palette.red, style = TabularNumberStyle.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold))
-          },
-        ) {
+          }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimSecondaryButton(
               text = "Restore",
@@ -659,16 +657,20 @@ fun DatabaseStructureScreen(
           else -> palette.cyan
         }
 
-        SarimCollapsibleCard(
-          title = "24h Firestore Quota",
-          subtitle = if (quota.lastReset > 0L) "Since ${SarimFormat.formatTime(quota.lastReset)}" else "Today",
-          badgeText = "${quota.reads}R · ${quota.writes}W",
-          badgeColor = palette.cyan,
-          tonalAccent = palette.cyan,
-          contentPadding = 14.dp,
-          initiallyExpanded = false,
-          modifier = Modifier.testTag("db_quota_card"),
-        ) {
+        SarimCard(tonalAccent = palette.cyan, contentPadding = 14.dp, modifier = Modifier.testTag("db_quota_card")) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("24h Firestore Quota", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(
+              text = if (quota.lastReset > 0L) "Since ${SarimFormat.formatTime(quota.lastReset)}" else "Today",
+              color = palette.textMuted,
+              fontSize = 11.5.sp,
+              fontFamily = JetBrainsMonoFontFamily,
+            )
+          }
           Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
               Text("Reads", color = palette.textMuted, fontSize = 12.sp)
@@ -718,13 +720,16 @@ fun DatabaseStructureScreen(
         } else {
           collections.forEach { col ->
             val hasMismatch = col.fsCount != null && col.fsCount != col.activeCount
-            SarimCollapsibleHeaderCard(
+            SarimCard(
               contentPadding = 14.dp,
               tonalAccent = if (hasMismatch) palette.amber else null,
-              initiallyExpanded = false,
-              collapseDescription = col.name,
               modifier = Modifier.testTag("db_col_${col.name}"),
-              headerContent = {
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
                 Row(
                   modifier = Modifier.weight(1f),
                   horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -736,15 +741,15 @@ fun DatabaseStructureScreen(
                     color = if (col.hasLiveListener) palette.cyan else palette.textMuted,
                   )
                   if (col.lockOnClose) {
-                    SarimChip("LOCKED", palette.amber)
+                    SarimChip("LOCKED ON CLOSE", palette.amber)
                   }
                 }
                 SarimChip(
                   text = "${col.pendingSyncCount} pending",
                   color = if (col.pendingSyncCount > 0) palette.amber else palette.green,
                 )
-              },
-            ) {
+              }
+
               FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -784,23 +789,25 @@ fun DatabaseStructureScreen(
       }
 
       "Config Docs" -> {
-        val configDocs = snap?.configDocs.orEmpty()
-        SarimCollapsibleCard(
-          title = if (snap?.isCloudLive == true) "Live Cloud Data" else "Local Schema Only",
-          subtitle = snap?.lastCloudCheckAt?.let { "Checked ${SarimFormat.formatTime(it)}" } ?: "Tap refresh to probe cloud",
-          badgeText = "${configDocs.size} docs",
-          badgeColor = if (snap?.isCloudLive == true) palette.green else palette.amber,
-          tonalAccent = if (snap?.isCloudLive == true) palette.green else palette.amber,
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
-          Text(
-            text = if (snap?.isCloudLive == true) "Cloud config status verified against Firestore." else "Showing local schema definitions until cloud is probed.",
-            color = palette.textMuted,
-            fontSize = 12.sp,
-          )
+        SarimCard(contentPadding = 12.dp) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            SarimChip(
+              text = if (snap?.isCloudLive == true) "Live Cloud Data" else "Local Schema Only",
+              color = if (snap?.isCloudLive == true) palette.green else palette.amber,
+            )
+            Text(
+              text = snap?.lastCloudCheckAt?.let { "Checked ${SarimFormat.formatTime(it)}" } ?: "Tap refresh to probe cloud",
+              color = palette.textMuted,
+              fontSize = 11.5.sp,
+            )
+          }
         }
 
+        val configDocs = snap?.configDocs.orEmpty()
         if (configDocs.isEmpty()) {
           SarimEmptyState("Loading config docs…", "Inspecting singleton configuration documents.")
         } else {
@@ -815,23 +822,24 @@ fun DatabaseStructureScreen(
               false -> palette.red
               null -> palette.textMuted
             }
-            SarimCollapsibleHeaderCard(
+            SarimCard(
               contentPadding = 12.dp,
-              initiallyExpanded = false,
-              collapseDescription = doc.path,
               modifier = Modifier.testTag("db_cfg_${doc.path.replace('/', '_')}"),
-              headerContent = {
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
                 Text(
                   text = doc.path,
                   color = palette.cyan,
                   fontWeight = FontWeight.Bold,
                   fontSize = 13.5.sp,
                   fontFamily = JetBrainsMonoFontFamily,
-                  modifier = Modifier.weight(1f),
                 )
                 SarimChip(statusLabel, statusColor)
-              },
-            ) {
+              }
               Text(doc.description, color = palette.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
               if (doc.listenerName.isNotBlank()) {
                 Text(
@@ -877,34 +885,36 @@ fun DatabaseStructureScreen(
       "Listeners" -> {
         val totalPending = collections.sumOf { it.pendingSyncCount }
         val listeners = snap?.listeners.orEmpty()
-        SarimCollapsibleCard(
-          title = "${listeners.size} Active Realtime Listeners",
-          subtitle = "Last Updated: ${SarimFormat.formatTime(state.lastUpdatedMillis)} · Pending Queue: $totalPending",
-          badgeText = if (state.isOfflineSession) "Offline Cache" else "Live Sync",
-          badgeColor = if (state.isOfflineSession) palette.amber else palette.green,
-          tonalAccent = if (state.isOfflineSession) palette.amber else palette.green,
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
+        SarimCard(contentPadding = 12.dp) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("${listeners.size} Active Realtime Listeners", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+            SarimChip(
+              text = if (state.isOfflineSession) "Offline Cache" else "Live Sync",
+              color = if (state.isOfflineSession) palette.amber else palette.green,
+            )
+          }
           Text(
-            text = "Realtime Firestore snapshot listeners keep active collections and workspace settings synchronized.",
+            text = "Last Updated: ${SarimFormat.formatTime(state.lastUpdatedMillis)} · Pending Queue: $totalPending",
             color = palette.textMuted,
             fontSize = 12.sp,
           )
         }
 
         listeners.forEachIndexed { idx, listener ->
-          SarimCollapsibleHeaderCard(
+          SarimCard(
             contentPadding = 12.dp,
-            initiallyExpanded = false,
-            collapseDescription = listener.name,
             modifier = Modifier.testTag("db_listener_$idx"),
-            headerContent = {
-              Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 SarimChip(
                   text = listener.kind,
                   color = if (listener.kind == "DOC") palette.cyan else palette.purple,
@@ -915,16 +925,13 @@ fun DatabaseStructureScreen(
                   fontWeight = FontWeight.Bold,
                   fontSize = 13.5.sp,
                   fontFamily = JetBrainsMonoFontFamily,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
                 )
               }
               SarimChip(
                 text = if (listener.isLive && !state.isOfflineSession) "ACTIVE" else "PAUSED",
                 color = if (listener.isLive && !state.isOfflineSession) palette.green else palette.amber,
               )
-            },
-          ) {
+            }
             Text(listener.purpose, color = palette.textPrimary, fontSize = 12.5.sp)
             Text(
               text = "Handler: ${listener.handler}",
@@ -944,14 +951,8 @@ fun DatabaseStructureScreen(
         val totalUp = snap?.totalUploaded ?: collections.sumOf { it.uploadedCount }
         val totalDown = snap?.totalDownloaded ?: collections.sumOf { it.downloadedCount }
 
-        SarimCollapsibleCard(
-          title = "Database Summary",
-          badgeText = "$activeSum active",
-          badgeColor = palette.green,
-          tonalAccent = palette.cyan,
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
+        SarimCard(contentPadding = 12.dp) {
+          Text("Database Summary", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("Collections", collections.size.toString(), Modifier.weight(1f), palette.cyan)
             SarimStatTile("Active Docs", activeSum.toString(), Modifier.weight(1f), palette.green)
@@ -966,12 +967,8 @@ fun DatabaseStructureScreen(
           }
         }
 
-        SarimCollapsibleCard(
-          title = "Collection Mapping Table",
-          badgeText = "${collections.size}",
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
+        SarimCard(contentPadding = 12.dp) {
+          Text("Collection Mapping Table", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
           Row(modifier = Modifier.fillMaxWidth()) {
             Text("Firestore", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
             Text("SQLite", color = palette.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
@@ -994,13 +991,8 @@ fun DatabaseStructureScreen(
           }
         }
 
-        SarimCollapsibleCard(
-          title = "Firestore Schema Tree",
-          badgeColor = palette.purple,
-          tonalAccent = palette.purple,
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
+        SarimCard(contentPadding = 12.dp) {
+          Text("Firestore Schema Tree", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
           val schemaTree = remember {
             """
 users/{uid} (root workspace doc: roles, approved, ownerUid, lastWrite)
@@ -1047,14 +1039,8 @@ users/{uid} (root workspace doc: roles, approved, ownerUid, lastWrite)
           )
         }
 
-        SarimCollapsibleCard(
-          title = "Financial Year Status",
-          badgeText = "FY ${snap?.fyCloseCount ?: 0}",
-          badgeColor = palette.amber,
-          tonalAccent = palette.amber,
-          contentPadding = 12.dp,
-          initiallyExpanded = false,
-        ) {
+        SarimCard(contentPadding = 12.dp) {
+          Text("Financial Year Status", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SarimStatTile("FY Close Count", (snap?.fyCloseCount ?: 0).toString(), Modifier.weight(1f), palette.purple)
             SarimStatTile("Last Closed", snap?.lastYearClosedDate ?: "Never", Modifier.weight(1.4f), palette.amber)
