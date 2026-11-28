@@ -823,6 +823,7 @@ fun SalesTab(
                     underline = true,
                     onClick = {
                       runCatching {
+                        com.example.util.AppLockGuard.suppressFor()
                         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${c.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                       }.onFailure { viewModel.postStatus("No dialer app available") }
                     },

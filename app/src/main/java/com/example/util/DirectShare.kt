@@ -26,6 +26,27 @@ fun toInternationalDigits(raw: String?, countryCode: String = "92"): String {
 enum class ShareOutcome { SHARED_DIRECT, SHARED_CHOOSER, NOT_INSTALLED, FAILED }
 
 /**
+ * Prevents background-resume biometric re-lock from firing immediately when the user leaves the app
+ * intentionally for a system picker, share sheet, dialer, or maps app.
+ */
+object AppLockGuard {
+  @Volatile private var suppressUntilMs: Long = 0L
+
+  fun suppressFor(durationMs: Long = 90_000L) {
+    val next = System.currentTimeMillis() + durationMs
+    if (next > suppressUntilMs) suppressUntilMs = next
+  }
+
+  fun isSuppressed(nowMs: Long = System.currentTimeMillis()): Boolean = nowMs < suppressUntilMs
+
+  fun consumeIfSuppressed(nowMs: Long = System.currentTimeMillis()): Boolean {
+    val active = nowMs < suppressUntilMs
+    suppressUntilMs = 0L
+    return active
+  }
+}
+
+/**
  * Port of the web app's `native.js` + `DirectSharePlugin`: send files or text straight to a
  * WhatsApp chat (WhatsApp / WhatsApp Business), open a chat, or open the SMS composer, falling
  * back to the system share sheet when the target app is missing.
@@ -50,6 +71,7 @@ object DirectShare {
   fun openWhatsAppChat(context: Context, phone: String?): Boolean {
     val digits = toInternationalDigits(phone)
     if (digits.isEmpty()) return false
+    AppLockGuard.suppressFor()
     val pkg = installedWhatsApp(context)
     val direct = Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send?phone=${Uri.encode(digits)}"))
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -92,6 +114,7 @@ object DirectShare {
     val pkg = installedWhatsApp(context)
     if (pkg != null) {
       try {
+        AppLockGuard.suppressFor()
         val intent = build()
         val digits = toInternationalDigits(phone)
         if (digits.isNotEmpty()) intent.putExtra("jid", "$digits@s.whatsapp.net")
@@ -104,6 +127,7 @@ object DirectShare {
       }
     }
     return try {
+      AppLockGuard.suppressFor()
       val chooser = Intent.createChooser(build(), title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       context.startActivity(chooser)
       ShareOutcome.SHARED_CHOOSER
@@ -115,6 +139,7 @@ object DirectShare {
   /** Open the default messages app with [text] prefilled (web `sendText`). */
   fun sendSms(context: Context, text: String, phone: String? = null): ShareOutcome {
     return try {
+      AppLockGuard.suppressFor()
       val digits = toInternationalDigits(phone)
       val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${if (digits.isNotEmpty()) "+$digits" else ""}"))
         .putExtra("sms_body", text)
@@ -134,11 +159,13 @@ object DirectShare {
     val digits = toInternationalDigits(phone)
     val pkg = installedWhatsApp(context)
     if (pkg != null) {
+      AppLockGuard.suppressFor()
       val uri = "whatsapp://send?" + (if (digits.isNotEmpty()) "phone=${Uri.encode(digits)}&" else "") + "text=${Uri.encode(text)}"
       val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       if (runCatching { context.startActivity(intent) }.isSuccess) return ShareOutcome.SHARED_DIRECT
     }
     return try {
+      AppLockGuard.suppressFor()
       val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_SUBJECT, title)
       context.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
       ShareOutcome.SHARED_CHOOSER
@@ -151,6 +178,7 @@ object DirectShare {
   fun shareViaChooser(context: Context, file: File, mime: String, title: String = "Share"): ShareOutcome {
     if (!file.exists()) return ShareOutcome.FAILED
     return try {
+      AppLockGuard.suppressFor()
       val send = Intent(Intent.ACTION_SEND)
         .setType(mime)
         .putExtra(Intent.EXTRA_STREAM, uriFor(context, file))

@@ -64,6 +64,13 @@ fun EntityDetailsScreen(
 
   var searchQuery by remember { mutableStateOf("") }
   var filter by remember { mutableStateOf("All") }
+  val focusEntityTxId = state.pendingRecordFocus?.takeIf { it.targetKey == "transactions" }?.recordId
+  LaunchedEffect(focusEntityTxId) {
+    if (focusEntityTxId != null) {
+      searchQuery = ""
+      filter = "All"
+    }
+  }
 
   val filtered = remember(txs, searchQuery, filter) {
     val q = searchQuery.trim().lowercase()
@@ -100,6 +107,7 @@ fun EntityDetailsScreen(
               if (entity.phone.isBlank()) Modifier else Modifier.combinedClickable(
                 onClick = {
                   runCatching {
+                    com.example.util.AppLockGuard.suppressFor()
                     context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${entity.phone}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                   }.onFailure { viewModel.postStatus("No dialer app available") }
                 },
@@ -221,6 +229,9 @@ fun EntityDetailsScreen(
         monthSummary = { "" },
         daySummary = { "" },
         emptySubtitle = "No payment history found for ${entity.name}.",
+        itemKey = { it.id },
+        focusRecordKey = focusEntityTxId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         actions = HistoryRecordActions<PaymentTransactionEntity>(
           deleteLabel = "Delete",
           onDelete = { tx ->
@@ -295,6 +306,13 @@ fun ExpenseDetailsScreen(
   val rangeOptions = listOf("Today", "This Week", "This Month", "This Year", "All Time")
   var rangeIndex by remember { mutableIntStateOf(4) }
   var searchQuery by remember { mutableStateOf("") }
+  val focusExpenseTxId = state.pendingRecordFocus?.takeIf { it.targetKey == "expenses" }?.recordId
+  LaunchedEffect(focusExpenseTxId) {
+    if (focusExpenseTxId != null) {
+      searchQuery = ""
+      rangeIndex = 4
+    }
+  }
   var quickAmount by remember { mutableStateOf("") }
   var quickDesc by remember { mutableStateOf("") }
 
@@ -319,6 +337,8 @@ fun ExpenseDetailsScreen(
   }
   val total = remember(txs) { txs.sumOf { it.amount } }
 
+  val context = androidx.compose.ui.platform.LocalContext.current
+
   Column(
     modifier = Modifier
       .fillMaxSize()
@@ -327,11 +347,61 @@ fun ExpenseDetailsScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     SarimCard(tonalAccent = palette.red) {
-      Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-      Text(
-        "Total: ${SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
-        color = palette.red,
-        style = TabularNumberStyle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Text(expenseName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+          Text(
+            "Total: ${SarimFormat.formatRs(total, showSymbol = false, privacyHidden = state.hideMoneyFigures)}",
+            color = palette.red,
+            style = TabularNumberStyle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+          )
+        }
+        SarimSecondaryButton(
+          text = "Export PDF",
+          modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+          testTag = "expense_export_pdf_btn",
+          onClick = {
+            if (txs.isEmpty()) {
+              viewModel.postStatus("No records to export in ${rangeOptions[rangeIndex]}")
+              return@SarimSecondaryButton
+            }
+            val nowMs = System.currentTimeMillis()
+            com.example.util.PdfExporter.createExpenseCategoryPdf(
+              context = context,
+              expenseName = expenseName,
+              rangeLabel = rangeOptions[rangeIndex],
+              generatedLabel = "${SarimFormat.formatDate(nowMs)} ${SarimFormat.formatClock(nowMs)}",
+              expenses = txs,
+              privacyHidden = state.hideMoneyFigures,
+            ).fold(
+              onSuccess = { pdfFile ->
+                val out = com.example.util.DirectShare.shareViaChooser(
+                  context = context,
+                  file = pdfFile,
+                  mime = "application/pdf",
+                  title = "Expense Report — $expenseName",
+                )
+                if (out == com.example.util.ShareOutcome.FAILED) {
+                  viewModel.postStatus("Unable to share expense PDF")
+                }
+              },
+              onFailure = { err ->
+                viewModel.postStatus(err.localizedMessage ?: "Failed to export PDF")
+              },
+            )
+          },
+        )
+      }
+      SarimToggleGroup(
+        options = rangeOptions.indices.toList(),
+        selected = rangeIndex,
+        labelOf = { idx -> rangeOptions[idx].replace("This ", "") },
+        onSelect = { rangeIndex = it },
+        testTagPrefix = "expense_range",
       )
     }
 
@@ -454,6 +524,9 @@ fun ExpenseDetailsScreen(
         monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         emptySubtitle = "No expense records for $expenseName in this range.",
+        itemKey = { it.id },
+        focusRecordKey = focusExpenseTxId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         actions = HistoryRecordActions<PaymentTransactionEntity>(
           deleteLabel = "Delete",
           onDelete = { tx ->

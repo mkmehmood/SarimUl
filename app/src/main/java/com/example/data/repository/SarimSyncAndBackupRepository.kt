@@ -7,6 +7,7 @@ import com.example.data.model.RolesHelper
 import com.example.data.model.SarimUuid
 import com.example.data.remote.*
 import com.example.util.SarimFormat
+import java.util.Collections
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,6 +83,36 @@ class SarimSyncAndBackupRepository(
   val uuidRegistry: UuidSyncRegistry = UuidSyncRegistry(RoomKvStorePersistence(dao, safeReader)),
 ) {
   private val recycleRestoreEngine = SarimRecycleRestoreEngine(dao, uuidRegistry)
+  var onRemoteActivityAlerts: ((List<RemoteActivityAlert>) -> Unit)? = null
+  private val notifiedActivityIds = Collections.synchronizedSet(LinkedHashSet<String>())
+
+  suspend fun captureActivityBaseline(): Map<String, Set<String>> =
+    RemoteActivityPlanner.captureKnownIdsSnapshot(dao)
+
+  fun dispatchRemoteAlerts(
+    beforeKnownIds: Map<String, Set<String>>,
+    afterRecords: Map<String, List<RemoteActivityRecord>>,
+    now: Long = System.currentTimeMillis(),
+  ) {
+    val cb = onRemoteActivityAlerts ?: return
+    val rawAlerts = RemoteActivityPlanner.diffSnapshots(
+      beforeKnownIdsByCollection = beforeKnownIds,
+      afterRecordsByCollection = afterRecords,
+      isOwnRecord = { id -> uuidRegistry.isLocalOrigin(id) || id in notifiedActivityIds },
+      nowMs = now,
+    )
+    if (rawAlerts.isEmpty()) return
+    rawAlerts.forEach { if (it.targetId.isNotBlank()) notifiedActivityIds += it.targetId }
+    if (notifiedActivityIds.size > 2000) {
+      synchronized(notifiedActivityIds) {
+        while (notifiedActivityIds.size > 1000) {
+          val first = notifiedActivityIds.firstOrNull() ?: break
+          notifiedActivityIds.remove(first)
+        }
+      }
+    }
+    cb(rawAlerts)
+  }
 
   suspend fun countPendingSync(): Int {
     return dao.countOutbox() +
@@ -969,6 +1000,11 @@ class SarimSyncAndBackupRepository(
     isGated: Boolean,
     selfUid: String,
   ) {
+    val activityBaseline = if (onRemoteActivityAlerts != null) {
+      runCatching { RemoteActivityPlanner.captureKnownIdsSnapshot(dao) }.getOrDefault(emptyMap())
+    } else emptyMap()
+    val pulledActivityRecords = linkedMapOf<String, List<RemoteActivityRecord>>()
+
     // 1. Deletions first
     dao.purgeExpiredDeletions(now)
     syncManager.fetchCollectionDocs(SarimWebSchema.COL_DELETIONS).getOrNull()?.let { remoteDeletions ->
@@ -988,6 +1024,9 @@ class SarimSyncAndBackupRepository(
       applyRemoteFormulasDoc(doc)
     }
     syncManager.fetchSingletonDoc(SarimWebSchema.COL_DAILY_LEDGER, "entries").getOrNull()?.let { doc ->
+      if (activityBaseline.isNotEmpty()) {
+        pulledActivityRecords["daily_ledger"] = RemoteActivityPlanner.mapLedgerDocEntries(doc)
+      }
       applyRemoteDailyLedgerDoc(doc)
     }
     syncManager.fetchSingletonDoc(SarimWebSchema.COL_SETTINGS, "config").getOrNull()?.let { doc ->
@@ -1015,8 +1054,15 @@ class SarimSyncAndBackupRepository(
     // 4. Record collections
     SarimWebSchema.RECORD_COLLECTIONS.forEach { col ->
       syncManager.fetchCollectionDocs(col).getOrNull()?.let { docs ->
+        if (activityBaseline.isNotEmpty() && col in RemoteActivityPlanner.REMOTE_KEYS) {
+          pulledActivityRecords[col] = docs.map { (id, m) -> RemoteActivityPlanner.mapRawDoc(col, id, m) }
+        }
         applyRemoteRecordSnapshot(collection = col, docs = docs, removedIds = emptyList(), isFullPull = true)
       }
+    }
+
+    if (activityBaseline.isNotEmpty() && pulledActivityRecords.isNotEmpty()) {
+      dispatchRemoteAlerts(activityBaseline, pulledActivityRecords, now)
     }
 
     // 5. Pending approvals

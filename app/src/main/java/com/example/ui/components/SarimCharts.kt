@@ -213,7 +213,11 @@ fun ColumnBarChart(
     return
   }
 
-  val maxVal = (safeValues.maxOrNull() ?: 1.0).takeIf { it.isFinite() }?.coerceAtLeast(1.0) ?: 1.0
+  val hasNeg = safeValues.any { it < 0.0 }
+  val maxPos = (safeValues.maxOfOrNull { it.coerceAtLeast(0.0) } ?: 0.0)
+  val maxNeg = (safeValues.minOfOrNull { it.coerceAtMost(0.0) }?.let { kotlin.math.abs(it) } ?: 0.0)
+  val totalSpan = (maxPos + maxNeg).takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Canvas(
       modifier = Modifier
@@ -231,17 +235,37 @@ fun ColumnBarChart(
       if (size.width <= 0f || size.height <= 0f) return@Canvas
       val slotW = size.width / safeValues.size.coerceAtLeast(1)
       val barW = (slotW * 0.55f).coerceAtMost(38.dp.toPx()).coerceAtLeast(1f)
+      val usableH = size.height * 0.88f
+      val topPad = size.height * 0.06f
+      val zeroY = if (!hasNeg) size.height else topPad + usableH * (maxPos / totalSpan).toFloat()
+      if (hasNeg) {
+        drawLine(palette.border, Offset(0f, zeroY), Offset(size.width, zeroY), strokeWidth = 1.dp.toPx())
+      }
       safeValues.forEachIndexed { i, v ->
-        val h = ((v / maxVal).toFloat().coerceIn(0f, 1f)) * (size.height * 0.9f)
         val x = i * slotW + (slotW - barW) / 2f
-        val y = size.height - h
         val c = colors.getOrElse(i) { palette.green }
-        drawRoundRect(
-          color = if (selectedIdx == null || selectedIdx == i) c else c.copy(alpha = 0.45f),
-          topLeft = Offset(x, y),
-          size = Size(barW, h),
-          cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx(), 6.dp.toPx()),
-        )
+        val drawColor = if (selectedIdx == null || selectedIdx == i) c else c.copy(alpha = 0.45f)
+        if (!hasNeg) {
+          val h = ((v / totalSpan).toFloat().coerceIn(0f, 1f)) * (size.height * 0.9f)
+          val y = size.height - h
+          drawRoundRect(
+            color = drawColor,
+            topLeft = Offset(x, y),
+            size = Size(barW, h),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx(), 6.dp.toPx()),
+          )
+        } else {
+          val h = ((kotlin.math.abs(v) / totalSpan).toFloat().coerceIn(0f, 1f)) * usableH
+          val y = if (v >= 0.0) zeroY - h else zeroY
+          if (h > 0.5f) {
+            drawRoundRect(
+              color = drawColor,
+              topLeft = Offset(x, y),
+              size = Size(barW, h),
+              cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx(), 5.dp.toPx()),
+            )
+          }
+        }
       }
     }
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
@@ -251,9 +275,10 @@ fun ColumnBarChart(
     }
     selectedIdx?.let { idx ->
       if (idx in labels.indices && idx in safeValues.indices) {
+        val selVal = safeValues[idx]
         Text(
-          "${labels[idx]}: ${SarimFormat.formatSouthAsian(safeValues[idx])}",
-          color = palette.green,
+          "${labels[idx]}: ${SarimFormat.formatSouthAsian(selVal)}",
+          color = if (selVal < 0.0) palette.red else palette.green,
           style = TabularNumberStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
         )
       }

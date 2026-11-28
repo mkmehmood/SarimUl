@@ -460,6 +460,9 @@ fun FactoryTab(
           yearSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
           monthSummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
           daySummary = { items -> "Cost ${SarimFormat.formatRs(items.sumOf { it.item.totalCost }, false, hideMoney)}" },
+          itemKey = { it.id },
+          focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "factory" }?.recordId,
+          onFocusConsumed = { viewModel.consumePendingRecordFocus() },
           onItemClick = { rec -> sheetBatch = rec.item },
         )
       }

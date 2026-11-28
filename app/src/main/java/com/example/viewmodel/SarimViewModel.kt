@@ -83,6 +83,7 @@ data class SarimUiState(
   val activeDialog: AppDialogRequest? = null,
   val photoViewerUris: List<String> = emptyList(),
   val photoViewerIndex: Int = 0,
+  val pendingRecordFocus: PendingRecordFocus? = null,
   val statusMessage: String? = null,
   val lastUpdatedMillis: Long = System.currentTimeMillis(),
 ) {
@@ -117,6 +118,13 @@ data class ShareAfterSave(val kind: com.example.util.StatementKind, val name: St
 
 /** A day invoice waiting for its save to land before it is rendered and shared (web `shareInvoiceAfterSave`). */
 data class PendingInvoiceShare(val kind: com.example.util.StatementKind, val name: String, val dayKey: String, val requestedAt: Long)
+
+/** Target record to expand, scroll to, and open after tapping a notification (web `notify-open.js`). */
+data class PendingRecordFocus(
+  val targetKey: String,
+  val recordId: String,
+  val nonce: Long = System.currentTimeMillis(),
+)
 
 class SarimViewModel(application: Application) : AndroidViewModel(application) {
   private val db = SarimDatabase.getInstance(application)
@@ -272,7 +280,12 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     override fun onDailyLedgerDoc(doc: Map<String, Any>) {
       viewModelScope.launch {
         runCatching {
+          val beforeIds = syncRepo.captureActivityBaseline()
           syncRepo.applyRemoteDailyLedgerDoc(doc)
+          syncRepo.dispatchRemoteAlerts(
+            beforeKnownIds = beforeIds,
+            afterRecords = mapOf("daily_ledger" to RemoteActivityPlanner.mapLedgerDocEntries(doc)),
+          )
           repository.syncLedgerFromTabs()
           refreshDiagnostics()
         }
@@ -312,7 +325,16 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     ) {
       viewModelScope.launch {
         runCatching {
+          val beforeIds = if (collection in RemoteActivityPlanner.REMOTE_KEYS) {
+            syncRepo.captureActivityBaseline()
+          } else emptyMap()
           syncRepo.applyRemoteRecordSnapshot(collection, docs, removedIds, isFullPull = false)
+          if (beforeIds.isNotEmpty()) {
+            syncRepo.dispatchRemoteAlerts(
+              beforeKnownIds = beforeIds,
+              afterRecords = mapOf(collection to docs.map { (id, m) -> RemoteActivityPlanner.mapRawDoc(collection, id, m) }),
+            )
+          }
           if (collection in setOf(
               SarimWebSchema.COL_SALES,
               SarimWebSchema.COL_REP,
@@ -333,6 +355,19 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         if (reads > 0) uuidRegistry.trackFirestoreRead(reads)
         if (writes > 0) uuidRegistry.trackFirestoreWrite(writes)
+      }
+    }
+    syncRepo.onRemoteActivityAlerts = { alerts ->
+      val ctx = getApplication<Application>()
+      alerts.forEach { alert ->
+        val target = SarimPush.parseTarget(null, alert.targetKey, alert.targetId)
+        SarimPush.showRemoteActivityNotification(
+          context = ctx,
+          title = alert.title,
+          body = alert.body,
+          target = target,
+          tag = alert.tag,
+        )
       }
     }
     viewModelScope.launch {
@@ -864,13 +899,149 @@ class SarimViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { runCatching { syncManager.registerPushToken() } }
   }
 
+  private var wasBackgroundedForLock: Boolean = false
+
   /** Tap on an approval alert (web `openApprovalFromPush`). */
   fun openApprovalsFromPush() {
     if (_uiState.value.isAdmin) openStandalone(StandaloneScreen.Approvals)
   }
 
+  fun consumePendingRecordFocus() {
+    _uiState.update { it.copy(pendingRecordFocus = null) }
+  }
+
+  fun openNotificationTarget(target: SarimPush.NotificationTarget) {
+    val st = _uiState.value
+    when (target.k) {
+      "view" -> when (target.id) {
+        "approvals" -> openApprovalsFromPush()
+        "recycle-bin" -> openStandalone(StandaloneScreen.RecycleBin)
+        "store-manager" -> openStandalone(StandaloneScreen.StoreManager)
+        "formula-store" -> openStandalone(StandaloneScreen.FormulaStore)
+        "daily-ledger" -> openRoute(SarimRoute.Ledger)
+        "tab:sales" -> selectTab(MainTab.SALES)
+        "tab:rep" -> selectTab(MainTab.REP_SALES)
+        "tab:prod" -> selectTab(MainTab.PRODUCTION)
+        "tab:calc" -> selectTab(MainTab.CALCULATOR)
+        "tab:factory" -> selectTab(MainTab.FACTORY)
+        "tab:payments" -> selectTab(MainTab.PAYMENTS)
+      }
+      "sales", "rep" -> {
+        val isRep = target.k == "rep"
+        val sale = st.sales.firstOrNull { !it.isDeleted && it.id == target.id }
+        if (sale != null && sale.customerId.isNotBlank()) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus(target.k, target.id)) }
+          openStandalone(
+            if (isRep) StandaloneScreen.RepCustomerDetails(sale.customerId)
+            else StandaloneScreen.CustomerDetails(sale.customerId)
+          )
+        } else {
+          selectTab(if (isRep) MainTab.REP_SALES else MainTab.SALES)
+          if (sale == null) postStatus("That transaction is not available locally yet.")
+        }
+      }
+      "clients" -> {
+        val client = st.customers.firstOrNull { !it.isDeleted && it.isRepCustomer && it.id == target.id }
+        if (client != null) {
+          openStandalone(StandaloneScreen.RepCustomerDetails(client.id))
+        } else {
+          selectTab(MainTab.REP_SALES)
+        }
+      }
+      "transactions" -> {
+        val transfer = st.paymentTransfers.firstOrNull {
+          !it.isDeleted && (it.id == target.id || it.outDocId == target.id || it.inDocId == target.id)
+        }
+        if (transfer != null) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("payment_transfer", transfer.id)) }
+          openStandalone(StandaloneScreen.PaymentTransfer)
+        } else {
+          val tx = st.paymentTransactions.firstOrNull { !it.isDeleted && it.id == target.id }
+          if (tx != null && !tx.entityId.isNullOrBlank()) {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("transactions", tx.id)) }
+            openStandalone(StandaloneScreen.EntityDetails(tx.entityId))
+          } else {
+            selectTab(MainTab.PAYMENTS)
+          }
+        }
+      }
+      "expenses" -> {
+        val tx = st.paymentTransactions.firstOrNull {
+          !it.isDeleted && (it.expenseId == target.id || it.id == target.id)
+        }
+        if (tx != null) {
+          if (tx.type == "EXPENSE") {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("expenses", tx.id)) }
+            openStandalone(StandaloneScreen.ExpenseDetails(tx.entityOrExpenseName))
+          } else if (!tx.entityId.isNullOrBlank()) {
+            _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("transactions", tx.id)) }
+            openStandalone(StandaloneScreen.EntityDetails(tx.entityId))
+          } else {
+            selectTab(MainTab.PAYMENTS)
+          }
+        } else {
+          selectTab(MainTab.PAYMENTS)
+        }
+      }
+      "production" -> {
+        val transfer = st.stockTransfers.firstOrNull {
+          !it.isDeleted && (it.id == target.id || it.outDocId == target.id || it.inDocId == target.id)
+        }
+        if (transfer != null) {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("stock_transfer", transfer.id)) }
+          openStandalone(StandaloneScreen.StockTransfer)
+        } else {
+          _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("production", target.id)) }
+          selectTab(MainTab.PRODUCTION)
+        }
+      }
+      "factory" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("factory", target.id)) }
+        selectTab(MainTab.FACTORY)
+      }
+      "calculator" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("calculator", target.id)) }
+        selectTab(MainTab.CALCULATOR)
+      }
+      "daily_ledger" -> {
+        _uiState.update { it.copy(pendingRecordFocus = PendingRecordFocus("daily_ledger", target.id)) }
+        openRoute(SarimRoute.Ledger)
+      }
+    }
+  }
+
   fun unlockFingerprint() {
+    wasBackgroundedForLock = false
     _uiState.update { it.copy(isLockedByFingerprint = false) }
+  }
+
+  fun onAppBackgrounded(isChangingConfigurations: Boolean) {
+    if (isChangingConfigurations) return
+    val st = _uiState.value
+    if (!st.isAuthenticated || st.showSplash) return
+    if (com.example.util.AppLockGuard.isSuppressed()) {
+      wasBackgroundedForLock = false
+      return
+    }
+    if (st.prefs.fingerprintLockEnabled) {
+      wasBackgroundedForLock = true
+    }
+  }
+
+  fun onAppResumed() {
+    checkDateRollover()
+    val suppressed = com.example.util.AppLockGuard.consumeIfSuppressed()
+    val st = _uiState.value
+    if (suppressed) {
+      wasBackgroundedForLock = false
+      return
+    }
+    if (wasBackgroundedForLock) {
+      wasBackgroundedForLock = false
+      if (st.prefs.fingerprintLockEnabled && st.isAuthenticated && !st.showSplash && !st.isLockedByFingerprint) {
+        _uiState.update { it.copy(isLockedByFingerprint = true) }
+      }
+    }
   }
 
   fun logout(onPerformFirebaseSignOut: () -> Unit) {

@@ -1,11 +1,15 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.example.util.AppLockGuard
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -179,7 +183,7 @@ fun PhotoAttachmentBar(
 ) {
   val context = LocalContext.current
   val palette = LocalSarimPalette.current
-  var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+  var showInAppCamera by remember { mutableStateOf(false) }
   fun reportError(msg: String) {
     if (onError != null) {
       onError(msg)
@@ -196,11 +200,22 @@ fun PhotoAttachmentBar(
     }
   }
 
-  val cameraLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.TakePicture(),
-  ) { success ->
-    if (success) {
-      pendingCameraUri?.let { onAddUris(listOf(it.toString())) }
+  val cameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    if (granted) {
+      showInAppCamera = true
+    } else {
+      reportError("Camera permission denied. Use Gallery to attach a photo.")
+    }
+  }
+
+  val launchGallery: () -> Unit = {
+    runCatching {
+      AppLockGuard.suppressFor()
+      galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }.onFailure { err ->
+      reportError(err.localizedMessage ?: "Photo picker unavailable on this device")
     }
   }
 
@@ -216,13 +231,13 @@ fun PhotoAttachmentBar(
       modifier = Modifier
         .defaultMinSize(minHeight = 48.dp)
         .clip(RoundedCornerShape(20.dp))
+        .testTag("photo_camera_btn")
         .clickable {
-          runCatching {
-            val uri = createTempCameraUri(context)
-            pendingCameraUri = uri
-            cameraLauncher.launch(uri)
-          }.onFailure { err ->
-            reportError(err.localizedMessage ?: "Camera unavailable on this device")
+          val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+          if (granted) {
+            showInAppCamera = true
+          } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
           }
         },
     ) {
@@ -258,13 +273,8 @@ fun PhotoAttachmentBar(
       modifier = Modifier
         .defaultMinSize(minHeight = 48.dp)
         .clip(RoundedCornerShape(20.dp))
-        .clickable {
-          runCatching {
-            galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-          }.onFailure { err ->
-            reportError(err.localizedMessage ?: "Photo picker unavailable on this device")
-          }
-        },
+        .testTag("photo_gallery_btn")
+        .clickable { launchGallery() },
     ) {
       Row(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -279,13 +289,28 @@ fun PhotoAttachmentBar(
     if (photoUris.isNotEmpty()) {
       TextButton(
         onClick = { onViewPhotos(0) },
-        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("photo_view_btn"),
       ) {
         Text("View", color = palette.green, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
       }
-      IconButton(onClick = onClearAll, modifier = Modifier.size(48.dp)) {
+      IconButton(onClick = onClearAll, modifier = Modifier.size(48.dp).testTag("photo_clear_btn")) {
         Icon(Icons.Rounded.Close, contentDescription = "Remove attached photos", tint = palette.red, modifier = Modifier.size(18.dp))
       }
     }
+  }
+
+  if (showInAppCamera) {
+    InAppCameraOverlay(
+      onDismiss = { showInAppCamera = false },
+      onCaptured = { uriStr ->
+        showInAppCamera = false
+        onAddUris(listOf(uriStr))
+      },
+      onOpenGallery = launchGallery,
+      onError = { msg ->
+        showInAppCamera = false
+        reportError(msg)
+      },
+    )
   }
 }

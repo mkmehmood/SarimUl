@@ -209,6 +209,9 @@ viewModel.launchSafely(
         monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.quantityKg }) },
         emptySubtitle = "No stock transfers recorded yet.",
+        itemKey = { it.id },
+        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "stock_transfer" }?.recordId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         actions = HistoryRecordActions<com.example.data.local.StockTransferEntity>(
           deleteLabel = "Delete Transfer",
           onDelete = { t ->
@@ -444,6 +447,9 @@ viewModel.launchSafely(
         monthSummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         daySummary = { items -> SarimFormat.formatRs(items.sumOf { it.item.amount }, privacyHidden = state.hideMoneyFigures) },
         emptySubtitle = "No payment transfers recorded yet.",
+        itemKey = { it.id },
+        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "payment_transfer" }?.recordId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
         actions = HistoryRecordActions<com.example.data.local.PaymentTransferEntity>(
           deleteLabel = "Delete Transfer",
           onDelete = { t ->

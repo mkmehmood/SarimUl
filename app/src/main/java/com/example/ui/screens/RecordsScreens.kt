@@ -698,6 +698,69 @@ fun AddRawMaterialScreen(
             )
           }
         }
+        val linkedSupId = matchedMaterial?.supplierId?.takeIf { it.isNotBlank() }
+        if (matchedMaterial != null && linkedSupId != null && editingLot == null) {
+          val linkedSupName = matchedMaterial.supplierName?.ifBlank { "Supplier" } ?: "Supplier"
+          val linkedPayableCount = state.paymentTransactions.count {
+            !it.isDeleted && it.isPayable && it.entityId == linkedSupId &&
+              (it.materialId == matchedMaterial.id || matchedMaterial.id in JsonCodecs.decodeStrings(it.materialIdsJson))
+          }
+          val linkedLotsCount = state.purchases.count {
+            !it.isDeleted && it.materialId == matchedMaterial.id && it.supplierId == linkedSupId
+          }
+          HorizontalDivider(color = palette.border)
+          Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.surfaceContainerHigh, palette.amber, 0.12f),
+          ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Text("Linked Supplier: $linkedSupName", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                  Text(
+                    "Stock ${SarimFormat.formatKg(matchedMaterial.stockKg)} · Payable ${SarimFormat.formatRs(matchedMaterial.pendingSupplierAmount, privacyHidden = state.hideMoneyFigures)}",
+                    color = palette.textMuted,
+                    fontSize = 11.5.sp,
+                  )
+                }
+                SarimChip("Linked", palette.amber)
+              }
+              SarimDangerButton(
+                text = "Unlink Supplier & Reverse",
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "unlink_supplier_btn",
+                onClick = {
+                  val txMsg = if (linkedPayableCount > 0) "\n\n$linkedPayableCount payable transaction(s) will be reversed." else ""
+                  val lotsMsg = if (linkedLotsCount > 0) "\n$linkedLotsCount purchase lot link(s) will be cleared." else ""
+                  viewModel.showDialog(
+                    AppDialogRequest(
+                      title = "Unlink $linkedSupName?",
+                      body = "Unlink $linkedSupName from \"${matchedMaterial.name}\"?\nCurrent Stock: ${SarimFormat.formatKg(matchedMaterial.stockKg)}\nOutstanding Payable: ${viewModel.redactMoney(SarimFormat.formatRs(matchedMaterial.pendingSupplierAmount))}$txMsg$lotsMsg\n\nThe material stays in inventory as Pending Payable and can be linked to another supplier.",
+                      tone = DialogTone.PERMANENT,
+                      confirmLabel = "Unlink",
+                      onConfirm = {
+                        viewModel.launchSafely(
+                          errorTitle = "Unlink Supplier Failed",
+                          successMessage = "Unlinked $linkedSupName from ${matchedMaterial.name}",
+                          onSuccess = {
+                            supplierMode = "NONE"
+                            existingSupplierName = ""
+                          },
+                        ) {
+                          viewModel.repository.unlinkSupplierFromMaterial(matchedMaterial.id)
+                        }
+                      },
+                    )
+                  )
+                },
+              )
+            }
+          }
+        }
       }
 
       // Purchase history accordion

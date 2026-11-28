@@ -101,6 +101,18 @@ fun CalculatorTab(
   var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
   var editingSettlementId by remember { mutableStateOf<String?>(null) }
   var sheetSettlement by remember { mutableStateOf<CalculatorSettlementEntity?>(null) }
+  val focusCalcId = state.pendingRecordFocus?.takeIf { it.targetKey == "calculator" }?.recordId
+  LaunchedEffect(focusCalcId, state.settlements) {
+    if (focusCalcId != null) {
+      val match = state.settlements.firstOrNull { !it.isDeleted && it.id == focusCalcId }
+      if (match != null) {
+        selectedRepOption = match.repName
+        calcHistSearch = ""
+      } else {
+        viewModel.consumePendingRecordFocus()
+      }
+    }
+  }
 
   LaunchedEffect(state.currentLocalDayEpoch) {
     val newDay = state.currentLocalDayEpoch
@@ -792,6 +804,9 @@ fun CalculatorTab(
           yearSummary = { "" },
           monthSummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
           daySummary = { items -> "Cash ${SarimFormat.formatRs(items.sumOf { it.item.receivedCash }, false, hideMoney)}" },
+          itemKey = { it.id },
+          focusRecordKey = focusCalcId,
+          onFocusConsumed = { viewModel.consumePendingRecordFocus() },
           onItemClick = { rec -> sheetSettlement = rec.item },
         )
       }

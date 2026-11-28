@@ -11,6 +11,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -26,10 +29,13 @@ import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.theme.storeColorForKey
 import com.example.util.AppDialogRequest
 import com.example.util.DialogTone
+import com.example.util.ProductionPhotoSharer
 import com.example.util.SarimFormat
+import com.example.util.ShareOutcome
 import com.example.viewmodel.SarimMetricsEngine
 import com.example.viewmodel.SarimUiState
 import com.example.viewmodel.SarimViewModel
+import kotlinx.coroutines.launch
 
 private enum class ProdTopView(val label: String) {
   COMBINED("Combined"),
@@ -49,6 +55,8 @@ fun ProductionTab(
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
   val snap = state.snapshot
   val hideMoney = state.hideMoneyFigures
 
@@ -61,6 +69,8 @@ fun ProductionTab(
   var attachedPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
   var editingEntryId by remember { mutableStateOf<String?>(null) }
   var sheetEntry by remember { mutableStateOf<ProductionEntryEntity?>(null) }
+  var photoSelectMode by remember { mutableStateOf(false) }
+  var selectedPhotoIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var prevDayRef by remember { mutableLongStateOf(state.currentLocalDayEpoch) }
 
   LaunchedEffect(state.currentLocalDayEpoch) {
@@ -442,11 +452,95 @@ viewModel.launchSafely(
 
     // Production History Accordion (admin only; entry-only for other roles)
     if (state.isAdmin) item {
-      Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+      val entriesWithPhotos = remember(state.productionEntries) {
+        state.productionEntries.filter { JsonCodecs.decodeStrings(it.photoUrisJson).isNotEmpty() }
+      }
+      val triggerMultiPhotoShare: (List<ProductionEntryEntity>) -> Unit = { chosen ->
+        scope.launch {
+          viewModel.postStatus("Preparing captioned photos…")
+          ProductionPhotoSharer.shareCaptionedPhotos(context, chosen, hideMoney).fold(
+            onSuccess = { (count, outcome) ->
+              if (outcome == ShareOutcome.FAILED) {
+                viewModel.postStatus("Unable to open the share sheet")
+              } else {
+                selectedPhotoIds = emptySet()
+                photoSelectMode = false
+                viewModel.postStatus("Shared $count captioned photo(s) — summary copied to clipboard")
+              }
+            },
+            onFailure = { err ->
+              viewModel.postStatus(err.localizedMessage ?: "Failed to prepare captioned photos")
+            },
+          )
+        }
+      }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text("Production History", color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        if (entriesWithPhotos.isNotEmpty()) {
+          SarimSecondaryButton(
+            text = if (photoSelectMode) "Done Selecting" else "Select Photos (${entriesWithPhotos.size})",
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            testTag = "prod_photo_select_mode_btn",
+            onClick = {
+              photoSelectMode = !photoSelectMode
+              if (!photoSelectMode) selectedPhotoIds = emptySet()
+            },
+          )
+        }
+      }
+      if (photoSelectMode) {
+        Spacer(Modifier.height(6.dp))
+        SarimCallout(
+          text = "Tap photo entries below to select them, then share captioned images.",
+          toneColor = palette.cyan,
+        )
+        if (selectedPhotoIds.isNotEmpty()) {
+          Spacer(Modifier.height(6.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            SarimPrimaryButton(
+              text = "Share ${selectedPhotoIds.size} Captioned",
+              modifier = Modifier.weight(1f),
+              testTag = "prod_share_selected_photos_btn",
+              onClick = {
+                val chosen = entriesWithPhotos.filter { it.id in selectedPhotoIds }
+                triggerMultiPhotoShare(chosen)
+              },
+            )
+            SarimSecondaryButton(
+              text = "Clear",
+              modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+              testTag = "prod_clear_selected_photos_btn",
+              onClick = { selectedPhotoIds = emptySet() },
+            )
+          }
+        }
+      }
       Spacer(Modifier.height(6.dp))
-      val records = state.productionEntries.map { p ->
+      val sourceEntries = if (photoSelectMode) entriesWithPhotos else state.productionEntries
+      val records = sourceEntries.map { p ->
         val pCostPerKg = if (p.netWeightKg > 0.0001) p.totalFormulaCost / p.netWeightKg else 0.0
         val pSalePerKg = if (p.netWeightKg > 0.0001) p.totalValue / p.netWeightKg else 0.0
+        val pPhotos = JsonCodecs.decodeStrings(p.photoUrisJson)
+        val isSelected = p.id in selectedPhotoIds
+        val chipLabel = when {
+          photoSelectMode && isSelected -> "SELECTED · ${pPhotos.size} PHOTO(S)"
+          photoSelectMode -> "TAP TO SELECT · ${pPhotos.size} PHOTO(S)"
+          else -> SarimFormat.formatRs(p.totalProfit, false, hideMoney)
+        }
+        val chipClr = when {
+          photoSelectMode && isSelected -> palette.green
+          photoSelectMode -> palette.cyan
+          p.totalProfit >= 0 -> palette.green
+          else -> palette.red
+        }
         HistoryRecordDisplay(
           item = p,
           dateEpoch = p.dateEpoch,
@@ -454,8 +548,8 @@ viewModel.launchSafely(
           subtitle = "${p.formulaName} · ${SarimFormat.formatQty(p.formulaUnitsUsed, 2)} units",
           amountText = SarimFormat.formatKg(p.netWeightKg),
           amountColor = storeColorForKey(p.storeKey, palette.isDark),
-          chipText = SarimFormat.formatRs(p.totalProfit, false, hideMoney),
-          chipColor = if (p.totalProfit >= 0) palette.green else palette.red,
+          chipText = chipLabel,
+          chipColor = chipClr,
           detailMetrics = listOf(
             "Gross Weight" to SarimFormat.formatKg(p.grossWeightKg),
             "Container Weight" to SarimFormat.formatKg(p.containerWeightKg),
@@ -474,7 +568,20 @@ viewModel.launchSafely(
         yearSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         monthSummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
         daySummary = { items -> SarimFormat.formatKg(items.sumOf { it.item.netWeightKg }) },
-        onItemClick = { rec -> sheetEntry = rec.item },
+        itemKey = { it.id },
+        focusRecordKey = state.pendingRecordFocus?.takeIf { it.targetKey == "production" }?.recordId,
+        onFocusConsumed = { viewModel.consumePendingRecordFocus() },
+        onItemClick = { rec ->
+          if (photoSelectMode) {
+            selectedPhotoIds = if (rec.item.id in selectedPhotoIds) {
+              selectedPhotoIds - rec.item.id
+            } else {
+              selectedPhotoIds + rec.item.id
+            }
+          } else {
+            sheetEntry = rec.item
+          }
+        },
       )
     }
   }
@@ -501,6 +608,34 @@ viewModel.launchSafely(
         "Total Value" to SarimFormat.formatRs(p.totalValue, false, hideMoney),
         "Total Profit" to SarimFormat.formatRs(p.totalProfit, false, hideMoney),
       ),
+      extraContent = if (photos.isNotEmpty()) {
+        {
+          SarimSecondaryButton(
+            text = "Share ${photos.size} Captioned Photo(s)",
+            icon = Icons.Rounded.Share,
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+            testTag = "prod_share_captioned_btn",
+            onClick = {
+              sheetEntry = null
+              scope.launch {
+                viewModel.postStatus("Preparing captioned photos…")
+                ProductionPhotoSharer.shareCaptionedPhotos(context, listOf(p), hideMoney).fold(
+                  onSuccess = { (count, outcome) ->
+                    if (outcome == ShareOutcome.FAILED) {
+                      viewModel.postStatus("Unable to open the share sheet")
+                    } else {
+                      viewModel.postStatus("Shared $count captioned photo(s) — summary copied to clipboard")
+                    }
+                  },
+                  onFailure = { err ->
+                    viewModel.postStatus(err.localizedMessage ?: "Failed to prepare captioned photos")
+                  },
+                )
+              }
+            },
+          )
+        }
+      } else null,
       onDismiss = { sheetEntry = null },
       extraActionLabel = if (photos.isNotEmpty()) "View ${photos.size} Photo(s)" else null,
       onExtraAction = if (photos.isNotEmpty()) { { viewModel.openPhotoViewer(photos, 0) } } else null,

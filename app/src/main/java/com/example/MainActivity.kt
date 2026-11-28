@@ -24,13 +24,29 @@ import com.example.ui.theme.SarimTheme
 import com.example.viewmodel.SarimViewModel
 
 class MainActivity : ComponentActivity() {
-  /** Set when the user taps an approval alert; consumed once the admin session is ready. */
-  private var approvalTap by mutableStateOf(false)
+  /** Set when the user taps an approval or activity alert; consumed once the session is ready. */
+  private var pendingPushTarget by mutableStateOf<SarimPush.NotificationTarget?>(null)
 
   private fun readPushTap(intent: Intent?) {
-    if (intent?.getStringExtra(SarimPush.EXTRA_TYPE) == SarimPush.TYPE_APPROVAL) {
-      approvalTap = true
-      intent.removeExtra(SarimPush.EXTRA_TYPE)
+    if (intent == null) return
+    val parsedTarget = SarimPush.parseTarget(
+      raw = intent.getStringExtra(SarimPush.EXTRA_TARGET),
+      explicitKey = intent.getStringExtra(SarimPush.EXTRA_TARGET_KEY),
+      explicitId = intent.getStringExtra(SarimPush.EXTRA_TARGET_ID),
+    )
+    val type = intent.getStringExtra(SarimPush.EXTRA_TYPE)
+    when {
+      parsedTarget != null -> {
+        pendingPushTarget = parsedTarget
+        intent.removeExtra(SarimPush.EXTRA_TARGET)
+        intent.removeExtra(SarimPush.EXTRA_TARGET_KEY)
+        intent.removeExtra(SarimPush.EXTRA_TARGET_ID)
+        intent.removeExtra(SarimPush.EXTRA_TYPE)
+      }
+      type == SarimPush.TYPE_APPROVAL -> {
+        pendingPushTarget = SarimPush.NotificationTarget("view", "approvals")
+        intent.removeExtra(SarimPush.EXTRA_TYPE)
+      }
     }
   }
 
@@ -70,25 +86,31 @@ class MainActivity : ComponentActivity() {
         if (granted) viewModel.registerPush()
       }
       LaunchedEffect(state.isAuthenticated, state.isAdmin, state.isOfflineSession) {
-        if (state.isAuthenticated && state.isAdmin && !state.isOfflineSession) {
-          if (SarimPush.canPostNotifications(context)) viewModel.registerPush()
-          else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (state.isAuthenticated && !state.isOfflineSession) {
+          if (SarimPush.canPostNotifications(context)) {
+            if (state.isAdmin) viewModel.registerPush()
+          } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
           }
         }
       }
-      LaunchedEffect(approvalTap, state.isAuthenticated, state.isAdmin, state.isLockedByFingerprint, state.showSplash) {
-        if (approvalTap && state.isAuthenticated && !state.showSplash && !state.isLockedByFingerprint) {
-          viewModel.openApprovalsFromPush()
-          approvalTap = false
+      LaunchedEffect(pendingPushTarget, state.isAuthenticated, state.isAdmin, state.isLockedByFingerprint, state.showSplash) {
+        val target = pendingPushTarget
+        if (target != null && state.isAuthenticated && !state.showSplash && !state.isLockedByFingerprint) {
+          viewModel.openNotificationTarget(target)
+          pendingPushTarget = null
         }
       }
 
       val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
       DisposableEffect(lifecycleOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
-          if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-            viewModel.checkDateRollover()
+          when (event) {
+            androidx.lifecycle.Lifecycle.Event.ON_STOP ->
+              viewModel.onAppBackgrounded(this@MainActivity.isChangingConfigurations)
+            androidx.lifecycle.Lifecycle.Event.ON_RESUME ->
+              viewModel.onAppResumed()
+            else -> Unit
           }
         }
         lifecycleOwner.lifecycle.addObserver(obs)

@@ -290,6 +290,7 @@ object PdfExporter {
         putExtra(Intent.EXTRA_SUBJECT, title)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       }
+      AppLockGuard.suppressFor()
       val chooser = Intent.createChooser(shareIntent, "Share $title")
       chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       context.startActivity(chooser)
@@ -431,6 +432,74 @@ object PdfExporter {
       closingLabel = "Total Operating Expenses",
       closingValue = SarimFormat.formatRs(totalAmt, false, privacyHidden),
       accent = Color.rgb(217, 119, 6),
+    )
+  }
+
+  /**
+   * Mirrors `exportExpenseOverlayToPDF` in `modules/utilities-payments.js`:
+   * exports filtered records for a single operating expense category with year-end merged highlight,
+   * running cumulative total, and summary totals.
+   */
+  fun createExpenseCategoryPdf(
+    context: Context,
+    expenseName: String,
+    rangeLabel: String,
+    generatedLabel: String,
+    expenses: List<com.example.data.local.PaymentTransactionEntity>,
+    privacyHidden: Boolean = false,
+  ): Result<File> {
+    val chronological = expenses
+      .filter { !it.isDeleted && it.type == "EXPENSE" }
+      .sortedWith(compareBy<com.example.data.local.PaymentTransactionEntity> { it.dateEpoch }.thenBy { it.createdAt })
+    val merged = chronological.filter { com.example.data.backup.YearCloseMerge.isMergedId(it.id) }
+    val normal = chronological.filterNot { com.example.data.backup.YearCloseMerge.isMergedId(it.id) }
+    var running = 0.0
+    val rows = (merged + normal).map { tx ->
+      running += tx.amount
+      val isMerged = com.example.data.backup.YearCloseMerge.isMergedId(tx.id)
+      val desc = buildString {
+        if (isMerged) append("[Year-End Summary] ")
+        append(tx.description.ifBlank { "Operating expense" })
+      }
+      listOf(
+        SarimFormat.dateInput(tx.dateEpoch),
+        desc,
+        if (tx.addToLedger) "Ledger" else "Payments",
+        SarimFormat.formatRs(tx.amount, false, privacyHidden),
+        SarimFormat.formatRs(running, false, privacyHidden),
+      )
+    }
+    val columns = listOf(
+      PdfColumn("Date", 74f),
+      PdfColumn("Description", 205f),
+      PdfColumn("Source", 66f),
+      PdfColumn("Amount", 88f, right = true),
+      PdfColumn("Running Total", 90f, right = true),
+    )
+    val totalAmt = chronological.sumOf { it.amount }
+    val mergedAmt = merged.sumOf { it.amount }
+    val summary = buildList {
+      add("Period" to rangeLabel)
+      add("Matching Records" to "${chronological.size}")
+      if (merged.isNotEmpty()) {
+        add("Year-End Opening Merged (${merged.size})" to SarimFormat.formatRs(mergedAmt, false, privacyHidden))
+      }
+    }
+    val safeName = expenseName.replace(Regex("[^A-Za-z0-9]"), "_").ifBlank { "Expense" }
+    return createStatementPdf(
+      context = context,
+      fileBaseName = "Expense_${safeName}_${rangeLabel.replace(" ", "_")}_${SarimFormat.dateInput(System.currentTimeMillis())}",
+      kindTitle = "Expense History: $expenseName",
+      name = expenseName,
+      phone = "",
+      rangeLabel = rangeLabel,
+      generatedLabel = generatedLabel,
+      columns = columns,
+      rows = rows,
+      summary = summary,
+      closingLabel = "Total ($expenseName)",
+      closingValue = SarimFormat.formatRs(totalAmt, false, privacyHidden),
+      accent = Color.rgb(255, 149, 0),
     )
   }
 }

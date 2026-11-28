@@ -457,6 +457,9 @@ fun <T> AccordionHistoryList(
   @Suppress("UNUSED_PARAMETER") hasDropdownDetails: Boolean = false,
   onItemClick: ((HistoryRecordDisplay<T>) -> Unit)? = null,
   actions: HistoryRecordActions<T>? = null,
+  itemKey: ((T) -> String)? = null,
+  focusRecordKey: String? = null,
+  onFocusConsumed: (() -> Unit)? = null,
   expandedContent: @Composable (HistoryRecordDisplay<T>) -> Unit = {},
 ) {
   val palette = LocalSarimPalette.current
@@ -468,6 +471,28 @@ fun <T> AccordionHistoryList(
   val years = remember(records) { buildLedger(records) }
   val openState = remember { mutableStateMapOf<String, Boolean>() }
   var sheetRec by remember { mutableStateOf<HistoryRecordDisplay<T>?>(null) }
+
+  LaunchedEffect(focusRecordKey, records) {
+    if (!focusRecordKey.isNullOrBlank() && itemKey != null) {
+      val match = records.firstOrNull { itemKey(it.item) == focusRecordKey }
+      if (match != null) {
+        val dk = dayKeyOf(match.dateEpoch)
+        if (dk == UNDATED) {
+          openState["y:$UNDATED"] = true
+          openState["m:$UNDATED"] = true
+          openState["d:$UNDATED"] = true
+        } else {
+          val yk = dk.substring(0, 4)
+          val mk = dk.substring(0, 7)
+          openState["y:$yk"] = true
+          openState["m:$mk"] = true
+          openState["d:$dk"] = true
+        }
+        if (onItemClick != null) onItemClick(match) else sheetRec = match
+        onFocusConsumed?.invoke()
+      }
+    }
+  }
 
   val today = remember { SarimFormat.dateInput(System.currentTimeMillis()) }
   val curY = today.substring(0, 4)
