@@ -13,7 +13,7 @@ android {
   compileSdk { version = release(37) }
 
   defaultConfig {
-    applicationId = "com.sarim.dealersapp"
+    applicationId = "com.gullzubair.sarim"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
