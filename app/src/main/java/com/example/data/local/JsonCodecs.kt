@@ -231,6 +231,14 @@ object JsonCodecs {
     }.getOrNull()
   }
 
+  /** Generic JSON helpers (maps, lists, numbers, strings, booleans) used for web-compatible records. */
+  fun encodeJson(value: Any?): String = encodeValue(value)
+
+  fun decodeJson(raw: String): Any? {
+    if (raw.isBlank()) return null
+    return runCatching { PureJsonParser(raw).parseValue() }.getOrNull()
+  }
+
   private fun encodeArray(items: List<*>): String =
     items.joinToString(",", prefix = "[", postfix = "]") { encodeValue(it) }
 

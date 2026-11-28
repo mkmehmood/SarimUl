@@ -3,61 +3,173 @@ package com.example.data.repository
 import com.example.data.local.*
 import java.util.Locale
 
+/**
+ * Mirrors web `formula-links.js::describeFormula`.
+ * [additionalCostPerUnit] = own additional cost + additional cost carried in from linked formulas.
+ * [costPerKgAdjusted] = total cost per unit / cost adjustment factor (web "Cost per kg (Sales/Calc)").
+ */
 data class FormulaCostSummary(
   val unitWeightKg: Double,
   val rawMaterialCostPerUnit: Double,
   val totalCostPerUnit: Double,
   val costPerKgAdjusted: Double,
+  val additionalCostPerUnit: Double = 0.0,
+)
+
+data class FormulaProblem(val type: String, val name: String) // type: "missing" | "cycle"
+
+data class FlatIngredient(
+  val id: String,
+  val name: String,
+  val quantity: Double,
+  val cost: Double,
+  val via: List<String> = emptyList(),
+)
+
+data class FormulaDescription(
+  val items: List<FlatIngredient>,
+  val raw: Double,
+  val weight: Double,
+  val ownAdditionalCost: Double,
+  val extraCost: Double,
+  val additionalCost: Double,
+  val perUnit: Double,
+  val perKg: Double,
+  val problems: List<FormulaProblem>,
 )
 
 object FormulaCalculator {
+  private fun r6(v: Double): Double = Math.round(v * 1e6) / 1e6
+
+  private class FlatResult(
+    val ingredients: MutableList<FlatIngredient> = mutableListOf(),
+    var extraCost: Double = 0.0,
+    var ownAdditionalCost: Double = 0.0,
+    val problems: MutableList<FormulaProblem> = mutableListOf(),
+  ) {
+    val additionalCost: Double get() = ownAdditionalCost + extraCost
+  }
+
+  private fun resolveMaterial(
+    ing: com.example.data.model.FormulaIngredient,
+    allMaterials: Map<String, RawMaterialEntity>,
+  ): RawMaterialEntity? = allMaterials[ing.refId]
+    ?: allMaterials.values.firstOrNull { ing.refName.isNotBlank() && it.name.equals(ing.refName.trim(), ignoreCase = true) }
+
+  /** Web `flattenFormula`: expands linked formulas into raw materials, merging duplicates, skipping cycles / missing links. */
+  private fun flatten(
+    formula: FormulaEntity,
+    allFormulas: Map<String, FormulaEntity>,
+    allMaterials: Map<String, RawMaterialEntity>,
+    path: List<String>,
+  ): FlatResult {
+    val out = FlatResult()
+    val here = path + formula.id
+    out.ownAdditionalCost = formula.additionalCostPerUnit
+    fun add(m: FlatIngredient) {
+      val idx = out.ingredients.indexOfFirst { it.id == m.id }
+      if (idx >= 0) {
+        val hit = out.ingredients[idx]
+        out.ingredients[idx] = hit.copy(quantity = r6(hit.quantity + m.quantity), via = (hit.via + m.via).distinct())
+      } else {
+        out.ingredients += m
+      }
+    }
+    for (ing in JsonCodecs.decodeIngredients(formula.ingredientsJson)) {
+      if (ing.refType != "FORMULA") {
+        val mat = resolveMaterial(ing, allMaterials)
+        add(
+          FlatIngredient(
+            id = mat?.id ?: ing.refId,
+            name = mat?.name ?: ing.refName,
+            quantity = ing.qtyKg,
+            cost = mat?.avgCostPerKg ?: 0.0,
+          )
+        )
+        continue
+      }
+      val q = ing.qtyKg
+      if (q <= 0.0) continue
+      val sub = allFormulas[ing.refId]
+      if (sub == null) {
+        out.problems += FormulaProblem("missing", ing.refName.ifBlank { "Formula" })
+        continue
+      }
+      if (sub.id in here) {
+        out.problems += FormulaProblem("cycle", sub.name.ifBlank { "Formula" })
+        continue
+      }
+      val flat = flatten(sub, allFormulas, allMaterials, here)
+      out.problems += flat.problems
+      val weight = flat.ingredients.sumOf { it.quantity }
+      if (weight <= 0.0) continue
+      val scale = q / weight
+      flat.ingredients.forEach { m ->
+        add(m.copy(quantity = r6(m.quantity * scale), via = listOf(sub.name.ifBlank { "Formula" })))
+      }
+      out.extraCost += flat.additionalCost * scale
+    }
+    return out
+  }
+
+  fun describeFormula(
+    formula: FormulaEntity,
+    allFormulas: Map<String, FormulaEntity>,
+    allMaterials: Map<String, RawMaterialEntity>,
+  ): FormulaDescription {
+    val flat = flatten(formula, allFormulas, allMaterials, emptyList())
+    var raw = 0.0
+    var weight = 0.0
+    flat.ingredients.forEach { raw += it.cost * it.quantity; weight += it.quantity }
+    val factor = if (formula.costAdjustmentFactor == 0.0) 1.0 else formula.costAdjustmentFactor
+    val perUnit = raw + flat.additionalCost
+    return FormulaDescription(
+      items = flat.ingredients.toList(),
+      raw = raw,
+      weight = weight,
+      ownAdditionalCost = flat.ownAdditionalCost,
+      extraCost = flat.extraCost,
+      additionalCost = flat.additionalCost,
+      perUnit = perUnit,
+      perKg = if (factor > 0.0) perUnit / factor else perUnit,
+      problems = flat.problems.toList(),
+    )
+  }
+
   fun computeFormulaSummary(
     formula: FormulaEntity,
     allFormulas: Map<String, FormulaEntity>,
     allMaterials: Map<String, RawMaterialEntity>,
-    visited: Set<String> = emptySet(),
+    @Suppress("UNUSED_PARAMETER") visited: Set<String> = emptySet(),
   ): FormulaCostSummary {
-    if (formula.id in visited) {
-      return FormulaCostSummary(0.0, 0.0, formula.additionalCostPerUnit, 0.0)
-    }
-    val nextVisited = visited + formula.id
-    val ingredients = JsonCodecs.decodeIngredients(formula.ingredientsJson)
-    var totalWeight = 0.0
-    var rawCost = 0.0
-
-    for (ing in ingredients) {
-      if (ing.refType == "FORMULA") {
-        val sub = allFormulas[ing.refId]
-        if (sub != null) {
-          val subSummary = computeFormulaSummary(sub, allFormulas, allMaterials, nextVisited)
-          val subCostPerKg = if (subSummary.unitWeightKg > 0.0001) {
-            subSummary.totalCostPerUnit / subSummary.unitWeightKg
-          } else {
-            0.0
-          }
-          totalWeight += ing.qtyKg
-          rawCost += ing.qtyKg * subCostPerKg
-        }
-      } else {
-        val mat = allMaterials[ing.refId]
-          ?: allMaterials.values.firstOrNull { it.name.equals(ing.refName, ignoreCase = true) }
-        val unitCost = mat?.avgCostPerKg ?: 0.0
-        totalWeight += ing.qtyKg
-        rawCost += ing.qtyKg * unitCost
-      }
-    }
-
-    val totalPerUnit = rawCost + formula.additionalCostPerUnit
-    val baseCostPerKg = if (totalWeight > 0.0001) totalPerUnit / totalWeight else 0.0
-    val adjustedCostPerKg = baseCostPerKg * formula.costAdjustmentFactor.coerceAtLeast(0.01)
-
+    val d = describeFormula(formula, allFormulas, allMaterials)
     return FormulaCostSummary(
-      unitWeightKg = totalWeight,
-      rawMaterialCostPerUnit = rawCost,
-      totalCostPerUnit = totalPerUnit,
-      costPerKgAdjusted = adjustedCostPerKg,
+      unitWeightKg = d.weight,
+      rawMaterialCostPerUnit = d.raw,
+      totalCostPerUnit = d.perUnit,
+      costPerKgAdjusted = d.perKg,
+      additionalCostPerUnit = d.additionalCost,
     )
   }
+
+  /** Web `formulaUsers`: formulas that link to [formulaId]. */
+  fun formulaUsers(formulaId: String, all: Collection<FormulaEntity>): List<FormulaEntity> =
+    all.filter { f ->
+      f.id != formulaId && JsonCodecs.decodeIngredients(f.ingredientsJson).any { it.refType == "FORMULA" && it.refId == formulaId }
+    }
+
+  private fun dependsOn(all: Map<String, FormulaEntity>, from: String, target: String, seen: MutableSet<String> = mutableSetOf()): Boolean {
+    if (from == target) return true
+    if (!seen.add(from)) return false
+    val f = all[from] ?: return false
+    return JsonCodecs.decodeIngredients(f.ingredientsJson)
+      .filter { it.refType == "FORMULA" }
+      .any { dependsOn(all, it.refId, target, seen) }
+  }
+
+  /** Web `canLink`: parent may link child unless that would create a loop. */
+  fun canLink(all: Map<String, FormulaEntity>, parentId: String, childId: String): Boolean =
+    parentId != childId && !dependsOn(all, childId, parentId)
 
   fun flattenRawMaterials(
     formula: FormulaEntity,

@@ -656,13 +656,14 @@ object SarimLinkEngine {
   ): String? {
     val (usedByStores, usedByFormulas) = formulaUsers(formula.id, stores, formulas)
     if (usedByStores.isNotEmpty()) {
-      return "Cannot delete formula ${formula.name}: used by store(s) ${usedByStores.joinToString(", ")}."
+      return "In use by ${usedByStores.joinToString(", ")}. Assign those stores another formula first."
     }
     if (usedByFormulas.isNotEmpty()) {
-      return "Cannot delete formula ${formula.name}: referenced by formula(s) ${usedByFormulas.joinToString(", ")}."
+      return "Linked inside ${usedByFormulas.joinToString(", ")}. Remove that link first."
     }
     if (formula.unitsAvailable > 0.0005) {
-      return "Cannot delete formula ${formula.name}: ${round2(formula.unitsAvailable)} produced units remain available."
+      val left = round2(formula.unitsAvailable)
+      return "$left unit${if (left == 1.0) "" else "s"} made with this formula are still unused. Use them in production or delete those factory batches first."
     }
     return null
   }

@@ -30,6 +30,9 @@ import com.example.data.local.JsonCodecs
 import com.example.data.model.FormulaIngredient
 import com.example.data.model.StandaloneScreen
 import com.example.data.repository.FormulaCalculator
+import com.example.data.repository.SarimBatchCalc
+import com.example.data.repository.SarimFormulaChecks
+import com.example.data.repository.SarimLinkEngine
 import com.example.ui.components.*
 import com.example.ui.theme.LocalSarimPalette
 import com.example.ui.theme.TabularNumberStyle
@@ -52,6 +55,7 @@ fun FormulaStoreScreen(
     state.rawMaterials.filter { !it.isDeleted }.associateBy { it.id }
   }
   val stores = remember(state.stores) { state.stores.filter { !it.isDeleted } }
+  val hide = state.hideMoneyFigures
   var fabExpanded by remember { mutableStateOf(false) }
 
   Box(modifier = Modifier.fillMaxSize()) {
@@ -63,16 +67,14 @@ fun FormulaStoreScreen(
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       if (formulas.isEmpty()) {
-        SarimEmptyState("No formulas saved", "Tap + to create a manufacturing formula.")
+        SarimEmptyState("No formulas yet.", "Tap the + button to add one.")
       } else {
         formulas.forEach { formula ->
-          val summary = FormulaCalculator.computeFormulaSummary(formula, formulasMap, materialsMap)
+          val d = FormulaCalculator.describeFormula(formula, formulasMap, materialsMap)
           val ingredients = remember(formula.ingredientsJson) { JsonCodecs.decodeIngredients(formula.ingredientsJson) }
           val usedByStores = remember(stores, formula.id) { stores.filter { it.formulaId == formula.id }.map { it.name } }
-          val linkedInFormulas = remember(formulas, formula.id) {
-            formulas.filter { parent ->
-              parent.id != formula.id && JsonCodecs.decodeIngredients(parent.ingredientsJson).any { it.refType == "FORMULA" && it.refId == formula.id }
-            }.map { it.name }
+          val linkedIn = remember(formulas, formula.id) {
+            FormulaCalculator.formulaUsers(formula.id, formulas).map { it.name.ifBlank { "Untitled" } }
           }
 
           Surface(
@@ -84,72 +86,88 @@ fun FormulaStoreScreen(
             color = palette.surface,
             border = BorderStroke(1.dp, palette.border),
           ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Text("${formula.name} (1 UNIT)", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
-                SarimChip("${SarimFormat.formatQty(formula.unitsAvailable, 1)} avail", palette.cyan)
-              }
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              Text("${formula.name.ifBlank { "Untitled" }} (1 Unit)", color = palette.green, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
 
+              if (ingredients.isEmpty()) {
+                Text("No ingredients.", color = palette.textMuted, fontSize = 12.5.sp)
+              }
               ingredients.forEach { ing ->
-                if (ing.refType == "FORMULA") {
+                if (ing.refType != "FORMULA") {
+                  val mat = materialsMap[ing.refId]
+                    ?: materialsMap.values.firstOrNull { ing.refName.isNotBlank() && it.name.equals(ing.refName.trim(), ignoreCase = true) }
+                  StoreRow(
+                    "${mat?.name ?: ing.refName} (${SarimBatchCalc.fmtPrecise(ing.qtyKg, "kg")} kg)",
+                    SarimFormat.formatRs(ing.qtyKg * (mat?.avgCostPerKg ?: 0.0), privacyHidden = hide),
+                  )
+                } else {
                   val sub = formulasMap[ing.refId]
-                  val subSummary = sub?.let { FormulaCalculator.computeFormulaSummary(it, formulasMap, materialsMap) }
-                  val subCostPerKg = if ((subSummary?.unitWeightKg ?: 0.0) > 0.0001) (subSummary!!.totalCostPerUnit / subSummary.unitWeightKg) else 0.0
-                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(ing.refName, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text(
-                      "${SarimFormat.formatKg(ing.qtyKg)} · ${SarimFormat.formatRs(ing.qtyKg * subCostPerKg, privacyHidden = state.hideMoneyFigures)}",
-                      color = palette.textPrimary,
-                      style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold),
+                  if (sub == null) {
+                    StoreRow("${ing.refName} · sub formula (removed)", "—", labelColor = palette.red, valueColor = palette.red)
+                  } else {
+                    val sd = FormulaCalculator.describeFormula(sub, formulasMap, materialsMap)
+                    val scale = if (sd.weight > 0.0) ing.qtyKg / sd.weight else 0.0
+                    StoreRow(
+                      "${sub.name.ifBlank { "Untitled" }} · sub formula (${SarimBatchCalc.fmtPrecise(ing.qtyKg, "kg")} kg)",
+                      SarimFormat.formatRs(scale * sd.perUnit, privacyHidden = hide),
+                      labelColor = palette.textPrimary,
+                      bold = true,
                     )
-                  }
-                  sub?.let {
-                    JsonCodecs.decodeIngredients(it.ingredientsJson).forEach { subIng ->
-                      Text(
-                        "  ↳ ${subIng.refName} (${SarimFormat.formatKg(subIng.qtyKg)} / unit)",
-                        color = palette.textMuted,
-                        fontSize = 11.5.sp,
+                    sd.items.forEach { m ->
+                      StoreRow(
+                        "  ↳ ${m.name} (${SarimBatchCalc.fmtPrecise(m.quantity * scale, "kg")} kg)",
+                        SarimFormat.formatRs(m.cost * m.quantity * scale, privacyHidden = hide),
+                        labelColor = palette.textMuted,
+                        valueColor = palette.textMuted,
                       )
                     }
-                  }
-                } else {
-                  val mat = materialsMap[ing.refId] ?: materialsMap.values.firstOrNull { it.name.equals(ing.refName, ignoreCase = true) }
-                  val cost = ing.qtyKg * (mat?.avgCostPerKg ?: 0.0)
-                  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(ing.refName, color = palette.textMuted, fontSize = 13.sp)
-                    Text(
-                      "${SarimFormat.formatKg(ing.qtyKg)} · ${SarimFormat.formatRs(cost, privacyHidden = state.hideMoneyFigures)}",
-                      color = palette.textPrimary,
-                      style = TabularNumberStyle.copy(fontSize = 12.5.sp),
-                    )
+                    if (sd.additionalCost > 0.0) {
+                      StoreRow(
+                        "  ↳ Additional cost",
+                        SarimFormat.formatRs(sd.additionalCost * scale, privacyHidden = hide),
+                        labelColor = palette.textMuted,
+                        valueColor = palette.textMuted,
+                      )
+                    }
                   }
                 }
               }
 
-              Text(
-                "Additional Cost (${SarimFormat.formatRs(formula.additionalCostPerUnit, privacyHidden = state.hideMoneyFigures)} per unit)",
-                color = palette.red,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.Medium,
-              )
+              if (d.ownAdditionalCost > 0.0) {
+                StoreRow(
+                  "Additional Cost (${SarimFormat.formatQty(d.ownAdditionalCost, 2)} per unit)",
+                  SarimFormat.formatRs(d.ownAdditionalCost, privacyHidden = hide),
+                  labelColor = palette.red,
+                  valueColor = palette.red,
+                )
+              }
+              if (d.problems.isNotEmpty()) {
+                val names = d.problems.map { "${it.name} (${if (it.type == "cycle") "circular" else "removed"})" }.distinct()
+                Text("Check linked formulas: ${names.joinToString(", ")}", color = palette.red, fontSize = 12.5.sp)
+              }
 
               HorizontalDivider(color = palette.border)
 
-              SummaryLine("Unit Weight", SarimFormat.formatKg(summary.unitWeightKg))
-              SummaryLine("Raw Material Cost per Unit", SarimFormat.formatRs(summary.rawMaterialCostPerUnit, privacyHidden = state.hideMoneyFigures))
-              SummaryLine("Total Cost per Unit", SarimFormat.formatRs(summary.totalCostPerUnit, privacyHidden = state.hideMoneyFigures), bold = true, valueColor = palette.green)
-              SummaryLine("Cost per kg (Sales/Calc)", SarimFormat.formatRs(summary.costPerKgAdjusted, privacyHidden = state.hideMoneyFigures))
-
-              val footerParts = buildList {
-                add("Tap to edit")
-                if (usedByStores.isNotEmpty()) add("Used by ${usedByStores.joinToString(", ")}")
-                if (linkedInFormulas.isNotEmpty()) add("Linked in ${linkedInFormulas.joinToString(", ")}")
+              StoreRow("Unit Weight", SarimBatchCalc.fmtPrecise(d.weight, "kg") + " kg")
+              StoreRow("Raw Material Cost per Unit", SarimFormat.formatRs(d.raw, privacyHidden = hide))
+              if (d.extraCost > 0.0) {
+                StoreRow("Additional cost from linked formulas", SarimFormat.formatRs(d.extraCost, privacyHidden = hide))
               }
-              Text(footerParts.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
+              StoreRow(
+                "Total Cost per Unit",
+                SarimFormat.formatRs(d.perUnit, privacyHidden = hide),
+                labelColor = palette.textPrimary,
+                valueColor = palette.green,
+                bold = true,
+              )
+              StoreRow("Cost per kg (Sales/Calc)", SarimFormat.formatRs(d.perKg, privacyHidden = hide))
+
+              val notes = buildList {
+                if (usedByStores.isNotEmpty()) add("Used by ${usedByStores.joinToString(", ")}")
+                if (linkedIn.isNotEmpty()) add("Linked in ${linkedIn.joinToString(", ")}")
+                add("Tap to edit")
+              }
+              Text(notes.joinToString(" · "), color = palette.textMuted, fontSize = 11.sp)
             }
           }
         }
@@ -232,40 +250,109 @@ private fun SummaryLine(label: String, value: String, bold: Boolean = false, val
 }
 
 @Composable
+private fun StoreRow(
+  label: String,
+  value: String,
+  labelColor: Color? = null,
+  valueColor: Color? = null,
+  bold: Boolean = false,
+) {
+  val palette = LocalSarimPalette.current
+  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(
+      label,
+      color = labelColor ?: palette.textMuted,
+      fontSize = 12.5.sp,
+      fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+      modifier = Modifier.weight(1f),
+    )
+    Text(
+      value,
+      color = valueColor ?: palette.textPrimary,
+      style = TabularNumberStyle.copy(fontSize = 12.5.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold),
+    )
+  }
+}
+
+/** One editable ingredient row. [refId] is blank until a suggestion was picked (web: "Pick X from the list"). */
+private data class EditRow(
+  val key: Long,
+  val refType: String = "MATERIAL",
+  val refId: String = "",
+  val label: String = "",
+  val qtyText: String = "",
+)
+
+private const val FORMULA_PREFIX = "[Formula] "
+private const val MATERIAL_PREFIX = "[Mat] "
+
+@Composable
 fun FormulaEditScreen(
   formulaId: String?,
   state: SarimUiState,
   viewModel: SarimViewModel,
 ) {
   val palette = LocalSarimPalette.current
+  val hide = state.hideMoneyFigures
   val allFormulas = remember(state.formulas) { state.formulas.filter { !it.isDeleted } }
   val allMaterials = remember(state.rawMaterials) { state.rawMaterials.filter { !it.isDeleted } }
   val existing = remember(formulaId, allFormulas) { formulaId?.let { id -> allFormulas.firstOrNull { it.id == id } } }
-
-  var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
-  var additionalCostText by remember(existing) { mutableStateOf(existing?.additionalCostPerUnit?.toString() ?: "0") }
-  var costFactorText by remember(existing) { mutableStateOf(existing?.costAdjustmentFactor?.toString() ?: "1") }
-  val rows = remember(existing) {
-    val init = existing?.let { JsonCodecs.decodeIngredients(it.ingredientsJson) } ?: emptyList()
-    mutableStateListOf<FormulaIngredient>().apply { addAll(init) }
-  }
-
   val formulasMap = remember(allFormulas) { allFormulas.associateBy { it.id } }
   val materialsMap = remember(allMaterials) { allMaterials.associateBy { it.id } }
+
+  var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
+  var additionalCostText by remember(existing) { mutableStateOf(existing?.additionalCostPerUnit?.let { SarimBatchCalc.fmtPrecise(it, "kg") } ?: "0") }
+  var costFactorText by remember(existing) { mutableStateOf(existing?.costAdjustmentFactor?.let { SarimBatchCalc.fmtPrecise(it, "kg") } ?: "1") }
+  val keyGen = remember(existing) { java.util.concurrent.atomic.AtomicLong(1L) }
+  val rows = remember(existing) {
+    val init = existing?.let { JsonCodecs.decodeIngredients(it.ingredientsJson) } ?: emptyList()
+    mutableStateListOf<EditRow>().apply {
+      init.forEach { ing ->
+        val label = if (ing.refType == "FORMULA") {
+          formulasMap[ing.refId]?.name ?: ing.refName
+        } else {
+          (materialsMap[ing.refId]
+            ?: allMaterials.firstOrNull { ing.refName.isNotBlank() && it.name.equals(ing.refName.trim(), ignoreCase = true) })?.name
+            ?: ing.refName
+        }
+        val refId = if (ing.refType == "FORMULA") ing.refId else (materialsMap[ing.refId]?.id
+          ?: allMaterials.firstOrNull { ing.refName.isNotBlank() && it.name.equals(ing.refName.trim(), ignoreCase = true) }?.id
+          ?: ing.refId)
+        add(EditRow(keyGen.getAndIncrement(), ing.refType, refId, label, SarimBatchCalc.fmtPrecise(ing.qtyKg, "kg")))
+      }
+    }
+  }
+
+  fun draftIngredients(): List<FormulaIngredient> = rows.filter { it.refId.isNotBlank() }.map {
+    FormulaIngredient(refType = it.refType, refId = it.refId, refName = it.label, qtyKg = it.qtyText.trim().toDoubleOrNull() ?: 0.0)
+  }
+
   val addCostVal = SarimFormat.parseSafeDouble(additionalCostText) ?: 0.0
-  val factorVal = SarimFormat.parseSafeDouble(costFactorText) ?: 1.0
+  val factorVal = (SarimFormat.parseSafeDouble(costFactorText) ?: 1.0).let { if (it == 0.0) 1.0 else it }
   val draftFormula = FormulaEntity(
-    id = existing?.id ?: "draft",
+    id = existing?.id ?: "__new__",
     name = name,
     additionalCostPerUnit = addCostVal,
     costAdjustmentFactor = factorVal,
-    ingredientsJson = JsonCodecs.encodeIngredients(rows),
+    ingredientsJson = JsonCodecs.encodeIngredients(draftIngredients()),
   )
-  val liveSummary = FormulaCalculator.computeFormulaSummary(draftFormula, formulasMap, materialsMap)
+  val mapWithDraft = remember(formulasMap, draftFormula) { formulasMap + (draftFormula.id to draftFormula) }
+  val liveSummary = FormulaCalculator.describeFormula(draftFormula, mapWithDraft, materialsMap)
 
-  val candidateLabels = remember(allMaterials, allFormulas, existing) {
-    allMaterials.map { "[Mat] ${it.name}" } +
-      allFormulas.filter { it.id != existing?.id }.map { "[Formula] ${it.name}" }
+  // Web `_pickableFormulas`: only formulas that have ingredients and would not create a loop.
+  val linkable = remember(allFormulas, existing, formulasMap) {
+    allFormulas.filter { f ->
+      f.id != existing?.id &&
+        JsonCodecs.decodeIngredients(f.ingredientsJson).isNotEmpty() &&
+        (existing == null || FormulaCalculator.canLink(formulasMap, existing.id, f.id))
+    }
+  }
+  val candidateLabels = remember(allMaterials, linkable) {
+    allMaterials.map { "$MATERIAL_PREFIX${it.name}" } + linkable.map { "$FORMULA_PREFIX${it.name}" }
+  }
+
+  fun warn(message: String) {
+    viewModel.showDialog(AppDialogRequest("Warning", message, tone = DialogTone.WARNING, cancelLabel = null))
   }
 
   Column(
@@ -298,7 +385,7 @@ fun FormulaEditScreen(
         SarimTextField(
           value = costFactorText,
           onValueChange = { costFactorText = it },
-          label = "Cost Adjustment (X)",
+          label = "Cost Adjustment for Sales & Calc (X)",
           placeholder = "1",
           keyboardType = KeyboardType.Decimal,
           modifier = Modifier.weight(1f),
@@ -314,81 +401,89 @@ fun FormulaEditScreen(
         Text("Qty (kg)", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
       }
 
-      rows.forEachIndexed { idx, row ->
-        var qtyInput by remember(idx, rows.size) { mutableStateOf(if (row.qtyKg == 0.0) "" else row.qtyKg.toString()) }
-        var searchLabel by remember(idx, rows.size) { mutableStateOf(row.refName) }
-
-        val unitCost = if (row.refType == "FORMULA") {
-          val sub = formulasMap[row.refId]
-          val subSum = sub?.let { FormulaCalculator.computeFormulaSummary(it, formulasMap, materialsMap) }
-          if ((subSum?.unitWeightKg ?: 0.0) > 0.0001) subSum!!.totalCostPerUnit / subSum.unitWeightKg else 0.0
-        } else {
-          materialsMap[row.refId]?.avgCostPerKg ?: 0.0
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(modifier = Modifier.weight(1.4f)) {
-              SarimSearchFieldWithDropdown(
-                value = searchLabel,
-                onValueChange = { searchLabel = it },
-                label = "",
-                placeholder = "Material or Formula",
-                suggestions = candidateLabels,
-                onSuggestionSelected = { chosen ->
-                  if (chosen.startsWith("[Formula] ")) {
-                    val fName = chosen.removePrefix("[Formula] ").trim()
-                    val matched = allFormulas.firstOrNull { it.name.equals(fName, ignoreCase = true) }
-                    if (matched != null && idx in rows.indices) {
-                      searchLabel = matched.name
-                      rows[idx] = rows[idx].copy(refType = "FORMULA", refId = matched.id, refName = matched.name)
-                    }
-                  } else {
-                    val mName = chosen.removePrefix("[Mat] ").trim()
-                    val matched = allMaterials.firstOrNull { it.name.equals(mName, ignoreCase = true) }
-                    if (matched != null && idx in rows.indices) {
-                      searchLabel = matched.name
-                      rows[idx] = rows[idx].copy(refType = "MATERIAL", refId = matched.id, refName = matched.name)
-                    }
-                  }
-                },
-              )
-            }
-            Text(
-              SarimFormat.formatRs(unitCost, showSymbol = false, privacyHidden = state.hideMoneyFigures),
-              color = palette.textMuted,
-              style = TabularNumberStyle.copy(fontSize = 12.sp),
-              modifier = Modifier.weight(0.65f),
-            )
-            SarimTextField(
-              value = qtyInput,
-              onValueChange = { v ->
-                qtyInput = v
-                val num = SarimFormat.parseSafeDouble(v) ?: 0.0
-                if (idx in rows.indices) {
-                  rows[idx] = rows[idx].copy(qtyKg = num)
-                }
-              },
-              label = "",
-              placeholder = "0",
-              keyboardType = KeyboardType.Decimal,
-              modifier = Modifier.weight(0.75f),
-            )
-            IconButton(
-              onClick = { if (idx in rows.indices) rows.removeAt(idx) },
-              modifier = Modifier.size(36.dp),
-            ) {
-              Icon(Icons.Rounded.Delete, contentDescription = "Remove row", tint = palette.red, modifier = Modifier.size(18.dp))
-            }
+      rows.toList().forEach { row ->
+        key(row.key) {
+          fun update(transform: (EditRow) -> EditRow) {
+            val i = rows.indexOfFirst { it.key == row.key }
+            if (i >= 0) rows[i] = transform(rows[i])
           }
-          HorizontalDivider(color = palette.border)
+          val unitCost = if (row.refType == "FORMULA") {
+            val sub = formulasMap[row.refId]
+            val sd = sub?.let { FormulaCalculator.describeFormula(it, formulasMap, materialsMap) }
+            if ((sd?.weight ?: 0.0) > 0.0) sd!!.perUnit / sd.weight else 0.0
+          } else {
+            materialsMap[row.refId]?.avgCostPerKg ?: 0.0
+          }
+
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Box(modifier = Modifier.weight(1.4f)) {
+                SarimSearchFieldWithDropdown(
+                  value = row.label,
+                  onValueChange = { typed ->
+                    // Typing again drops the earlier pick, like the web search input.
+                    update { it.copy(label = typed, refId = if (typed == it.label) it.refId else "") }
+                  },
+                  label = "",
+                  placeholder = "Material or Formula",
+                  suggestions = candidateLabels,
+                  onSuggestionSelected = { chosen ->
+                    if (chosen.startsWith(FORMULA_PREFIX)) {
+                      val matched = linkable.firstOrNull { it.name.equals(chosen.removePrefix(FORMULA_PREFIX).trim(), ignoreCase = true) }
+                      if (matched != null) update { it.copy(refType = "FORMULA", refId = matched.id, label = matched.name) }
+                    } else {
+                      val matched = allMaterials.firstOrNull { it.name.equals(chosen.removePrefix(MATERIAL_PREFIX).trim(), ignoreCase = true) }
+                      if (matched != null) update { it.copy(refType = "MATERIAL", refId = matched.id, label = matched.name) }
+                    }
+                  },
+                )
+              }
+              Text(
+                SarimFormat.formatRs(unitCost, showSymbol = false, privacyHidden = hide),
+                color = palette.textMuted,
+                style = TabularNumberStyle.copy(fontSize = 12.sp),
+                modifier = Modifier.weight(0.65f),
+              )
+              SarimTextField(
+                value = row.qtyText,
+                onValueChange = { v -> update { it.copy(qtyText = v) } },
+                label = "",
+                placeholder = "0",
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(0.75f),
+              )
+              IconButton(
+                onClick = { rows.removeAll { it.key == row.key } },
+                modifier = Modifier.size(36.dp),
+              ) {
+                Icon(Icons.Rounded.Delete, contentDescription = "Remove row", tint = palette.red, modifier = Modifier.size(18.dp))
+              }
+            }
+            // Linked formula: show the materials it brings in, scaled to the kg entered (web "factory-link-child" rows).
+            if (row.refType == "FORMULA" && row.refId.isNotBlank()) {
+              val sub = formulasMap[row.refId]
+              val q = row.qtyText.trim().toDoubleOrNull() ?: 0.0
+              if (sub != null && q > 0.0) {
+                val sd = FormulaCalculator.describeFormula(sub, formulasMap, materialsMap)
+                val scale = if (sd.weight > 0.0) q / sd.weight else 0.0
+                sd.items.forEach { m ->
+                  Text(
+                    "  ↳ ${m.name} (${SarimBatchCalc.fmtPrecise(m.quantity * scale, "kg")} kg)",
+                    color = palette.textMuted,
+                    fontSize = 11.5.sp,
+                  )
+                }
+              }
+            }
+            HorizontalDivider(color = palette.border)
+          }
         }
       }
 
       SarimSecondaryButton(
         text = "+ Add Ingredient Row",
         modifier = Modifier.fillMaxWidth(),
-        onClick = { rows.add(FormulaIngredient()) },
+        onClick = { rows.add(EditRow(keyGen.getAndIncrement())) },
       )
       Text(
         "Tip: search a material, or link a Formula so its materials follow any later changes to it.",
@@ -398,10 +493,17 @@ fun FormulaEditScreen(
     }
 
     SarimCard {
-      SummaryLine("Unit Weight", SarimFormat.formatKg(liveSummary.unitWeightKg))
-      SummaryLine("Raw Material Cost per Unit", SarimFormat.formatRs(liveSummary.rawMaterialCostPerUnit, privacyHidden = state.hideMoneyFigures))
-      SummaryLine("Total Cost per Unit", SarimFormat.formatRs(liveSummary.totalCostPerUnit, privacyHidden = state.hideMoneyFigures), bold = true, valueColor = palette.green)
-      SummaryLine("Cost per kg (Sales/Calc)", SarimFormat.formatRs(liveSummary.costPerKgAdjusted, privacyHidden = state.hideMoneyFigures))
+      if (liveSummary.problems.isNotEmpty()) {
+        val names = liveSummary.problems.map { "${it.name} (${if (it.type == "cycle") "circular" else "removed"})" }.distinct()
+        Text("Check linked formulas: ${names.joinToString(", ")}", color = palette.red, fontSize = 12.5.sp)
+      }
+      SummaryLine("Unit Weight", SarimBatchCalc.fmtPrecise(liveSummary.weight, "kg") + " kg")
+      SummaryLine("Raw Material Cost per Unit", SarimFormat.formatRs(liveSummary.raw, privacyHidden = hide))
+      if (liveSummary.extraCost > 0.0) {
+        SummaryLine("Additional cost from linked formulas", SarimFormat.formatRs(liveSummary.extraCost, privacyHidden = hide))
+      }
+      SummaryLine("Total Cost per Unit", SarimFormat.formatRs(liveSummary.perUnit, privacyHidden = hide), bold = true, valueColor = palette.green)
+      SummaryLine("Cost per kg (Sales/Calc)", SarimFormat.formatRs(liveSummary.perKg, privacyHidden = hide))
     }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -410,10 +512,18 @@ fun FormulaEditScreen(
           text = "Delete Formula",
           modifier = Modifier.weight(1f),
           onClick = {
+            // Same guards as web deleteFormulaStoreEntry: stores, links, unused units.
+            val block = SarimLinkEngine.getFormulaDeleteBlockReason(existing, state.stores, state.formulas)
+            if (block != null) {
+              warn(block)
+              return@SarimDangerButton
+            }
+            val pastBatches = state.factoryBatches.count { !it.isDeleted && it.formulaId == existing.id }
+            val extra = if (pastBatches > 0) "\n\nIt was used for $pastBatches factory batch${if (pastBatches == 1) "" else "es"}. Their recorded costs stay as they are." else ""
             viewModel.showDialog(
               AppDialogRequest(
                 title = "Delete Formula",
-                body = "Move formula ${existing.name} to Recycle Bin?",
+                body = "Delete this formula from the store?$extra",
                 tone = DialogTone.PERMANENT,
                 confirmLabel = "Delete",
                 onConfirm = {
@@ -435,51 +545,57 @@ fun FormulaEditScreen(
         modifier = Modifier.weight(1f),
         testTag = "save_formula_btn",
         onClick = {
-          val clean = name.trim()
-          if (clean.isEmpty() || clean.length > 60) {
-            viewModel.showDialog(AppDialogRequest("Invalid Name", "Formula name is required (max 60 characters).", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
+          val issue = SarimFormulaChecks.formIssue(
+            rows.map { SarimFormulaChecks.Row(it.label, it.qtyText, it.refId, it.refType == "FORMULA") }
+          )
+          if (issue.isNotEmpty()) return@SarimPrimaryButton warn(issue)
+          val clean = name.trim().replace(Regex("\\s+"), " ")
+          if (clean.isEmpty()) return@SarimPrimaryButton warn("Enter a formula name")
+          val validRows = draftIngredients()
+          if (validRows.isEmpty()) return@SarimPrimaryButton warn("Add at least one ingredient with quantity")
+          if (clean.length > 60) return@SarimPrimaryButton warn("Formula name is too long (at most 60 characters).")
+
+          val costRaw = additionalCostText.trim()
+          val cost = if (costRaw.isEmpty()) 0.0 else SarimFormat.parseSafeDouble(costRaw)
+          if (cost == null) return@SarimPrimaryButton warn("Additional cost must be a plain number such as 12.5.")
+          if (cost < 0.0) return@SarimPrimaryButton warn("Additional cost cannot be less than 0.")
+          if (cost > 100_000_000.0) return@SarimPrimaryButton warn("Additional cost cannot be more than 100,000,000.")
+
+          val factorRaw = costFactorText.trim()
+          val factor = if (factorRaw.isEmpty()) 1.0 else SarimFormat.parseSafeDouble(factorRaw)
+          if (factor == null) return@SarimPrimaryButton warn("Cost factor must be a plain number such as 12.5.")
+          if (!(factor > 0.0)) return@SarimPrimaryButton warn("Cost factor must be greater than 0.")
+          if (factor > 100.0) return@SarimPrimaryButton warn("Cost factor cannot be more than 100.")
+
+          if (validRows.any { it.qtyKg < 0.001 || it.qtyKg > 1_000_000.0 }) {
+            return@SarimPrimaryButton warn("Each ingredient quantity must be between 0.001 and 1,000,000 kg.")
           }
-          if (addCostVal !in 0.0..100_000_000.0) {
-            viewModel.showDialog(AppDialogRequest("Invalid Cost", "Additional cost must be between 0 and 100,000,000.", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
+          val dup = SarimFormulaChecks.duplicateName(clean, allFormulas.map { it.id to it.name }, existing?.id)
+          if (dup != null) {
+            return@SarimPrimaryButton warn("A formula named \"$dup\" already exists. Choose a different name or edit that formula.")
           }
-          if (factorVal <= 0.0 || factorVal > 100.0) {
-            viewModel.showDialog(AppDialogRequest("Invalid Cost Factor", "Cost adjustment factor must be > 0 and at most 100.", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
+          for (ing in validRows.filter { it.refType == "FORMULA" }) {
+            if (formulasMap[ing.refId] == null) {
+              return@SarimPrimaryButton warn("The linked formula \"${ing.refName}\" no longer exists. Remove that row.")
+            }
+            if (existing != null && !FormulaCalculator.canLink(formulasMap, existing.id, ing.refId)) {
+              return@SarimPrimaryButton warn("\"${ing.refName}\" already uses this formula, so it can't be linked back.")
+            }
           }
-          val dupFormula = state.formulas.any { !it.isDeleted && it.id != existing?.id && it.name.equals(clean, ignoreCase = true) }
-          if (dupFormula) {
-            viewModel.showDialog(AppDialogRequest("Duplicate Formula", "A formula named \"$clean\" already exists. Choose a different name or edit that formula.", tone = DialogTone.WARNING, cancelLabel = null))
-            return@SarimPrimaryButton
-          }
-          val validRows = rows.filter { it.refId.isNotBlank() }
-          if (validRows.isEmpty()) {
-            viewModel.showDialog(AppDialogRequest("Ingredients Required", "Add at least one ingredient with quantity.", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
-          }
-          if (validRows.any { it.qtyKg !in 0.001..1_000_000.0 }) {
-            viewModel.showDialog(AppDialogRequest("Invalid Quantity", "Ingredient quantity must be between 0.001 and 1,000,000 kg.", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
-          }
-          val dupIng = validRows.groupBy { "${it.refType}:${it.refId}" }.any { it.value.size > 1 }
-          if (dupIng) {
-            viewModel.showDialog(AppDialogRequest("Duplicate Ingredient", "Each material or linked formula may only appear once.", tone = DialogTone.ERROR, cancelLabel = null))
-            return@SarimPrimaryButton
-          }
+
           viewModel.confirmSave(
-"Formula",
-listOf("Name" to clean),
-isUpdate = existing != null,
-) {
-viewModel.launchSafely(
-            errorTitle = "Save Formula Failed",
-            successMessage = "Formula saved",
-            onSuccess = { viewModel.closeStandalone() },
+            "Formula",
+            listOf("Name" to clean),
+            isUpdate = existing != null,
           ) {
-            viewModel.repository.saveFormula(existing?.id, clean, addCostVal, factorVal, validRows)
+            viewModel.launchSafely(
+              errorTitle = "Save Formula Failed",
+              successMessage = "Formula saved",
+              onSuccess = { viewModel.closeStandalone() },
+            ) {
+              viewModel.repository.saveFormula(existing?.id, clean, cost, factor, validRows)
+            }
           }
-}
         },
       )
     }

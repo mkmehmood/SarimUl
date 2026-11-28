@@ -793,7 +793,7 @@ class SarimRepository(
     val existing = editingId?.let { id -> dao.getAllFormulas().firstOrNull { it.id == id } }
     dao.upsertFormula(
       (existing ?: FormulaEntity(name = name.trim())).copy(
-        name = name.trim().uppercase(),
+        name = name.trim(),
         additionalCostPerUnit = additionalCost,
         costAdjustmentFactor = costFactor,
         ingredientsJson = JsonCodecs.encodeIngredients(ingredients),
@@ -960,7 +960,7 @@ class SarimRepository(
       }
     }
 
-    val additionalTotal = targetFormula.additionalCostPerUnit * units
+    val additionalTotal = summary.additionalCostPerUnit * units
     val materialsTotal = summary.rawMaterialCostPerUnit * units
     val totalCost = materialsTotal + additionalTotal
     val outputKg = summary.unitWeightKg * units

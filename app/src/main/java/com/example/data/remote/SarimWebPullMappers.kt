@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.data.repository.SarimSavedCalcs
 import com.example.data.local.*
 import com.example.data.model.LineItemBreakdown
 import com.example.data.remote.SarimWebSchema.bool
@@ -375,9 +376,9 @@ object SarimWebPullMappers {
       val existing = existingFormulas[id]
       formulasOut += FormulaEntity(
         id = id,
-        name = name.uppercase(),
+        name = name,
         additionalCostPerUnit = num(m["additionalCost"], num(costsMap[id], existing?.additionalCostPerUnit ?: 0.0)),
-        costAdjustmentFactor = num(m["factor"], num(adjMap[id], existing?.costAdjustmentFactor ?: 1.0)),
+        costAdjustmentFactor = num(m["costAdjustmentFactor"], num(m["factor"], num(adjMap[id], existing?.costAdjustmentFactor ?: 1.0))),
         ingredientsJson = if (ings.isNotEmpty()) JsonCodecs.encodeIngredients(ings) else (existing?.ingredientsJson ?: "[]"),
         unitsAvailable = num(tr?.get("available"), existing?.unitsAvailable ?: 0.0),
         unitsUsed = num(tr?.get("used"), existing?.unitsUsed ?: 0.0),
@@ -388,23 +389,14 @@ object SarimWebPullMappers {
       val savedCalcsRaw = m["savedCalcs"] as? List<*> ?: emptyList<Any>()
       savedCalcsRaw.forEach { scRaw ->
         val sc = scRaw as? Map<*, *> ?: return@forEach
-        val scId = str(sc["id"]).trim()
-        val scName = str(sc["name"]).trim()
-        if (scId.isBlank() || scName.isBlank()) return@forEach
-        calcsOut += SavedMixCalcEntity(
-          id = scId,
-          kind = if (str(sc["kind"]) == "fix") "CORRECTION" else "BATCHING",
-          name = scName,
+        SarimSavedCalcs.fromWebRecord(
           formulaId = id,
-          formulaName = name.uppercase(),
-          unit = str(sc["unit"], "kg"),
-          mode = str(sc["mode"], "WEIGHT"),
-          inputValue = num(sc["totalWeight"], num(sc["inputValue"])),
-          summaryText = str(sc["summaryText"]),
-          syncPending = false,
+          formulaName = name,
+          sc = sc,
+          fallbackTs = ts,
           createdAt = parseEpoch(sc["createdAt"] ?: ts),
           updatedAt = parseEpoch(sc["updatedAt"] ?: ts),
-        )
+        )?.let { calcsOut += it }
       }
     }
     return formulasOut to calcsOut

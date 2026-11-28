@@ -2234,11 +2234,7 @@ class SarimSyncAndBackupRepository(
           put("unitsAvailable", f.unitsAvailable); put("unitsUsed", f.unitsUsed)
           put("savedCalcs", JSONArray().apply {
             calcsByFormula[f.id].orEmpty().forEach { sc ->
-              put(JSONObject().apply {
-                put("id", sc.id); put("kind", sc.kind); put("name", sc.name)
-                put("unit", sc.unit); put("mode", sc.mode); put("inputValue", sc.inputValue)
-                put("summaryText", sc.summaryText)
-              })
+              put(JSONObject(SarimSavedCalcs.toWebRecord(sc)))
             }
           })
         })
@@ -2390,6 +2386,16 @@ class SarimSyncAndBackupRepository(
             )
           )
           restoredCount++
+          SarimWebPullMappers.jsonObjectToMapList(o.optJSONArray("savedCalcs")).forEach { sc ->
+            SarimSavedCalcs.fromWebRecord(
+              formulaId = id,
+              formulaName = name,
+              sc = sc,
+              fallbackTs = System.currentTimeMillis(),
+              createdAt = SarimWebSchema.parseEpoch(sc["createdAt"] ?: 0L),
+              updatedAt = SarimWebSchema.parseEpoch(sc["updatedAt"] ?: 0L),
+            )?.let { dao.upsertMixCalc(it.copy(syncPending = true)) }
+          }
         }
       }
 

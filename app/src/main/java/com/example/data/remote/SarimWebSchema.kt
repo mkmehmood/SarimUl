@@ -1,5 +1,7 @@
 package com.example.data.remote
 
+import com.example.data.repository.FormulaCalculator
+import com.example.data.repository.SarimSavedCalcs
 import android.util.Base64
 import com.example.data.local.*
 import com.example.data.model.EditHistoryEntry
@@ -954,47 +956,55 @@ object SarimWebSchema {
     ts: Long,
   ): Map<String, Any?> {
     val calcsByFormula = savedCalcs.filter { !it.isDeleted }.groupBy { it.formulaId }
-    val formulasList = formulas.filter { !it.isDeleted }.map { f ->
+    val activeFormulas = formulas.filter { !it.isDeleted }
+    val formulaMap = activeFormulas.associateBy { it.id }
+    val formulasList = activeFormulas.map { f ->
       val ings = JsonCodecs.decodeIngredients(f.ingredientsJson).map { ing ->
-        linkedMapOf<String, Any?>(
-          "id" to ing.refId,
-          "name" to ing.refName,
-          "quantity" to ing.qtyKg,
-          "cost" to (materials[ing.refId]?.avgCostPerKg ?: 0.0),
-          "formulaId" to if (ing.refType == "FORMULA") ing.refId else null,
-        )
+        if (ing.refType == "FORMULA") {
+          // Web live link: { id: 'formula:<id>', kind: 'formula', formulaId, name, cost: 0, quantity }
+          linkedMapOf<String, Any?>(
+            "id" to "formula:${ing.refId}",
+            "kind" to "formula",
+            "formulaId" to ing.refId,
+            "name" to (formulaMap[ing.refId]?.name ?: ing.refName),
+            "cost" to 0.0,
+            "quantity" to ing.qtyKg,
+          )
+        } else {
+          linkedMapOf<String, Any?>(
+            "id" to ing.refId,
+            "name" to ing.refName,
+            "quantity" to ing.qtyKg,
+            "cost" to (materials[ing.refId]?.avgCostPerKg ?: 0.0),
+          )
+        }
       }
-      val calcs = calcsByFormula[f.id].orEmpty().map { c ->
-        linkedMapOf(
-          "id" to c.id,
-          "kind" to if (c.kind == "CORRECTION") "fix" else "batch",
-          "name" to c.name,
-          "unit" to c.unit,
-          "totalWeight" to c.inputValue,
-          "summaryText" to c.summaryText,
-          "createdAt" to c.createdAt,
-          "updatedAt" to c.updatedAt,
-        )
-      }
+      val calcs = calcsByFormula[f.id].orEmpty()
+        .sortedByDescending { it.createdAt }
+        .map { c -> SarimSavedCalcs.toWebRecord(c) }
       linkedMapOf(
         "id" to f.id,
         "name" to f.name,
         "additionalCost" to f.additionalCostPerUnit,
+        "costAdjustmentFactor" to f.costAdjustmentFactor,
         "factor" to f.costAdjustmentFactor,
         "ingredients" to ings,
         "savedCalcs" to calcs,
       )
     }
+    // Same feeds as web `feedsFromFormulas`: linked formulas are flattened into raw materials,
+    // and `costs` carries own + linked additional cost.
     val defaults = linkedMapOf<String, Any?>()
     val costs = linkedMapOf<String, Double>()
     val adjustment = linkedMapOf<String, Double>()
     val tracking = linkedMapOf<String, Map<String, Double>>()
-    formulas.filter { !it.isDeleted }.forEach { f ->
-      defaults[f.id] = JsonCodecs.decodeIngredients(f.ingredientsJson).map { ing ->
-        mapOf("id" to ing.refId, "name" to ing.refName, "quantity" to ing.qtyKg)
+    activeFormulas.forEach { f ->
+      val d = FormulaCalculator.describeFormula(f, formulaMap, materials)
+      defaults[f.id] = d.items.map { i ->
+        linkedMapOf<String, Any?>("id" to i.id, "name" to i.name, "cost" to i.cost, "quantity" to i.quantity)
       }
-      costs[f.id] = f.additionalCostPerUnit
-      adjustment[f.id] = f.costAdjustmentFactor
+      costs[f.id] = d.additionalCost
+      adjustment[f.id] = if (f.costAdjustmentFactor == 0.0) 1.0 else f.costAdjustmentFactor
       tracking[f.id] = mapOf("available" to f.unitsAvailable, "used" to f.unitsUsed)
     }
     return linkedMapOf(
