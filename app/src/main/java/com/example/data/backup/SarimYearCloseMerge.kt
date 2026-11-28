@@ -125,7 +125,8 @@ object YearCloseMerge {
       val net = items.sumOf { num(it["net"]) }
       val totalCost = items.sumOf { num(it["totalCost"]) }
       val totalSale = items.sumOf { num(it["totalSale"]) }
-      val profit = items.sumOf { num(it["profit"]) }
+      // Always sale - cost: older records can carry a stale saved profit that would fail the consistency check.
+      val profit = totalSale - totalCost
       val formulaUnits = items.sumOf { num(it["formulaUnits"]) }
       val formulaCost = items.sumOf { num(it["formulaCost"]) }
       val avgCp = if (net > 0) round4(totalCost / net) else num(items.first()["cp"])
@@ -156,7 +157,7 @@ object YearCloseMerge {
       val net = items.sumOf { num(it["net"]) }
       val totalCost = items.sumOf { num(it["totalCost"]) }
       val totalSale = items.sumOf { num(it["totalSale"]) }
-      val profit = items.sumOf { num(it["profit"]) }
+      val profit = totalSale - totalCost
       val avgCp = if (net > 0) round4(totalCost / net) else num(items.first()["cp"])
       val canonicalSp = ctx.salePriceForStore(store)
       val avgSp = if (canonicalSp > 0) canonicalSp else num(items.first()["sp"])
@@ -214,9 +215,10 @@ object YearCloseMerge {
   private fun sumBucket(sales: List<Rec>): Sums {
     var q = 0.0; var v = 0.0; var c = 0.0; var p = 0.0; var rp = 0.0; var up = 0.0; var cash = 0.0; var unpaid = 0.0
     for (item in sales) {
-      q += num(item["quantity"]); v += num(item["totalValue"]); c += num(item["totalCost"]); p += num(item["profit"])
+      val itemProfit = num(item["totalValue"]) - num(item["totalCost"]) // never trust a stale saved profit
+      q += num(item["quantity"]); v += num(item["totalValue"]); c += num(item["totalCost"]); p += itemProfit
       val pt = str(item["paymentType"]); val received = item["creditReceived"] == true
-      if (pt == "CREDIT" && !received) up += num(item["profit"]) else rp += num(item["profit"])
+      if (pt == "CREDIT" && !received) up += itemProfit else rp += itemProfit
       if (pt == "CASH" || (pt == "CREDIT" && received)) cash += num(item["totalValue"])
       else if (pt == "CREDIT" && !received) unpaid += max(0.0, num(item["totalValue"]) - num(item["partialPaymentReceived"]))
     }
@@ -281,7 +283,7 @@ object YearCloseMerge {
       val gross = round2(s.value)
       result += base(ctx, ctx.newId("sale-merged"), linkedMapOf<String, Any?>(
         "customerName" to customer, "customerPhone" to b.phone, "customerAddress" to b.address,
-        "quantity" to s.qty, "unitPrice" to unitPrice, "totalValue" to gross, "totalCost" to s.cost, "profit" to s.profit,
+        "quantity" to s.qty, "unitPrice" to unitPrice, "totalValue" to gross, "totalCost" to s.cost, "profit" to (gross - s.cost),
         "supplyStore" to store, "salesRep" to "NONE",
       ).also { it.putAll(settlementFields(ctx, b, s, recordCount, b.sales.map { x -> str(x["id"]) }, gross)) })
     }

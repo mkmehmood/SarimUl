@@ -133,4 +133,18 @@ class SarimYearCloseMergeTest {
     assertEquals(listOf("e_old"), closeRestore.replaceData["entities"]!!.map { it["id"] })
     assertEquals(setOf("cl_old", "cl_post"), closeRestore.replaceData["clients"]!!.map { it["id"] }.toSet())
   }
+
+  @Test
+  fun staleSavedProfitDoesNotFailConsistencyCheck() {
+    // Saved profit (400) disagrees with sale - cost (500): the merge must still verify cleanly.
+    val ctx = MergeContext(
+      closeEpoch = 10_000L, nowEpoch = 10_000L, nowIsoDate = "2026-01-31", nowTime = "12:00:00 AM",
+      nowIsoStamp = "2026-01-31T00:00:00.000Z", newId = { "$it-x" },
+      salePriceForStore = { 30.0 }, salePriceForCustomer = { _, _ -> 30.0 }, defaultStoreKey = "zubair",
+    )
+    val prod = listOf(mapOf("id" to "p1", "store" to "zubair", "net" to 50, "totalCost" to 1000, "totalSale" to 1500, "profit" to 400, "createdAt" to 1000L))
+    val merged = YearCloseMerge.mergeProduction(prod, ctx)
+    val check = YearCloseMerge.verifyConsistency(mapOf("production" to merged))
+    assertTrue(check.errors.joinToString(), check.valid)
+  }
 }
